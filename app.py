@@ -622,7 +622,6 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_path);
             CREATE INDEX IF NOT EXISTS idx_files_uploaded_at ON files(uploaded_at DESC);
             CREATE INDEX IF NOT EXISTS idx_files_upload_client_id ON files(upload_client_id);
-            CREATE INDEX IF NOT EXISTS idx_files_thumb_status ON files(thumb_status);
 
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
