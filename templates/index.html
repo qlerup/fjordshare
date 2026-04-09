@@ -1,0 +1,265 @@
+﻿{% extends "base.html" %}
+{% block title %}FjordShare{% endblock %}
+{% block body %}
+<div id="bootstrap"
+     data-username="{{ username }}"
+     data-role="{{ role }}"
+     data-home-folder="{{ home_folder }}"></div>
+
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-mark">FS</div>
+      <div>
+        <div class="logo-title">FjordShare</div>
+        <div class="logo-sub">Fil-deling og upload</div>
+      </div>
+    </div>
+
+    <nav id="sidebarNav" class="nav">
+      <button class="nav-item active" data-tab="files">Filer</button>
+      <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <a class="mini-link" href="/api/health" target="_blank">API health</a>
+      <a class="mini-link" href="/logout">Log ud</a>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <h1 id="pageTitle">Filer</h1>
+      <div class="topbar-user">Bruger: <strong>{{ username }}</strong></div>
+    </header>
+
+    <section id="tab-files" class="tab-section">
+      <div class="toolbar">
+        <label for="folderSelect">Mappe</label>
+        <select id="folderSelect" class="select"></select>
+        <button id="refreshFilesBtn" class="btn">Opdater</button>
+        <button id="uploadBtn" class="btn primary">Upload filer</button>
+        <input id="fileInput" type="file" multiple style="display:none;">
+      </div>
+
+      <div class="toolbar">
+        <input id="newFolderInput" class="input" type="text" placeholder="Ny mappe i valgt mappe">
+        <button id="createFolderBtn" class="btn">Opret mappe</button>
+      </div>
+
+      <div id="uploadStatus" class="status hidden"></div>
+
+      <div class="split">
+        <div class="panel">
+          <h3>Tilgængelige mapper</h3>
+          <div id="folderList" class="folder-list"></div>
+        </div>
+        <div class="panel grow">
+          <h3>Filer</h3>
+          <div id="fileGrid" class="file-grid"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="tab-section hidden admin-only">
+      <div class="panel">
+        <div class="settings-header">
+          <h3>Indstillinger</h3>
+          <p class="hint">Delinger, DNS og brugere</p>
+        </div>
+        <nav id="settingsTabs" class="tabs">
+          <button class="tab-btn active" data-settings-tab="shares">Delinger</button>
+          <button class="tab-btn" data-settings-tab="dns">DNS</button>
+          <button class="tab-btn" data-settings-tab="users">Brugere</button>
+        </nav>
+        <div class="tabs-mobile">
+          <select id="settingsTabSelect" aria-label="Vælg indstillingsfane">
+            <option value="shares" selected>Delinger</option>
+            <option value="dns">DNS</option>
+            <option value="users">Brugere</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="settings-panel-shares" class="settings-subpanel">
+        <div class="panel">
+          <h3>Opret deling</h3>
+          <div class="form-grid">
+            <div>
+              <label for="shareNameInput">Navn</label>
+              <input id="shareNameInput" class="input" type="text" placeholder="Fx Kunde 2026">
+            </div>
+            <div>
+              <label for="sharePermissionSelect">Rettighed</label>
+              <select id="sharePermissionSelect" class="select">
+                <option value="view">Se</option>
+                <option value="upload">Se og upload</option>
+                <option value="manage">Se, upload og slet</option>
+              </select>
+            </div>
+            <div>
+              <label for="shareExpireValue">Gyldig i</label>
+              <input id="shareExpireValue" class="input" type="number" min="0" value="7">
+            </div>
+            <div>
+              <label for="shareExpireUnit">Enhed</label>
+              <select id="shareExpireUnit" class="select">
+                <option value="days">Dage</option>
+                <option value="hours">Timer</option>
+              </select>
+            </div>
+          </div>
+
+          <label for="shareFoldersSelect">Mapper</label>
+          <select id="shareFoldersSelect" class="select" multiple size="7"></select>
+
+          <div class="checks">
+            <label><input id="shareUseExternalChk" type="checkbox"> Brug ekstern DNS base-url</label>
+            <label><input id="shareRequireVisitorChk" type="checkbox"> Kræv besøgsnavn</label>
+            <label><input id="shareUsePasswordChk" type="checkbox"> Beskyt med kode</label>
+          </div>
+
+          <div id="sharePasswordWrap" class="hidden">
+            <label for="sharePasswordInput">Kode</label>
+            <input id="sharePasswordInput" class="input" type="password" placeholder="Mindst 4 tegn">
+          </div>
+
+          <div class="toolbar">
+            <button id="createShareBtn" class="btn primary">Opret deling</button>
+          </div>
+          <div id="shareCreateStatus" class="status hidden"></div>
+          <div id="shareResultWrap" class="toolbar hidden">
+            <input id="shareResultLink" class="input" type="text" readonly>
+            <button id="copyShareLinkBtn" class="btn">Kopier</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Eksisterende delinger</h3>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Navn</th>
+                <th>Mapper</th>
+                <th>Rettighed</th>
+                <th>Udløb</th>
+                <th>Link</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody id="sharesTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="settings-panel-dns" class="settings-subpanel hidden">
+        <div class="panel">
+          <h3>DNS / Ekstern base-url</h3>
+          <p class="hint">Bruges til delte links, fx https://files.eksempel.dk</p>
+          <div class="toolbar">
+            <input id="dnsExternalBaseUrlInput" class="input" type="text" placeholder="https://files.eksempel.dk">
+            <button id="dnsSaveBtn" class="btn primary">Gem DNS</button>
+          </div>
+          <div id="dnsStatus" class="status hidden"></div>
+        </div>
+      </div>
+
+      <div id="settings-panel-users" class="settings-subpanel hidden">
+        <div class="panel">
+          <h3>Opret bruger</h3>
+          <div class="form-grid">
+            <div>
+              <label for="createUserUsername">Brugernavn</label>
+              <input id="createUserUsername" class="input" type="text">
+            </div>
+            <div>
+              <label for="createUserPassword">Kode</label>
+              <input id="createUserPassword" class="input" type="password">
+            </div>
+            <div>
+              <label for="createUserRole">Rolle</label>
+              <select id="createUserRole" class="select">
+                <option value="user">Bruger</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div class="end">
+              <button id="createUserBtn" class="btn primary">Opret</button>
+            </div>
+          </div>
+          <div id="userStatus" class="status hidden"></div>
+        </div>
+
+        <div class="panel">
+          <h3>Brugere</h3>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Brugernavn</th>
+                <th>Rolle</th>
+                <th>Hjemmemappe</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="metadataModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card">
+    <h3>Tilføj detaljer pr. fil</h3>
+    <p class="hint">Skriv bemærkning og antal for hver uploadet fil.</p>
+    <table class="table compact">
+      <thead>
+        <tr>
+          <th>Fil</th>
+          <th>Bemærkning</th>
+          <th>Antal</th>
+        </tr>
+      </thead>
+      <tbody id="metadataTableBody"></tbody>
+    </table>
+    <div class="toolbar end">
+      <button id="metadataCancelBtn" class="btn">Spring over</button>
+      <button id="metadataSaveBtn" class="btn primary">Gem metadata</button>
+    </div>
+  </div>
+</div>
+
+<div id="modelModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card modal-wide">
+    <div class="toolbar">
+      <h3 id="modelTitle">3D visning</h3>
+      <button id="closeModelModalBtn" class="btn">Luk</button>
+    </div>
+    <div id="modelViewerPane" class="viewer-pane">
+      <model-viewer id="modelViewer" camera-controls auto-rotate shadow-intensity="1" style="width:100%;height:100%;"></model-viewer>
+    </div>
+    <div id="threePane" class="viewer-pane hidden">
+      <canvas id="threeCanvas"></canvas>
+    </div>
+    <div id="modelHint" class="hint"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/tus.min.js') }}"></script>
+<script>
+  if (!(window.tus && typeof window.tus.Upload === 'function')) {
+    document.write('<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.2.3/dist/tus.min.js"><\\/script>');
+  }
+</script>
+<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}
+
+
+

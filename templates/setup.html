@@ -1,0 +1,22 @@
+﻿{% extends "base.html" %}
+{% block title %}Setup  -  FjordShare{% endblock %}
+{% block body %}
+<div class="center-screen">
+  <form class="login-card" method="post">
+    <h1>Første opsætning</h1>
+    <p class="hint">Opret den første admin-konto.</p>
+    {% if error %}<div class="status error">{{ error }}</div>{% endif %}
+
+    <label for="username">Admin brugernavn</label>
+    <input id="username" name="username" type="text" autocomplete="username" required>
+
+    <label for="password">Adgangskode</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" required>
+
+    <button class="btn primary" type="submit">Opret admin</button>
+  </form>
+</div>
+{% endblock %}
+
+
+

@@ -1,0 +1,64 @@
+﻿{% extends "base.html" %}
+{% block title %}Delt mappe  -  FjordShare{% endblock %}
+{% block body %}
+<div id="shareBootstrap" data-token="{{ token }}"></div>
+
+<div class="shared-wrap">
+  <header class="shared-header">
+    <div>
+      <h1 id="shareTitle">Delt mappe</h1>
+      <p id="shareMeta" class="hint"></p>
+    </div>
+  </header>
+
+  <section id="shareAuthBox" class="panel hidden">
+    <h3>Adgang påkrævet</h3>
+    <p class="hint">Indtast oplysninger for at åbne delingen.</p>
+    <div class="form-grid">
+      <div>
+        <label for="shareVisitorInput">Besøgsnavn</label>
+        <input id="shareVisitorInput" class="input" type="text">
+      </div>
+      <div>
+        <label for="sharePasswordInput">Kode</label>
+        <input id="sharePasswordInput" class="input" type="password">
+      </div>
+    </div>
+    <div class="toolbar">
+      <button id="shareAuthBtn" class="btn primary">Åbn deling</button>
+    </div>
+    <div id="shareAuthStatus" class="status hidden"></div>
+  </section>
+
+  <section id="shareMainBox" class="hidden">
+    <div id="shareUploadBox" class="panel hidden">
+      <div class="toolbar">
+        <label for="shareFolderSelect">Upload til mappe</label>
+        <select id="shareFolderSelect" class="select"></select>
+        <button id="shareUploadBtn" class="btn primary">Upload filer</button>
+        <input id="shareFileInput" type="file" multiple style="display:none;">
+      </div>
+      <div id="shareUploadStatus" class="status hidden"></div>
+    </div>
+
+    <div class="panel">
+      <h3>Filer</h3>
+      <div id="shareFileGrid" class="file-grid"></div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='vendor/tus.min.js') }}"></script>
+<script>
+  if (!(window.tus && typeof window.tus.Upload === 'function')) {
+    document.write('<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.2.3/dist/tus.min.js"><\\/script>');
+  }
+</script>
+<script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+<script src="{{ url_for('static', filename='shared.js') }}"></script>
+{% endblock %}
+
+
+

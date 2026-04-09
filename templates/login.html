@@ -1,0 +1,22 @@
+﻿{% extends "base.html" %}
+{% block title %}Login  -  FjordShare{% endblock %}
+{% block body %}
+<div class="center-screen">
+  <form class="login-card" method="post">
+    <h1>Log ind på FjordShare</h1>
+    {% if error %}<div class="status error">{{ error }}</div>{% endif %}
+    {% if created %}<div class="status ok">Bruger oprettet. Log ind herunder.</div>{% endif %}
+
+    <label for="username">Brugernavn</label>
+    <input id="username" name="username" type="text" autocomplete="username" required>
+
+    <label for="password">Adgangskode</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+    <button class="btn primary" type="submit">Log ind</button>
+  </form>
+</div>
+{% endblock %}
+
+
+
