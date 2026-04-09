@@ -20,6 +20,10 @@
 
   const els = {
     pageTitle: document.getElementById("pageTitle"),
+    pageSubtitle: document.getElementById("pageSubtitle"),
+    statFiles: document.getElementById("statFiles"),
+    statFolders: document.getElementById("statFolders"),
+    statShares: document.getElementById("statShares"),
     sidebarNav: document.getElementById("sidebarNav"),
     tabFiles: document.getElementById("tab-files"),
     tabSettings: document.getElementById("tab-settings"),
@@ -78,8 +82,14 @@
   };
 
   const TABS = {
-    files: "Filer",
-    settings: "Indstillinger",
+    files: {
+      title: "Filer",
+      subtitle: "Upload, mapper og metadata",
+    },
+    settings: {
+      title: "Indstillinger",
+      subtitle: "Delinger, DNS og brugere",
+    },
   };
 
   function esc(value) {
@@ -154,10 +164,21 @@
     });
     const navButtons = Array.from((els.sidebarNav && els.sidebarNav.querySelectorAll(".nav-item")) || []);
     navButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === target));
-    if (els.pageTitle) els.pageTitle.textContent = TABS[target] || "FjordShare";
+    const tabMeta = TABS[target] || { title: "FjordShare", subtitle: "" };
+    if (els.pageTitle) els.pageTitle.textContent = tabMeta.title || "FjordShare";
+    if (els.pageSubtitle) els.pageSubtitle.textContent = tabMeta.subtitle || "";
 
     if (target === "settings" && state.role === "admin") {
       setSettingsTab(state.currentSettingsTab || "shares");
+    }
+  }
+
+  function updateStats() {
+    if (els.statFiles) els.statFiles.textContent = String(Array.isArray(state.files) ? state.files.length : 0);
+    if (els.statFolders) els.statFolders.textContent = String(Array.isArray(state.folders) ? state.folders.length : 0);
+    if (els.statShares) {
+      const value = state.role === "admin" ? (Array.isArray(state.shares) ? state.shares.length : 0) : 0;
+      els.statShares.textContent = String(value);
     }
   }
 
@@ -191,6 +212,7 @@
       else node.classList.add("hidden");
     });
     if (!isAdmin) setTab("files");
+    updateStats();
   }
 
   function currentFolder() {
@@ -234,6 +256,7 @@
         .join("");
       els.shareFoldersSelect.innerHTML = shareOptions;
     }
+    updateStats();
   }
 
   function filePreviewHtml(file) {
@@ -262,6 +285,7 @@
     if (!els.fileGrid) return;
     if (!state.files.length) {
       els.fileGrid.innerHTML = `<div class="panel"><p class="hint">Ingen filer i denne mappe endnu.</p></div>`;
+      updateStats();
       return;
     }
 
@@ -290,6 +314,7 @@
       .join("");
     els.fileGrid.innerHTML = html;
     syncThumbPoller();
+    updateStats();
   }
 
   function hasPendingThumbs() {
@@ -499,6 +524,7 @@
       showStatus(els.shareCreateStatus, err.message || "Kunne ikke hente delinger", "error");
     }
     renderShares();
+    updateStats();
   }
 
   function renderShares() {

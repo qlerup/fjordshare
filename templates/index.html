@@ -29,9 +29,30 @@
 
   <main class="main">
     <header class="topbar">
-      <h1 id="pageTitle">Filer</h1>
+      <div class="topbar-spacer"></div>
       <div class="topbar-user">Bruger: <strong>{{ username }}</strong></div>
     </header>
+
+    <section class="content-header">
+      <div>
+        <h1 id="pageTitle">Filer</h1>
+        <p id="pageSubtitle">Upload, mapper og metadata</p>
+      </div>
+      <div class="stats">
+        <div class="stat-card">
+          <span class="stat-label">Filer</span>
+          <span id="statFiles" class="stat-value">0</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Mapper</span>
+          <span id="statFolders" class="stat-value">0</span>
+        </div>
+        <div class="stat-card admin-only">
+          <span class="stat-label">Delinger</span>
+          <span id="statShares" class="stat-value">0</span>
+        </div>
+      </div>
+    </section>
 
     <section id="tab-files" class="tab-section">
       <div class="toolbar">
@@ -251,14 +272,14 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='vendor/tus.min.js') }}"></script>
+<script src="{{ url_for('static', filename='vendor/tus.min.js', v=app_build) }}"></script>
 <script>
   if (!(window.tus && typeof window.tus.Upload === 'function')) {
     document.write('<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.2.3/dist/tus.min.js"><\\/script>');
   }
 </script>
 <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
-<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
 {% endblock %}
 
 

@@ -56,6 +56,8 @@ THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
 THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
 THUMB_RENDER_FACE_LIMIT = 120_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
+_startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
 
 THUMB_QUEUE: "queue_mod.Queue[int]" = queue_mod.Queue()
 THUMB_QUEUE_LOCK = threading.Lock()
@@ -1243,6 +1245,11 @@ app.secret_key = _load_or_create_secret()
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
+
+
+@app.context_processor
+def inject_template_globals():
+    return {"app_build": APP_BUILD}
 
 
 @login_manager.user_loader
