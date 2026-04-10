@@ -535,9 +535,9 @@
 
   function modelControlsText(mode = "orbit") {
     if (mode === "fly") {
-      return "Fri flyvning: hold venstre museknap og kig. W/A/S/D + R/F bevæger. Shift = hurtigere.";
+      return "Fri flyvning: bevæg musen for at kigge. W/A/S/D + piletaster + R/F bevæger. Shift = hurtigere.";
     }
-    return "Træk for rotation. Zoom med scroll/2 fingre.";
+    return "Mobil: 1 finger roter, 2 fingre zoom.";
   }
 
   function formatModelHeight(value) {
@@ -1948,14 +1948,14 @@
     const sources = [
       {
         three: "https://esm.sh/three@0.166.1",
-        trackball: "https://esm.sh/three@0.166.1/examples/jsm/controls/TrackballControls.js",
+        orbit: "https://esm.sh/three@0.166.1/examples/jsm/controls/OrbitControls.js",
         fly: "https://esm.sh/three@0.166.1/examples/jsm/controls/FlyControls.js",
         stl: "https://esm.sh/three@0.166.1/examples/jsm/loaders/STLLoader.js",
         obj: "https://esm.sh/three@0.166.1/examples/jsm/loaders/OBJLoader.js",
       },
       {
         three: "https://cdn.jsdelivr.net/npm/three@0.166.1/+esm",
-        trackball: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/TrackballControls.js/+esm",
+        orbit: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/OrbitControls.js/+esm",
         fly: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/FlyControls.js/+esm",
         stl: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/STLLoader.js/+esm",
         obj: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/OBJLoader.js/+esm",
@@ -1966,13 +1966,13 @@
     for (const src of sources) {
       try {
         const THREE = await import(src.three);
-        const [{ TrackballControls }, { FlyControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
-          import(src.trackball),
+        const [{ OrbitControls }, { FlyControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
+          import(src.orbit),
           import(src.fly),
           import(src.stl),
           import(src.obj),
         ]);
-        state.threeModules = { THREE, TrackballControls, FlyControls, STLLoader, OBJLoader };
+        state.threeModules = { THREE, OrbitControls, FlyControls, STLLoader, OBJLoader };
         return state.threeModules;
       } catch (err) {
         lastErr = err;
@@ -2076,7 +2076,7 @@
       setModelHintMessage(`Kunne ikke indlæse 3D viewer: ${err.message || err}`);
       return;
     }
-    const { THREE, TrackballControls, FlyControls, STLLoader, OBJLoader } = modules;
+    const { THREE, OrbitControls, FlyControls, STLLoader, OBJLoader } = modules;
 
     cleanupThree();
 
@@ -2104,17 +2104,16 @@
 
     const isTouchPrimary = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
     if (isTouchPrimary) {
-      controls = new TrackballControls(camera, canvas);
-      controls.noPan = true;
-      controls.rotateSpeed = 4.0;
-      controls.zoomSpeed = 1.2;
-      controls.dynamicDampingFactor = 0.14;
-      controls.staticMoving = false;
+      controls = new OrbitControls(camera, canvas);
+      controls.enableDamping = true;
+      controls.enablePan = false;
+      controls.rotateSpeed = 0.92;
+      controls.zoomSpeed = 0.95;
+      controls.touches.ONE = THREE.TOUCH.ROTATE;
+      controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
       controlsHintText = modelControlsText("orbit");
       updateControls = () => controls.update();
-      handleControlsResize = () => {
-        if (typeof controls.handleResize === "function") controls.handleResize();
-      };
+      handleControlsResize = () => {};
       applyControlTarget = (center) => {
         if (controls && controls.target) {
           controls.target.copy(center);
@@ -2122,8 +2121,10 @@
         }
       };
     } else {
+      canvas.tabIndex = 0;
+      canvas.style.outline = "none";
       controls = new FlyControls(camera, canvas);
-      controls.dragToLook = true;
+      controls.dragToLook = false;
       controls.autoForward = false;
       controls.rollSpeed = Math.PI / 8;
       controls.movementSpeed = baseMoveSpeed;
