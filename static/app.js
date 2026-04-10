@@ -1962,6 +1962,10 @@
       if (els.threePane) els.threePane.classList.add("hidden");
       if (els.modelViewer) {
         const viewer = els.modelViewer;
+        viewer.setAttribute("environment-image", "neutral");
+        viewer.setAttribute("shadow-intensity", "1.25");
+        viewer.setAttribute("shadow-softness", "0.95");
+        viewer.style.background = "transparent";
         viewer.setAttribute("src", file.content_url || "");
         viewer.addEventListener("load", () => {
           let height = 0;
@@ -2010,9 +2014,10 @@
     const canvas = els.threeCanvas;
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0c121b);
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 5000);
     camera.position.set(2, 2, 2);
 
@@ -2025,9 +2030,62 @@
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.9);
     scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    const dir = new THREE.DirectionalLight(0xffffff, 0.9);
     dir.position.set(5, 8, 6);
+    dir.castShadow = true;
+    dir.shadow.bias = -0.00025;
+    dir.shadow.mapSize.set(1024, 1024);
+    scene.add(dir.target);
     scene.add(dir);
+
+    function addPresentationTable(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+
+      const modelSpan = Math.max(size.x, size.z, 1);
+      const topWidth = Math.max(size.x * 1.8, modelSpan * 1.45);
+      const topDepth = Math.max(size.z * 1.8, modelSpan * 1.45);
+      const topThickness = Math.max(modelSpan * 0.035, 1);
+      const legHeight = Math.max(size.y * 0.65, modelSpan * 0.55, 8);
+      const legThickness = Math.max(Math.min(topWidth, topDepth) * 0.07, 1.4);
+      const clearance = Math.max(topThickness * 0.2, 0.35);
+
+      const topCenterY = box.min.y - clearance - topThickness / 2;
+      const topSurfaceY = topCenterY + topThickness / 2;
+      const legCenterY = topCenterY - topThickness / 2 - legHeight / 2;
+      const insetX = Math.max(topWidth / 2 - legThickness * 1.1, legThickness);
+      const insetZ = Math.max(topDepth / 2 - legThickness * 1.1, legThickness);
+
+      const table = new THREE.Group();
+      table.name = "presentationTable";
+
+      const top = new THREE.Mesh(
+        new THREE.BoxGeometry(topWidth, topThickness, topDepth),
+        new THREE.MeshStandardMaterial({ color: 0x6f5238, roughness: 0.9, metalness: 0.03 })
+      );
+      top.position.set(center.x, topCenterY, center.z);
+      top.receiveShadow = true;
+      table.add(top);
+
+      const legGeometry = new THREE.BoxGeometry(legThickness, legHeight, legThickness);
+      const legMaterial = new THREE.MeshStandardMaterial({ color: 0x463224, roughness: 0.92, metalness: 0.02 });
+      [
+        [-insetX, -insetZ],
+        [insetX, -insetZ],
+        [-insetX, insetZ],
+        [insetX, insetZ],
+      ].forEach(([x, z]) => {
+        const leg = new THREE.Mesh(legGeometry, legMaterial);
+        leg.position.set(center.x + x, legCenterY, center.z + z);
+        leg.castShadow = true;
+        leg.receiveShadow = true;
+        table.add(leg);
+      });
+
+      scene.add(table);
+      return { topSurfaceY };
+    }
 
     function fit(object) {
       const box = new THREE.Box3().setFromObject(object);
@@ -2041,6 +2099,17 @@
       camera.updateProjectionMatrix();
       controls.target.copy(center);
       controls.update();
+
+      const shadowSpan = radius * 2.2;
+      dir.position.set(center.x + radius * 2.1, center.y + radius * 2.9, center.z + radius * 1.6);
+      dir.target.position.copy(center);
+      dir.shadow.camera.left = -shadowSpan;
+      dir.shadow.camera.right = shadowSpan;
+      dir.shadow.camera.top = shadowSpan;
+      dir.shadow.camera.bottom = -shadowSpan;
+      dir.shadow.camera.near = Math.max(radius / 20, 0.1);
+      dir.shadow.camera.far = radius * 12;
+      dir.shadow.camera.updateProjectionMatrix();
       return size;
     }
 
@@ -2068,8 +2137,19 @@
     let fittedSize = null;
     try {
       const obj = await loadObjPromise;
+      obj.traverse((node) => {
+        if (node && node.isMesh) {
+          node.castShadow = true;
+          node.receiveShadow = true;
+        }
+      });
       scene.add(obj);
+      const tableInfo = addPresentationTable(obj);
       fittedSize = fit(obj);
+      if (tableInfo && Number.isFinite(Number(tableInfo.topSurfaceY))) {
+        controls.target.y = (controls.target.y + Number(tableInfo.topSurfaceY)) / 2;
+        controls.update();
+      }
     } catch (err) {
       if (els.modelHint) {
         els.modelHint.textContent = `Kunne ikke åbne 3D filen: ${err.message || err}`;
