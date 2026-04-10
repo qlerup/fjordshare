@@ -533,10 +533,18 @@
     return `Højde: ${pretty} model-enheder (ofte mm i STL/OBJ).`;
   }
 
-  function buildModelHint(heightValue = 0) {
-    const controls = "Desktop: træk for at rotere, scroll for zoom. Mobil: 1 finger roter, 2 fingre zoom/roter.";
+  function buildModelHint(heightValue = 0, extras = []) {
+    const controls = "Desktop: træk for fri rotation, scroll for zoom. Mobil: 1 finger roter frit, 2 fingre zoom.";
     const heightText = formatModelHeight(heightValue);
-    return heightText ? `${controls} ${heightText}` : controls;
+    const parts = [controls];
+    if (heightText) parts.push(heightText);
+    if (Array.isArray(extras) && extras.length) {
+      extras.forEach((part) => {
+        const text = String(part || "").trim();
+        if (text) parts.push(text);
+      });
+    }
+    return parts.join(" ");
   }
 
   function setTab(tab) {
@@ -1907,13 +1915,13 @@
     const sources = [
       {
         three: "https://esm.sh/three@0.166.1",
-        orbit: "https://esm.sh/three@0.166.1/examples/jsm/controls/OrbitControls.js",
+        trackball: "https://esm.sh/three@0.166.1/examples/jsm/controls/TrackballControls.js",
         stl: "https://esm.sh/three@0.166.1/examples/jsm/loaders/STLLoader.js",
         obj: "https://esm.sh/three@0.166.1/examples/jsm/loaders/OBJLoader.js",
       },
       {
         three: "https://cdn.jsdelivr.net/npm/three@0.166.1/+esm",
-        orbit: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/OrbitControls.js/+esm",
+        trackball: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/TrackballControls.js/+esm",
         stl: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/STLLoader.js/+esm",
         obj: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/OBJLoader.js/+esm",
       },
@@ -1923,12 +1931,12 @@
     for (const src of sources) {
       try {
         const THREE = await import(src.three);
-        const [{ OrbitControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
-          import(src.orbit),
+        const [{ TrackballControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
+          import(src.trackball),
           import(src.stl),
           import(src.obj),
         ]);
-        state.threeModules = { THREE, OrbitControls, STLLoader, OBJLoader };
+        state.threeModules = { THREE, TrackballControls, STLLoader, OBJLoader };
         return state.threeModules;
       } catch (err) {
         lastErr = err;
@@ -2006,7 +2014,7 @@
       }
       return;
     }
-    const { THREE, OrbitControls, STLLoader, OBJLoader } = modules;
+    const { THREE, TrackballControls, STLLoader, OBJLoader } = modules;
 
     cleanupThree();
 
@@ -2020,13 +2028,15 @@
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 5000);
     camera.position.set(2, 2, 2);
+    camera.up.set(0, 1, 0);
 
     canvas.style.touchAction = "none";
-    const controls = new OrbitControls(camera, canvas);
-    controls.enableDamping = true;
-    controls.enablePan = false;
-    controls.touches.ONE = THREE.TOUCH.ROTATE;
-    controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
+    const controls = new TrackballControls(camera, canvas);
+    controls.noPan = true;
+    controls.rotateSpeed = 4.2;
+    controls.zoomSpeed = 1.25;
+    controls.dynamicDampingFactor = 0.12;
+    controls.staticMoving = false;
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.9);
     scene.add(hemi);
@@ -2037,6 +2047,96 @@
     dir.shadow.mapSize.set(1024, 1024);
     scene.add(dir.target);
     scene.add(dir);
+
+    function createWalnutTexture() {
+      const sizePx = 512;
+      const canvasTexture = document.createElement("canvas");
+      canvasTexture.width = sizePx;
+      canvasTexture.height = sizePx;
+      const ctx = canvasTexture.getContext("2d");
+      if (!ctx) return null;
+
+      const base = ctx.createLinearGradient(0, 0, sizePx, sizePx);
+      base.addColorStop(0, "#6a422a");
+      base.addColorStop(0.5, "#4f311f");
+      base.addColorStop(1, "#3b2519");
+      ctx.fillStyle = base;
+      ctx.fillRect(0, 0, sizePx, sizePx);
+
+      for (let y = 0; y < sizePx; y += 2) {
+        const wobble = Math.sin(y * 0.06) * 7 + Math.sin(y * 0.013) * 5;
+        const alpha = 0.06 + (Math.sin(y * 0.091) + 1) * 0.03;
+        ctx.fillStyle = `rgba(219, 171, 124, ${alpha.toFixed(3)})`;
+        ctx.fillRect(0, y, sizePx, 1);
+        ctx.fillStyle = `rgba(40, 23, 15, ${(alpha * 0.85).toFixed(3)})`;
+        ctx.fillRect(Math.max(0, wobble), y + 1, sizePx, 1);
+      }
+
+      for (let i = 0; i < 10; i += 1) {
+        const cx = 40 + Math.random() * (sizePx - 80);
+        const cy = 40 + Math.random() * (sizePx - 80);
+        const r = 12 + Math.random() * 24;
+        const knot = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r);
+        knot.addColorStop(0, "rgba(130, 84, 56, 0.45)");
+        knot.addColorStop(0.7, "rgba(82, 50, 33, 0.22)");
+        knot.addColorStop(1, "rgba(0, 0, 0, 0)");
+        ctx.fillStyle = knot;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const texture = new THREE.CanvasTexture(canvasTexture);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.RepeatWrapping;
+      texture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy() || 1, 8);
+      if ("colorSpace" in texture && "SRGBColorSpace" in THREE) {
+        texture.colorSpace = THREE.SRGBColorSpace;
+      }
+      return texture;
+    }
+
+    function applyBestStandingOrientation(object) {
+      const candidateRotations = [
+        [0, 0, 0],
+        [-Math.PI / 2, 0, 0],
+        [Math.PI / 2, 0, 0],
+        [Math.PI, 0, 0],
+        [0, 0, -Math.PI / 2],
+        [0, 0, Math.PI / 2],
+        [0, 0, Math.PI],
+      ];
+
+      const baseQuaternion = object.quaternion.clone();
+      const tempBox = new THREE.Box3();
+      const tempSize = new THREE.Vector3();
+      const bestQuaternion = new THREE.Quaternion();
+      let bestScore = -Infinity;
+
+      candidateRotations.forEach(([rx, ry, rz]) => {
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz));
+        object.quaternion.copy(baseQuaternion).multiply(q);
+        object.updateMatrixWorld(true);
+
+        tempBox.setFromObject(object);
+        if (tempBox.isEmpty()) return;
+        tempBox.getSize(tempSize);
+
+        const horizontalSpan = Math.max(tempSize.x, tempSize.z, 1e-6);
+        const score = tempSize.y / horizontalSpan;
+        if (score > bestScore) {
+          bestScore = score;
+          bestQuaternion.copy(object.quaternion);
+        }
+      });
+
+      if (bestScore > -Infinity) {
+        object.quaternion.copy(bestQuaternion);
+      } else {
+        object.quaternion.copy(baseQuaternion);
+      }
+      object.updateMatrixWorld(true);
+    }
 
     function addPresentationTable(object) {
       const box = new THREE.Box3().setFromObject(object);
@@ -2060,16 +2160,39 @@
       const table = new THREE.Group();
       table.name = "presentationTable";
 
+      const walnutTopTexture = createWalnutTexture();
+      if (walnutTopTexture) {
+        walnutTopTexture.repeat.set(Math.max(topWidth / 120, 1), Math.max(topDepth / 120, 1));
+      }
+
+      const topMaterialConfig = {
+        color: 0x6f4a32,
+        roughness: 0.78,
+        metalness: 0.04,
+      };
+      if (walnutTopTexture) topMaterialConfig.map = walnutTopTexture;
+
       const top = new THREE.Mesh(
         new THREE.BoxGeometry(topWidth, topThickness, topDepth),
-        new THREE.MeshStandardMaterial({ color: 0x6f5238, roughness: 0.9, metalness: 0.03 })
+        new THREE.MeshStandardMaterial(topMaterialConfig)
       );
       top.position.set(center.x, topCenterY, center.z);
+      top.castShadow = true;
       top.receiveShadow = true;
       table.add(top);
 
       const legGeometry = new THREE.BoxGeometry(legThickness, legHeight, legThickness);
-      const legMaterial = new THREE.MeshStandardMaterial({ color: 0x463224, roughness: 0.92, metalness: 0.02 });
+      const walnutLegTexture = walnutTopTexture ? walnutTopTexture.clone() : null;
+      if (walnutLegTexture) {
+        walnutLegTexture.repeat.set(1, Math.max(legHeight / 70, 1));
+      }
+      const legMaterialConfig = {
+        color: 0x3f2a1d,
+        roughness: 0.86,
+        metalness: 0.03,
+      };
+      if (walnutLegTexture) legMaterialConfig.map = walnutLegTexture;
+      const legMaterial = new THREE.MeshStandardMaterial(legMaterialConfig);
       [
         [-insetX, -insetZ],
         [insetX, -insetZ],
@@ -2084,7 +2207,77 @@
       });
 
       scene.add(table);
-      return { topSurfaceY };
+      return {
+        modelBox: box.clone(),
+        modelSize: size.clone(),
+        modelCenter: center.clone(),
+        topSurfaceY,
+        topWidth,
+        topDepth,
+      };
+    }
+
+    function addScaleCan(tableInfo) {
+      if (!tableInfo) return null;
+      const canHeight = 122;
+      const canDiameter = 66;
+      const canRadius = canDiameter / 2;
+
+      const { modelBox, modelSize, modelCenter, topSurfaceY, topWidth, topDepth } = tableInfo;
+      const safety = canRadius * 1.2;
+      const tableMinX = modelCenter.x - topWidth / 2 + safety;
+      const tableMaxX = modelCenter.x + topWidth / 2 - safety;
+      const tableMinZ = modelCenter.z - topDepth / 2 + safety;
+      const tableMaxZ = modelCenter.z + topDepth / 2 - safety;
+
+      let canX = modelBox.max.x + canRadius * 1.85;
+      if (canX > tableMaxX) canX = modelBox.min.x - canRadius * 1.85;
+      canX = Math.min(tableMaxX, Math.max(tableMinX, canX));
+
+      let canZ = modelCenter.z + Math.min(modelSize.z * 0.26, topDepth * 0.18);
+      canZ = Math.min(tableMaxZ, Math.max(tableMinZ, canZ));
+
+      const canBaseY = topSurfaceY + 0.25;
+      const canGroup = new THREE.Group();
+      canGroup.name = "scaleCan";
+
+      const body = new THREE.Mesh(
+        new THREE.CylinderGeometry(canRadius, canRadius, canHeight, 48, 1, false),
+        new THREE.MeshStandardMaterial({ color: 0xc83a35, roughness: 0.35, metalness: 0.42 })
+      );
+      body.position.set(canX, canBaseY + canHeight / 2, canZ);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      canGroup.add(body);
+
+      const label = new THREE.Mesh(
+        new THREE.CylinderGeometry(canRadius * 1.002, canRadius * 1.002, canHeight * 0.16, 48, 1, true),
+        new THREE.MeshStandardMaterial({ color: 0xf2f3f4, roughness: 0.45, metalness: 0.15 })
+      );
+      label.position.set(canX, canBaseY + canHeight * 0.52, canZ);
+      canGroup.add(label);
+
+      const capMaterial = new THREE.MeshStandardMaterial({ color: 0xb2b8c1, roughness: 0.3, metalness: 0.85 });
+      const capTop = new THREE.Mesh(
+        new THREE.CylinderGeometry(canRadius * 0.975, canRadius * 0.975, 1.8, 48),
+        capMaterial
+      );
+      capTop.position.set(canX, canBaseY + canHeight - 0.9, canZ);
+      capTop.castShadow = true;
+      capTop.receiveShadow = true;
+      canGroup.add(capTop);
+
+      const capBottom = new THREE.Mesh(
+        new THREE.CylinderGeometry(canRadius * 0.985, canRadius * 0.985, 1.4, 48),
+        capMaterial
+      );
+      capBottom.position.set(canX, canBaseY + 0.7, canZ);
+      capBottom.castShadow = true;
+      capBottom.receiveShadow = true;
+      canGroup.add(capBottom);
+
+      scene.add(canGroup);
+      return { canHeight, canDiameter };
     }
 
     function fit(object) {
@@ -2135,8 +2328,10 @@
     });
 
     let fittedSize = null;
+    let canInfo = null;
     try {
       const obj = await loadObjPromise;
+      applyBestStandingOrientation(obj);
       obj.traverse((node) => {
         if (node && node.isMesh) {
           node.castShadow = true;
@@ -2145,11 +2340,8 @@
       });
       scene.add(obj);
       const tableInfo = addPresentationTable(obj);
+      canInfo = addScaleCan(tableInfo);
       fittedSize = fit(obj);
-      if (tableInfo && Number.isFinite(Number(tableInfo.topSurfaceY))) {
-        controls.target.y = (controls.target.y + Number(tableInfo.topSurfaceY)) / 2;
-        controls.update();
-      }
     } catch (err) {
       if (els.modelHint) {
         els.modelHint.textContent = `Kunne ikke åbne 3D filen: ${err.message || err}`;
@@ -2165,6 +2357,7 @@
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
+      if (typeof controls.handleResize === "function") controls.handleResize();
     }
     resize();
 
@@ -2181,7 +2374,11 @@
     animate();
 
     const heightValue = fittedSize && Number.isFinite(Number(fittedSize.y)) ? Number(fittedSize.y) : 0;
-    if (els.modelHint) els.modelHint.textContent = buildModelHint(heightValue);
+    const extraHints = [];
+    if (canInfo) {
+      extraHints.push(`Skala-reference: sodavandsdåse ${canInfo.canHeight}x${canInfo.canDiameter} mm (forudsat mm-enheder).`);
+    }
+    if (els.modelHint) els.modelHint.textContent = buildModelHint(heightValue, extraHints);
   }
 
   function close3DModal() {

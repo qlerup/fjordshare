@@ -1514,19 +1514,8 @@ input[type="checkbox"] {
   border-radius: 10px;
   overflow: hidden;
   background:
-    radial-gradient(120% 85% at 50% 14%, rgba(168, 196, 233, 0.18), rgba(23, 32, 45, 0.08) 58%, rgba(0, 0, 0, 0) 72%),
-    linear-gradient(180deg, #141d2a 0 58%, #6f553d 58%, #3f2f24 100%);
-}
-
-.viewer-pane::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 57.8%;
-  height: 2px;
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.03));
-  pointer-events: none;
+    radial-gradient(120% 85% at 50% 14%, rgba(168, 196, 233, 0.2), rgba(23, 32, 45, 0.1) 60%, rgba(0, 0, 0, 0) 78%),
+    linear-gradient(180deg, #121b2a 0%, #0f1725 55%, #0a111c 100%);
 }
 
 .viewer-pane > * {
