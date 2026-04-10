@@ -1480,6 +1480,27 @@ input[type="checkbox"] {
   padding: 6px;
 }
 
+.log-entry-type {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.log-entry-target,
+.log-entry-folder,
+.log-entry-message {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.log-entry-folder {
+  color: var(--muted);
+}
+
+.log-entry-message {
+  white-space: pre-wrap;
+  min-width: 220px;
+}
+
 .metadata-head {
   display: flex;
   align-items: center;

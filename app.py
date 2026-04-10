@@ -2996,6 +2996,111 @@ def api_admin_users_delete(user_id: int):
     return jsonify({"ok": True})
 
 
+@app.route("/api/admin/logs", methods=["GET"])
+@login_required
+def api_admin_logs():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    try:
+        limit = int(str(request.args.get("limit") or "150"))
+    except Exception:
+        limit = 150
+    limit = max(20, min(limit, 500))
+
+    items: list[dict] = []
+    with closing(get_conn()) as conn:
+        slice_rows = conn.execute(
+            """
+            SELECT id, folder_path, filename, slice_error, slice_updated_at
+            FROM files
+            WHERE lower(COALESCE(slice_status,''))='error'
+              AND TRIM(COALESCE(slice_error,''))<>''
+            ORDER BY slice_updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+        thumb_rows = conn.execute(
+            """
+            SELECT id, folder_path, filename, thumb_error, thumb_updated_at
+            FROM files
+            WHERE lower(COALESCE(thumb_status,''))='error'
+              AND TRIM(COALESCE(thumb_error,''))<>''
+            ORDER BY thumb_updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+        zip_rows = conn.execute(
+            """
+            SELECT id, folder_path, zip_name, error, updated_at, created_at
+            FROM zip_jobs
+            WHERE lower(COALESCE(status,''))='error'
+              AND TRIM(COALESCE(error,''))<>''
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    for row in slice_rows:
+        items.append(
+            {
+                "kind": "slice",
+                "kind_label": "Slice",
+                "timestamp": str(row["slice_updated_at"] or ""),
+                "folder_path": str(row["folder_path"] or ""),
+                "target": str(row["filename"] or ""),
+                "message": str(row["slice_error"] or ""),
+                "file_id": int(row["id"]),
+                "_sort_id": int(row["id"]),
+            }
+        )
+
+    for row in thumb_rows:
+        items.append(
+            {
+                "kind": "thumbnail",
+                "kind_label": "Thumbnail",
+                "timestamp": str(row["thumb_updated_at"] or ""),
+                "folder_path": str(row["folder_path"] or ""),
+                "target": str(row["filename"] or ""),
+                "message": str(row["thumb_error"] or ""),
+                "file_id": int(row["id"]),
+                "_sort_id": int(row["id"]),
+            }
+        )
+
+    for row in zip_rows:
+        items.append(
+            {
+                "kind": "zip",
+                "kind_label": "ZIP",
+                "timestamp": str(row["updated_at"] or row["created_at"] or ""),
+                "folder_path": str(row["folder_path"] or ""),
+                "target": str(row["zip_name"] or f"zip-job-{int(row['id'])}"),
+                "message": str(row["error"] or ""),
+                "job_id": int(row["id"]),
+                "_sort_id": int(row["id"]),
+            }
+        )
+
+    items.sort(
+        key=lambda item: (
+            str(item.get("timestamp") or ""),
+            int(item.get("_sort_id") or 0),
+        ),
+        reverse=True,
+    )
+    for item in items:
+        item.pop("_sort_id", None)
+
+    return jsonify({"ok": True, "items": items[:limit], "count": len(items[:limit])})
+
+
 @app.route("/api/shares", methods=["GET", "POST"])
 @login_required
 def api_shares():

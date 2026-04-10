@@ -14,6 +14,7 @@
     zipJobs: [],
     shares: [],
     users: [],
+    adminLogs: [],
     pendingMetadata: [],
     metadataIndex: 0,
     threeModules: null,
@@ -47,6 +48,7 @@
     settingsPanelShares: document.getElementById("settings-panel-shares"),
     settingsPanelDns: document.getElementById("settings-panel-dns"),
     settingsPanelUsers: document.getElementById("settings-panel-users"),
+    settingsPanelLogs: document.getElementById("settings-panel-logs"),
     adminOnly: Array.from(document.querySelectorAll(".admin-only")),
     folderSelect: document.getElementById("folderSelect"),
     refreshFilesBtn: document.getElementById("refreshFilesBtn"),
@@ -162,6 +164,9 @@
     createUserBtn: document.getElementById("createUserBtn"),
     userStatus: document.getElementById("userStatus"),
     usersTableBody: document.getElementById("usersTableBody"),
+    logsRefreshBtn: document.getElementById("logsRefreshBtn"),
+    logsStatus: document.getElementById("logsStatus"),
+    logsTableBody: document.getElementById("logsTableBody"),
   };
 
   const TABS = {
@@ -838,6 +843,7 @@
       shares: els.settingsPanelShares,
       dns: els.settingsPanelDns,
       users: els.settingsPanelUsers,
+      logs: els.settingsPanelLogs,
     };
     Object.entries(panelMap).forEach(([key, panel]) => {
       if (!panel) return;
@@ -2434,6 +2440,48 @@
     await loadFolders();
   }
 
+  async function loadAdminLogs() {
+    if (state.role !== "admin" || !els.logsTableBody) return;
+    try {
+      const data = await api("/api/admin/logs?limit=200");
+      state.adminLogs = Array.isArray(data.items) ? data.items : [];
+      const count = Number(data.count || state.adminLogs.length || 0);
+      showStatus(els.logsStatus, count > 0 ? `Viser ${count} log-linje(r).` : "Ingen fejl i logs.", "ok");
+    } catch (err) {
+      state.adminLogs = [];
+      showStatus(els.logsStatus, err.message || "Kunne ikke hente logs", "error");
+    }
+    renderAdminLogs();
+  }
+
+  function renderAdminLogs() {
+    if (!els.logsTableBody) return;
+    const list = Array.isArray(state.adminLogs) ? state.adminLogs : [];
+    if (!list.length) {
+      els.logsTableBody.innerHTML = `<tr><td colspan="5" class="hint">Ingen fejl fundet.</td></tr>`;
+      return;
+    }
+
+    els.logsTableBody.innerHTML = list
+      .map((entry) => {
+        const timeText = formatDate(entry.timestamp || "");
+        const kind = String(entry.kind_label || entry.kind || "Log");
+        const target = String(entry.target || "-");
+        const folder = String(entry.folder_path || "-");
+        const message = String(entry.message || "-");
+        return `
+          <tr>
+            <td>${esc(timeText)}</td>
+            <td class="log-entry-type">${esc(kind)}</td>
+            <td class="log-entry-target">${esc(target)}</td>
+            <td class="log-entry-folder">${esc(folder)}</td>
+            <td class="log-entry-message">${esc(message)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
   async function ensureThreeModules() {
     if (state.threeModules) return state.threeModules;
     const sources = [
@@ -3766,6 +3814,7 @@
           if (state.currentSettingsTab === "shares") await loadShares();
           if (state.currentSettingsTab === "dns") await loadDns();
           if (state.currentSettingsTab === "users") await loadUsers();
+          if (state.currentSettingsTab === "logs") await loadAdminLogs();
         }
       });
     }
@@ -3779,6 +3828,7 @@
         if (tab === "shares") await loadShares();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
+        if (tab === "logs") await loadAdminLogs();
       });
     }
 
@@ -3790,6 +3840,7 @@
         if (tab === "shares") await loadShares();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
+        if (tab === "logs") await loadAdminLogs();
       });
     }
 
@@ -4336,6 +4387,14 @@
       els.usersTableBody.addEventListener("click", (event) => {
         onUsersTableClick(event).catch((err) => {
           showStatus(els.userStatus, err.message || "Kunne ikke slette bruger", "error");
+        });
+      });
+    }
+
+    if (els.logsRefreshBtn) {
+      els.logsRefreshBtn.addEventListener("click", () => {
+        loadAdminLogs().catch((err) => {
+          showStatus(els.logsStatus, err.message || "Kunne ikke hente logs", "error");
         });
       });
     }

@@ -141,12 +141,14 @@
           <button class="tab-btn active" data-settings-tab="shares">Delinger</button>
           <button class="tab-btn" data-settings-tab="dns">DNS</button>
           <button class="tab-btn" data-settings-tab="users">Brugere</button>
+          <button class="tab-btn" data-settings-tab="logs">Logs</button>
         </nav>
         <div class="tabs-mobile">
           <select id="settingsTabSelect" aria-label="Vælg indstillingsfane">
             <option value="shares" selected>Delinger</option>
             <option value="dns">DNS</option>
             <option value="users">Brugere</option>
+            <option value="logs">Logs</option>
           </select>
         </div>
       </div>
@@ -273,6 +275,29 @@
               </tr>
             </thead>
             <tbody id="usersTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="settings-panel-logs" class="settings-subpanel hidden">
+        <div class="panel">
+          <div class="toolbar">
+            <h3>Logs</h3>
+            <button id="logsRefreshBtn" class="btn" type="button">Opdater</button>
+          </div>
+          <p class="hint">Seneste fejl fra slicing, 3D thumbnails og ZIP udpakning.</p>
+          <div id="logsStatus" class="status hidden"></div>
+          <table class="table compact">
+            <thead>
+              <tr>
+                <th>Tid</th>
+                <th>Type</th>
+                <th>Fil/Job</th>
+                <th>Mappe</th>
+                <th>Fejl</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody"></tbody>
           </table>
         </div>
       </div>
