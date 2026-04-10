@@ -535,7 +535,7 @@
 
   function modelControlsText(mode = "orbit") {
     if (mode === "fly") {
-      return "Fri flyvning: bevæg musen for at kigge. W/A/S/D + piletaster + R/F bevæger. Shift = hurtigere.";
+      return "Fri flyvning: hold venstre museknap nede og træk for at kigge. W/A/S/D + piletaster + R/F bevæger. Shift = hurtigere.";
     }
     return "Mobil: 1 finger roter, 2 fingre zoom.";
   }
@@ -1993,6 +1993,8 @@
     if (t.onKeyDown) window.removeEventListener("keydown", t.onKeyDown);
     if (t.onKeyUp) window.removeEventListener("keyup", t.onKeyUp);
     if (t.onBlur) window.removeEventListener("blur", t.onBlur);
+    if (t.onMouseUp) window.removeEventListener("mouseup", t.onMouseUp);
+    if (t.onMouseLeave && t.canvas) t.canvas.removeEventListener("mouseleave", t.onMouseLeave);
     state.three = null;
   }
 
@@ -2102,6 +2104,8 @@
     let onFlyKeyDown = null;
     let onFlyKeyUp = null;
     let onFlyBlur = null;
+    let onFlyMouseUp = null;
+    let onFlyMouseLeave = null;
     let baseMoveSpeed = 120;
 
     const isTouchPrimary = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
@@ -2126,7 +2130,7 @@
       canvas.tabIndex = 0;
       canvas.style.outline = "none";
       controls = new FlyControls(camera, canvas);
-      controls.dragToLook = false;
+      controls.dragToLook = true;
       controls.autoForward = false;
       controls.rollSpeed = Math.PI / 8;
       controls.movementSpeed = baseMoveSpeed;
@@ -2227,9 +2231,17 @@
         clearLookDrift();
         syncMovementVector();
       };
+      onFlyMouseUp = () => {
+        clearLookDrift();
+      };
+      onFlyMouseLeave = () => {
+        clearLookDrift();
+      };
       window.addEventListener("keydown", onFlyKeyDown);
       window.addEventListener("keyup", onFlyKeyUp);
       window.addEventListener("blur", onFlyBlur);
+      window.addEventListener("mouseup", onFlyMouseUp);
+      canvas.addEventListener("mouseleave", onFlyMouseLeave);
 
       const clock = new THREE.Clock();
       updateControls = () => {
@@ -2799,7 +2811,20 @@
 
     const onResize = () => resize();
     window.addEventListener("resize", onResize);
-    state.three = { renderer, scene, camera, controls, frameId: 0, onResize, onKeyDown: onFlyKeyDown, onKeyUp: onFlyKeyUp, onBlur: onFlyBlur };
+    state.three = {
+      renderer,
+      scene,
+      camera,
+      controls,
+      frameId: 0,
+      onResize,
+      onKeyDown: onFlyKeyDown,
+      onKeyUp: onFlyKeyUp,
+      onBlur: onFlyBlur,
+      onMouseUp: onFlyMouseUp,
+      onMouseLeave: onFlyMouseLeave,
+      canvas,
+    };
     animate();
 
     const heightValue = modelOnlySize && Number.isFinite(Number(modelOnlySize.y))
