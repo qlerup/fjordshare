@@ -348,7 +348,21 @@
     <div id="threePane" class="viewer-pane hidden">
       <canvas id="threeCanvas"></canvas>
     </div>
-    <div id="modelHint" class="hint"></div>
+    <div id="modelInfoBar" class="model-info-bar" aria-live="polite">
+      <div class="model-info-item" role="status">
+        <div class="model-info-label">Kontrol</div>
+        <div id="modelControlHint" class="model-info-value">Træk for rotation, scroll for zoom</div>
+      </div>
+      <div class="model-info-item" role="status">
+        <div class="model-info-label">Højde</div>
+        <div id="modelHeightHint" class="model-info-value">Måler...</div>
+      </div>
+      <div class="model-info-item" role="status">
+        <div class="model-info-label">Skala</div>
+        <div id="modelScaleHint" class="model-info-value">Dåse 122x66 mm</div>
+      </div>
+    </div>
+    <div id="modelHint" class="hint hidden"></div>
   </div>
 </div>
 

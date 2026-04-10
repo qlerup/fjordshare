@@ -125,6 +125,10 @@
     modelViewer: document.getElementById("modelViewer"),
     threePane: document.getElementById("threePane"),
     threeCanvas: document.getElementById("threeCanvas"),
+    modelInfoBar: document.getElementById("modelInfoBar"),
+    modelControlHint: document.getElementById("modelControlHint"),
+    modelHeightHint: document.getElementById("modelHeightHint"),
+    modelScaleHint: document.getElementById("modelScaleHint"),
     modelHint: document.getElementById("modelHint"),
     shareNameInput: document.getElementById("shareNameInput"),
     shareFoldersSelect: document.getElementById("shareFoldersSelect"),
@@ -526,6 +530,13 @@
     return d.toLocaleString();
   }
 
+  const SCALE_CAN_HEIGHT_MM = 122;
+  const SCALE_CAN_DIAMETER_MM = 66;
+
+  function modelControlsText() {
+    return "Fri rotation: træk. Zoom: scroll/2 fingre.";
+  }
+
   function formatModelHeight(value) {
     const n = Number(value || 0);
     if (!Number.isFinite(n) || n <= 0) return "";
@@ -533,8 +544,27 @@
     return `Højde: ${pretty} model-enheder (ofte mm i STL/OBJ).`;
   }
 
+  function setModelHintMessage(message = "") {
+    if (!els.modelHint) return;
+    const text = String(message || "").trim();
+    els.modelHint.textContent = text;
+    els.modelHint.classList.toggle("hidden", !text);
+  }
+
+  function updateModelInfoBar({ controls = "", height = "", scale = "" } = {}) {
+    if (els.modelControlHint) {
+      els.modelControlHint.textContent = String(controls || modelControlsText());
+    }
+    if (els.modelHeightHint) {
+      els.modelHeightHint.textContent = String(height || "-");
+    }
+    if (els.modelScaleHint) {
+      els.modelScaleHint.textContent = String(scale || `Dåse ${SCALE_CAN_HEIGHT_MM}x${SCALE_CAN_DIAMETER_MM} mm`);
+    }
+  }
+
   function buildModelHint(heightValue = 0, extras = []) {
-    const controls = "Desktop: træk for fri rotation, scroll for zoom. Mobil: 1 finger roter frit, 2 fingre zoom.";
+    const controls = modelControlsText();
     const heightText = formatModelHeight(heightValue);
     const parts = [controls];
     if (heightText) parts.push(heightText);
@@ -1960,7 +1990,12 @@
   async function open3DModal(file) {
     if (!file || !els.modelModal) return;
     if (els.modelTitle) els.modelTitle.textContent = `3D: ${file.filename || ""}`;
-    if (els.modelHint) els.modelHint.textContent = "";
+    setModelHintMessage("");
+    updateModelInfoBar({
+      controls: modelControlsText(),
+      height: "Måler...",
+      scale: `Dåse ${SCALE_CAN_HEIGHT_MM}x${SCALE_CAN_DIAMETER_MM} mm`,
+    });
     els.modelModal.classList.remove("hidden");
 
     const ext = String(file.ext || "").toLowerCase();
@@ -1987,9 +2022,20 @@
           } catch (_err) {
             height = 0;
           }
+          const heightLabel = height > 0 ? `${height >= 100 ? height.toFixed(0) : height.toFixed(1)} model-enheder` : "Ukendt";
+          updateModelInfoBar({
+            controls: modelControlsText(),
+            height: heightLabel,
+            scale: "Reference-dåse vises i STL/OBJ preview",
+          });
           if (els.modelHint) els.modelHint.textContent = buildModelHint(height);
         }, { once: true });
       }
+      updateModelInfoBar({
+        controls: modelControlsText(),
+        height: "Måler...",
+        scale: "Reference-dåse vises i STL/OBJ preview",
+      });
       if (els.modelHint) els.modelHint.textContent = `${buildModelHint()} Måler model...`;
       return;
     }
@@ -1997,7 +2043,12 @@
     if (!(ext === ".stl" || ext === ".obj")) {
       if (els.modelViewerPane) els.modelViewerPane.classList.add("hidden");
       if (els.threePane) els.threePane.classList.add("hidden");
-      if (els.modelHint) els.modelHint.textContent = "Denne 3D filtype er ikke understøttet i preview endnu.";
+      updateModelInfoBar({
+        controls: "Preview ikke understøttet",
+        height: "-",
+        scale: "-",
+      });
+      setModelHintMessage("Denne 3D filtype er ikke understøttet i preview endnu.");
       return;
     }
 
@@ -2009,9 +2060,12 @@
     try {
       modules = await ensureThreeModules();
     } catch (err) {
-      if (els.modelHint) {
-        els.modelHint.textContent = `Kunne ikke indlæse 3D viewer: ${err.message || err}`;
-      }
+      updateModelInfoBar({
+        controls: "Kunne ikke indlæse viewer",
+        height: "-",
+        scale: "-",
+      });
+      setModelHintMessage(`Kunne ikke indlæse 3D viewer: ${err.message || err}`);
       return;
     }
     const { THREE, TrackballControls, STLLoader, OBJLoader } = modules;
@@ -2096,6 +2150,98 @@
       return texture;
     }
 
+    function createCanLabelTexture() {
+      const width = 1024;
+      const height = 512;
+      const canvasTexture = document.createElement("canvas");
+      canvasTexture.width = width;
+      canvasTexture.height = height;
+      const ctx = canvasTexture.getContext("2d");
+      if (!ctx) return null;
+
+      const base = ctx.createLinearGradient(0, 0, width, 0);
+      base.addColorStop(0, "#991d19");
+      base.addColorStop(0.35, "#c43029");
+      base.addColorStop(0.65, "#b62620");
+      base.addColorStop(1, "#861712");
+      ctx.fillStyle = base;
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = "#eceff3";
+      ctx.fillRect(0, Math.floor(height * 0.42), width, Math.floor(height * 0.16));
+
+      ctx.fillStyle = "rgba(255,255,255,0.22)";
+      for (let x = 0; x < width; x += 6) {
+        const alpha = 0.02 + ((Math.sin(x * 0.023) + 1) * 0.03);
+        ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(3)})`;
+        ctx.fillRect(x, 0, 2, height);
+      }
+
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      ctx.font = "700 96px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("SODA", width * 0.5, height * 0.31);
+
+      ctx.fillStyle = "rgba(255,255,255,0.84)";
+      ctx.font = "600 44px system-ui";
+      ctx.fillText("33 cl", width * 0.5, height * 0.73);
+
+      const texture = new THREE.CanvasTexture(canvasTexture);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy() || 1, 8);
+      if ("colorSpace" in texture && "SRGBColorSpace" in THREE) {
+        texture.colorSpace = THREE.SRGBColorSpace;
+      }
+      return texture;
+    }
+
+    function chooseCanPosition(tableInfo, canRadius) {
+      const { modelBox, modelCenter, topWidth, topDepth } = tableInfo;
+      const safety = canRadius * 1.35;
+      const tableMinX = modelCenter.x - topWidth / 2 + canRadius * 1.1;
+      const tableMaxX = modelCenter.x + topWidth / 2 - canRadius * 1.1;
+      const tableMinZ = modelCenter.z - topDepth / 2 + canRadius * 1.1;
+      const tableMaxZ = modelCenter.z + topDepth / 2 - canRadius * 1.1;
+
+      const pad = canRadius * 1.35;
+      const minX = modelBox.min.x - pad;
+      const maxX = modelBox.max.x + pad;
+      const minZ = modelBox.min.z - pad;
+      const maxZ = modelBox.max.z + pad;
+
+      const insideExpandedModel = (x, z) => x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+      const insideTable = (x, z) => x >= tableMinX && x <= tableMaxX && z >= tableMinZ && z <= tableMaxZ;
+
+      const candidates = [
+        { x: modelBox.max.x + safety + canRadius, z: modelCenter.z },
+        { x: modelBox.min.x - safety - canRadius, z: modelCenter.z },
+        { x: modelCenter.x, z: modelBox.max.z + safety + canRadius },
+        { x: modelCenter.x, z: modelBox.min.z - safety - canRadius },
+      ];
+
+      for (const cand of candidates) {
+        if (insideTable(cand.x, cand.z) && !insideExpandedModel(cand.x, cand.z)) {
+          return cand;
+        }
+      }
+
+      const fallback = candidates[0];
+      const clamped = {
+        x: Math.min(tableMaxX, Math.max(tableMinX, fallback.x)),
+        z: Math.min(tableMaxZ, Math.max(tableMinZ, fallback.z)),
+      };
+      if (!insideExpandedModel(clamped.x, clamped.z)) {
+        return clamped;
+      }
+
+      return {
+        x: Math.min(tableMaxX, Math.max(tableMinX, maxX + canRadius * 1.1)),
+        z: Math.min(tableMaxZ, Math.max(tableMinZ, modelCenter.z)),
+      };
+    }
+
     function applyBestStandingOrientation(object) {
       const candidateRotations = [
         [0, 0, 0],
@@ -2122,8 +2268,11 @@
         if (tempBox.isEmpty()) return;
         tempBox.getSize(tempSize);
 
-        const horizontalSpan = Math.max(tempSize.x, tempSize.z, 1e-6);
-        const score = tempSize.y / horizontalSpan;
+        const footprint = Math.max(tempSize.x, 1e-6) * Math.max(tempSize.z, 1e-6);
+        const height = Math.max(tempSize.y, 1e-6);
+        const aspect = height / Math.max(tempSize.x, tempSize.z, 1e-6);
+        const flattenPenalty = aspect < 0.45 ? 0.35 : 1;
+        const score = (footprint / height) * flattenPenalty;
         if (score > bestScore) {
           bestScore = score;
           bestQuaternion.copy(object.quaternion);
@@ -2144,12 +2293,12 @@
       const center = box.getCenter(new THREE.Vector3());
 
       const modelSpan = Math.max(size.x, size.z, 1);
-      const topWidth = Math.max(size.x * 1.8, modelSpan * 1.45);
-      const topDepth = Math.max(size.z * 1.8, modelSpan * 1.45);
-      const topThickness = Math.max(modelSpan * 0.035, 1);
-      const legHeight = Math.max(size.y * 0.65, modelSpan * 0.55, 8);
-      const legThickness = Math.max(Math.min(topWidth, topDepth) * 0.07, 1.4);
-      const clearance = Math.max(topThickness * 0.2, 0.35);
+      const topWidth = Math.max(size.x * 3.2, modelSpan * 2.9, SCALE_CAN_DIAMETER_MM * 4.2);
+      const topDepth = Math.max(size.z * 3.2, modelSpan * 2.9, SCALE_CAN_DIAMETER_MM * 3.6);
+      const topThickness = Math.max(modelSpan * 0.065, 4);
+      const legHeight = Math.max(size.y * 0.95, modelSpan * 0.95, SCALE_CAN_HEIGHT_MM * 0.45);
+      const legThickness = Math.max(Math.min(topWidth, topDepth) * 0.06, 6);
+      const clearance = Math.max(topThickness * 0.22, 1.4);
 
       const topCenterY = box.min.y - clearance - topThickness / 2;
       const topSurfaceY = topCenterY + topThickness / 2;
@@ -2219,56 +2368,82 @@
 
     function addScaleCan(tableInfo) {
       if (!tableInfo) return null;
-      const canHeight = 122;
-      const canDiameter = 66;
+      const canHeight = SCALE_CAN_HEIGHT_MM;
+      const canDiameter = SCALE_CAN_DIAMETER_MM;
       const canRadius = canDiameter / 2;
 
-      const { modelBox, modelSize, modelCenter, topSurfaceY, topWidth, topDepth } = tableInfo;
-      const safety = canRadius * 1.2;
-      const tableMinX = modelCenter.x - topWidth / 2 + safety;
-      const tableMaxX = modelCenter.x + topWidth / 2 - safety;
-      const tableMinZ = modelCenter.z - topDepth / 2 + safety;
-      const tableMaxZ = modelCenter.z + topDepth / 2 - safety;
-
-      let canX = modelBox.max.x + canRadius * 1.85;
-      if (canX > tableMaxX) canX = modelBox.min.x - canRadius * 1.85;
-      canX = Math.min(tableMaxX, Math.max(tableMinX, canX));
-
-      let canZ = modelCenter.z + Math.min(modelSize.z * 0.26, topDepth * 0.18);
-      canZ = Math.min(tableMaxZ, Math.max(tableMinZ, canZ));
+      const { topSurfaceY } = tableInfo;
+      const { x: canX, z: canZ } = chooseCanPosition(tableInfo, canRadius);
 
       const canBaseY = topSurfaceY + 0.25;
       const canGroup = new THREE.Group();
       canGroup.name = "scaleCan";
 
+      const labelTexture = createCanLabelTexture();
       const body = new THREE.Mesh(
-        new THREE.CylinderGeometry(canRadius, canRadius, canHeight, 48, 1, false),
-        new THREE.MeshStandardMaterial({ color: 0xc83a35, roughness: 0.35, metalness: 0.42 })
+        new THREE.CylinderGeometry(canRadius, canRadius, canHeight, 64, 1, true),
+        new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          map: labelTexture || null,
+          roughness: 0.34,
+          metalness: 0.44,
+        })
       );
       body.position.set(canX, canBaseY + canHeight / 2, canZ);
       body.castShadow = true;
       body.receiveShadow = true;
       canGroup.add(body);
 
-      const label = new THREE.Mesh(
-        new THREE.CylinderGeometry(canRadius * 1.002, canRadius * 1.002, canHeight * 0.16, 48, 1, true),
-        new THREE.MeshStandardMaterial({ color: 0xf2f3f4, roughness: 0.45, metalness: 0.15 })
-      );
-      label.position.set(canX, canBaseY + canHeight * 0.52, canZ);
-      canGroup.add(label);
-
-      const capMaterial = new THREE.MeshStandardMaterial({ color: 0xb2b8c1, roughness: 0.3, metalness: 0.85 });
+      const capMaterial = new THREE.MeshStandardMaterial({ color: 0xb3b9c2, roughness: 0.25, metalness: 0.9 });
       const capTop = new THREE.Mesh(
-        new THREE.CylinderGeometry(canRadius * 0.975, canRadius * 0.975, 1.8, 48),
+        new THREE.CylinderGeometry(canRadius * 0.982, canRadius * 0.982, 1.6, 64),
         capMaterial
       );
-      capTop.position.set(canX, canBaseY + canHeight - 0.9, canZ);
+      capTop.position.set(canX, canBaseY + canHeight - 0.8, canZ);
       capTop.castShadow = true;
       capTop.receiveShadow = true;
       canGroup.add(capTop);
 
+      const topInset = new THREE.Mesh(
+        new THREE.CylinderGeometry(canRadius * 0.86, canRadius * 0.86, 0.7, 64),
+        new THREE.MeshStandardMaterial({ color: 0x868d97, roughness: 0.34, metalness: 0.82 })
+      );
+      topInset.position.set(canX, canBaseY + canHeight - 0.15, canZ);
+      topInset.castShadow = true;
+      topInset.receiveShadow = true;
+      canGroup.add(topInset);
+
+      const rim = new THREE.Mesh(
+        new THREE.TorusGeometry(canRadius * 0.85, canRadius * 0.05, 18, 64),
+        capMaterial
+      );
+      rim.rotation.x = Math.PI / 2;
+      rim.position.set(canX, canBaseY + canHeight - 0.2, canZ);
+      rim.castShadow = true;
+      rim.receiveShadow = true;
+      canGroup.add(rim);
+
+      const tabRing = new THREE.Mesh(
+        new THREE.TorusGeometry(canRadius * 0.24, canRadius * 0.045, 12, 40),
+        capMaterial
+      );
+      tabRing.rotation.x = Math.PI / 2;
+      tabRing.position.set(canX + canRadius * 0.08, canBaseY + canHeight + 0.55, canZ - canRadius * 0.08);
+      tabRing.castShadow = true;
+      tabRing.receiveShadow = true;
+      canGroup.add(tabRing);
+
+      const tabBridge = new THREE.Mesh(
+        new THREE.BoxGeometry(canRadius * 0.4, 0.8, canRadius * 0.12),
+        capMaterial
+      );
+      tabBridge.position.set(canX + canRadius * 0.05, canBaseY + canHeight + 0.45, canZ + canRadius * 0.16);
+      tabBridge.castShadow = true;
+      tabBridge.receiveShadow = true;
+      canGroup.add(tabBridge);
+
       const capBottom = new THREE.Mesh(
-        new THREE.CylinderGeometry(canRadius * 0.985, canRadius * 0.985, 1.4, 48),
+        new THREE.CylinderGeometry(canRadius * 0.985, canRadius * 0.985, 1.4, 64),
         capMaterial
       );
       capBottom.position.set(canX, canBaseY + 0.7, canZ);
@@ -2277,11 +2452,14 @@
       canGroup.add(capBottom);
 
       scene.add(canGroup);
-      return { canHeight, canDiameter };
+      return { canHeight, canDiameter, group: canGroup };
     }
 
-    function fit(object) {
+    function fit(object, extraObjects = []) {
       const box = new THREE.Box3().setFromObject(object);
+      (Array.isArray(extraObjects) ? extraObjects : []).forEach((extra) => {
+        if (extra) box.expandByObject(extra);
+      });
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
       const radius = Math.max(size.x, size.y, size.z) || 1;
@@ -2341,11 +2519,14 @@
       scene.add(obj);
       const tableInfo = addPresentationTable(obj);
       canInfo = addScaleCan(tableInfo);
-      fittedSize = fit(obj);
+      fittedSize = fit(obj, [canInfo && canInfo.group ? canInfo.group : null]);
     } catch (err) {
-      if (els.modelHint) {
-        els.modelHint.textContent = `Kunne ikke åbne 3D filen: ${err.message || err}`;
-      }
+      updateModelInfoBar({
+        controls: "Kunne ikke åbne model",
+        height: "-",
+        scale: "-",
+      });
+      setModelHintMessage(`Kunne ikke åbne 3D filen: ${err.message || err}`);
       return;
     }
 
@@ -2374,6 +2555,17 @@
     animate();
 
     const heightValue = fittedSize && Number.isFinite(Number(fittedSize.y)) ? Number(fittedSize.y) : 0;
+    const heightLabel = heightValue > 0 ? `${heightValue >= 100 ? heightValue.toFixed(0) : heightValue.toFixed(1)} model-enheder` : "Ukendt";
+    const scaleLabel = canInfo
+      ? `Dåse ${canInfo.canHeight}x${canInfo.canDiameter} mm`
+      : `Dåse ${SCALE_CAN_HEIGHT_MM}x${SCALE_CAN_DIAMETER_MM} mm`;
+
+    updateModelInfoBar({
+      controls: modelControlsText(),
+      height: heightLabel,
+      scale: scaleLabel,
+    });
+
     const extraHints = [];
     if (canInfo) {
       extraHints.push(`Skala-reference: sodavandsdåse ${canInfo.canHeight}x${canInfo.canDiameter} mm (forudsat mm-enheder).`);
@@ -2384,6 +2576,12 @@
   function close3DModal() {
     cleanupThree();
     if (els.modelViewer) els.modelViewer.removeAttribute("src");
+    setModelHintMessage("");
+    updateModelInfoBar({
+      controls: modelControlsText(),
+      height: "-",
+      scale: `Dåse ${SCALE_CAN_HEIGHT_MM}x${SCALE_CAN_DIAMETER_MM} mm`,
+    });
     if (els.modelModal) els.modelModal.classList.add("hidden");
   }
 
