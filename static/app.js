@@ -2445,17 +2445,27 @@
       });
       zone.addEventListener("dragenter", (event) => {
         event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
         zone.classList.add("dragover");
       });
       zone.addEventListener("dragover", (event) => {
         event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
         zone.classList.add("dragover");
       });
-      zone.addEventListener("dragleave", () => {
+      zone.addEventListener("dragleave", (event) => {
+        event.stopPropagation();
         zone.classList.remove("dragover");
       });
       zone.addEventListener("drop", (event) => {
         event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
         zone.classList.remove("dragover");
         const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
         queueInfoAttachmentUpload(files);
@@ -2477,6 +2487,83 @@
         closeFileInfoDrawer();
       }
     });
+
+    const queueMetadataAttachmentUpload = (files) => {
+      const current = getMetadataCurrentItem();
+      const id = Number(current && current.id ? current.id : 0);
+      const list = Array.from(files || []);
+      if (!id || !list.length) {
+        if (els.metadataAttachInput) els.metadataAttachInput.value = "";
+        return;
+      }
+      uploadMetadataAttachments(id, list)
+        .catch((err) => {
+          showStatus(els.metadataAttachStatus, err.message || "Kunne ikke uploade billeder", "error");
+        })
+        .finally(() => {
+          if (els.metadataAttachInput) els.metadataAttachInput.value = "";
+        });
+    };
+
+    if (els.metadataNoteInput) {
+      els.metadataNoteInput.addEventListener("input", persistMetadataStepInputs);
+      els.metadataNoteInput.addEventListener("change", persistMetadataStepInputs);
+    }
+    if (els.metadataQtyInput) {
+      els.metadataQtyInput.addEventListener("input", persistMetadataStepInputs);
+      els.metadataQtyInput.addEventListener("change", persistMetadataStepInputs);
+    }
+    if (els.metadataPrevBtn) {
+      els.metadataPrevBtn.addEventListener("click", () => moveMetadataStep(-1));
+    }
+    if (els.metadataNextBtn) {
+      els.metadataNextBtn.addEventListener("click", () => moveMetadataStep(1));
+    }
+    if (els.metadataAttachUploadBtn && els.metadataAttachInput) {
+      els.metadataAttachUploadBtn.addEventListener("click", () => {
+        const current = getMetadataCurrentItem();
+        if (!current || !Number(current.id || 0)) return;
+        els.metadataAttachInput.click();
+      });
+      els.metadataAttachInput.addEventListener("change", () => {
+        queueMetadataAttachmentUpload((els.metadataAttachInput && els.metadataAttachInput.files) || []);
+      });
+    }
+    if (els.metadataAttachDropZone) {
+      const zone = els.metadataAttachDropZone;
+      zone.addEventListener("click", () => {
+        const current = getMetadataCurrentItem();
+        if (!current || !Number(current.id || 0) || !els.metadataAttachInput) return;
+        els.metadataAttachInput.click();
+      });
+      zone.addEventListener("dragenter", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        zone.classList.add("dragover");
+      });
+      zone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        zone.classList.add("dragover");
+      });
+      zone.addEventListener("dragleave", (event) => {
+        event.stopPropagation();
+        zone.classList.remove("dragover");
+      });
+      zone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        zone.classList.remove("dragover");
+        const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+        queueMetadataAttachmentUpload(files);
+      });
+    }
 
     if (els.metadataCancelBtn) {
       els.metadataCancelBtn.addEventListener("click", closeMetadataModal);
