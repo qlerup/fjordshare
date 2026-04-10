@@ -603,6 +603,31 @@
     if (!Number.isFinite(raw) || raw <= 0) return defaultContext;
 
     const hint = extractUnitHintFromFilename(filename);
+
+    // Most STL/OBJ exports from slicer workflows are already in mm.
+    // Keep a conservative default in common model size ranges unless filename explicitly hints another unit.
+    if (!hint) {
+      const assumedMmHeight = raw;
+      if (assumedMmHeight >= 8 && assumedMmHeight <= 1200) {
+        return {
+          unitKey: "mm",
+          unitLabel: "mm",
+          suggestedUnitKey: "mm",
+          suggestedUnitLabel: "mm",
+          mmPerUnit: 1,
+          confidence: "medium",
+          source: "default-mm-range",
+          canHeightUnits: SCALE_CAN_HEIGHT_MM,
+          canDiameterUnits: SCALE_CAN_DIAMETER_MM,
+          alternatives: candidates.slice(0, 4).map((candidate) => ({
+            unitKey: candidate.unitKey,
+            unitLabel: candidate.unitLabel,
+            heightMm: raw * candidate.mmPerUnit,
+          })),
+        };
+      }
+    }
+
     const scoreHeightMm = (heightMm, priorPenalty = 0) => {
       const h = Number(heightMm || 0);
       if (!Number.isFinite(h) || h <= 0) return 999;
@@ -705,6 +730,9 @@
     }
     if (source === "filename") {
       return `Enheder: læst som ${label} fra filnavn, konverteret til mm.`;
+    }
+    if (source === "default-mm-range") {
+      return "Enheder: standard STL/OBJ antaget som mm (konservativt default).";
     }
     if (source === "auto-mm-fallback") {
       return `Enheder: auto-gæt var ${suggestedLabel}, men vises konservativt som mm.`;
@@ -1172,8 +1200,20 @@
     const options = state.folders.map((f) => f.path);
     if (!state.currentFolder) {
       const home = state.homeFolder;
-      if (home && options.includes(home)) state.currentFolder = home;
-      else state.currentFolder = options[0] || "";
+      if (state.role === "admin" && home) {
+        const parts = String(home).split("/").filter(Boolean);
+        for (let i = 1; i < parts.length; i += 1) {
+          const candidate = parts.slice(0, i).join("/");
+          if (candidate && options.includes(candidate)) {
+            state.currentFolder = candidate;
+            break;
+          }
+        }
+      }
+      if (!state.currentFolder) {
+        if (home && options.includes(home)) state.currentFolder = home;
+        else state.currentFolder = options[0] || "";
+      }
     }
     if (state.currentFolder && !options.includes(state.currentFolder)) {
       state.currentFolder = options[0] || "";
