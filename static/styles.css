@@ -1262,12 +1262,18 @@ input[type="checkbox"] {
 }
 
 .file-info-attach-card {
+  appearance: none;
   text-decoration: none;
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   background: var(--panel-2);
   color: var(--text);
+  padding: 0;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
   display: grid;
   grid-template-rows: auto auto;
 }
@@ -1468,6 +1474,33 @@ input[type="checkbox"] {
 
 .modal-wide {
   width: min(1100px, calc(100vw - 24px));
+}
+
+.modal-image-preview {
+  width: min(1280px, calc(100vw - 20px));
+  max-height: calc(100vh - 20px);
+  display: grid;
+  gap: 10px;
+}
+
+.image-preview-wrap {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0c121b;
+  min-height: 220px;
+  max-height: calc(100vh - 110px);
+  display: grid;
+  place-items: center;
+  overflow: auto;
+}
+
+.image-preview-wrap img {
+  max-width: 100%;
+  max-height: calc(100vh - 140px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
 }
 
 .viewer-pane {

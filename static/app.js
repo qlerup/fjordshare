@@ -114,6 +114,10 @@
     metadataPrevBtn: document.getElementById("metadataPrevBtn"),
     metadataNextBtn: document.getElementById("metadataNextBtn"),
     metadataSaveBtn: document.getElementById("metadataSaveBtn"),
+    imagePreviewModal: document.getElementById("imagePreviewModal"),
+    imagePreviewTitle: document.getElementById("imagePreviewTitle"),
+    imagePreviewImg: document.getElementById("imagePreviewImg"),
+    closeImagePreviewBtn: document.getElementById("closeImagePreviewBtn"),
     modelModal: document.getElementById("modelModal"),
     modelTitle: document.getElementById("modelTitle"),
     closeModelModalBtn: document.getElementById("closeModelModalBtn"),
@@ -884,13 +888,13 @@
             const contentUrl = String(item.content_url || "#");
             const name = String(item.original_name || "Billede");
             return `
-              <a class="file-info-attach-card" href="${esc(contentUrl)}" target="_blank" rel="noopener">
+              <button class="file-info-attach-card" type="button" data-image-url="${esc(contentUrl)}" data-image-name="${esc(name)}">
                 <img src="${esc(contentUrl)}" alt="${esc(name)}" loading="lazy">
                 <div class="file-info-attach-meta">
                   <div class="file-info-attach-name" title="${esc(name)}">${esc(name)}</div>
                   <div class="file-info-attach-sub">${formatSize(item.file_size)} · ${formatDate(item.uploaded_at)}</div>
                 </div>
-              </a>
+              </button>
             `;
           })
           .join("")}
@@ -1252,13 +1256,13 @@
             const contentUrl = String(item.content_url || "#");
             const name = String(item.original_name || "Billede");
             return `
-              <a class="file-info-attach-card" href="${esc(contentUrl)}" target="_blank" rel="noopener">
+              <button class="file-info-attach-card" type="button" data-image-url="${esc(contentUrl)}" data-image-name="${esc(name)}">
                 <img src="${esc(contentUrl)}" alt="${esc(name)}" loading="lazy">
                 <div class="file-info-attach-meta">
                   <div class="file-info-attach-name" title="${esc(name)}">${esc(name)}</div>
                   <div class="file-info-attach-sub">${formatSize(item.file_size)} · ${formatDate(item.uploaded_at)}</div>
                 </div>
-              </a>
+              </button>
             `;
           })
           .join("")}
@@ -1376,6 +1380,30 @@
     showStatus(els.metadataAttachStatus, "");
     renderMetadataAttachments([]);
     if (els.metadataModal) els.metadataModal.classList.add("hidden");
+  }
+
+  function openImagePreviewModal(imageUrl, imageName = "Billede") {
+    const url = String(imageUrl || "").trim();
+    if (!url || !els.imagePreviewModal || !els.imagePreviewImg) return;
+    const name = String(imageName || "Billede").trim() || "Billede";
+    els.imagePreviewImg.src = url;
+    els.imagePreviewImg.alt = name;
+    if (els.imagePreviewTitle) {
+      els.imagePreviewTitle.textContent = name;
+    }
+    els.imagePreviewModal.classList.remove("hidden");
+  }
+
+  function closeImagePreviewModal() {
+    if (!els.imagePreviewModal) return;
+    els.imagePreviewModal.classList.add("hidden");
+    if (els.imagePreviewImg) {
+      els.imagePreviewImg.removeAttribute("src");
+      els.imagePreviewImg.alt = "Billede";
+    }
+    if (els.imagePreviewTitle) {
+      els.imagePreviewTitle.textContent = "Billede";
+    }
   }
 
   async function saveBatchMetadata() {
@@ -2425,6 +2453,23 @@
         });
     };
 
+    const onAttachmentCardClick = (event) => {
+      const card = event.target.closest(".file-info-attach-card");
+      if (!card) return;
+      event.preventDefault();
+      const imageUrl = String(card.dataset.imageUrl || "").trim();
+      if (!imageUrl) return;
+      const imageName = String(card.dataset.imageName || "Billede");
+      openImagePreviewModal(imageUrl, imageName);
+    };
+
+    if (els.fileInfoAttachList) {
+      els.fileInfoAttachList.addEventListener("click", onAttachmentCardClick);
+    }
+    if (els.metadataAttachList) {
+      els.metadataAttachList.addEventListener("click", onAttachmentCardClick);
+    }
+
     if (els.fileInfoAttachUploadBtn && els.fileInfoAttachInput) {
       els.fileInfoAttachUploadBtn.addEventListener("click", () => {
         const id = Number(state.currentInfoFileId || 0);
@@ -2483,9 +2528,13 @@
       });
     }
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && state.currentInfoFileId) {
-        closeFileInfoDrawer();
+      if (event.key !== "Escape") return;
+      const imageModalOpen = !!(els.imagePreviewModal && !els.imagePreviewModal.classList.contains("hidden"));
+      if (imageModalOpen) {
+        closeImagePreviewModal();
+        return;
       }
+      if (state.currentInfoFileId) closeFileInfoDrawer();
     });
 
     const queueMetadataAttachmentUpload = (files) => {
@@ -2579,6 +2628,17 @@
       els.metadataModal.addEventListener("click", (event) => {
         if (event.target === els.metadataModal || event.target.classList.contains("modal-backdrop")) {
           closeMetadataModal();
+        }
+      });
+    }
+
+    if (els.closeImagePreviewBtn) {
+      els.closeImagePreviewBtn.addEventListener("click", closeImagePreviewModal);
+    }
+    if (els.imagePreviewModal) {
+      els.imagePreviewModal.addEventListener("click", (event) => {
+        if (event.target === els.imagePreviewModal || event.target.classList.contains("modal-backdrop")) {
+          closeImagePreviewModal();
         }
       });
     }
