@@ -1101,6 +1101,13 @@ input[type="checkbox"] {
   font-size: 0.72rem;
   font-weight: 700;
   line-height: 1.15;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.file-slice-badge:disabled {
+  opacity: 0.82;
+  cursor: default;
 }
 
 .file-slice-badge.queued {
@@ -1583,6 +1590,28 @@ input[type="checkbox"] {
   flex-wrap: wrap;
 }
 
+.slice-modal-card {
+  width: min(920px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+}
+
+.slice-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.slice-modal-field {
+  display: grid;
+  gap: 6px;
+}
+
+.slice-modal-field label {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
 .modal {
   position: fixed;
   inset: 0;
@@ -1772,6 +1801,10 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 760px) {
+  .slice-modal-grid {
+    grid-template-columns: 1fr;
+  }
+
   .modal-wide {
     width: min(1100px, calc(100vw - 14px));
     max-height: calc(100vh - 14px);

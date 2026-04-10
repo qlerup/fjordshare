@@ -60,8 +60,19 @@ Miljøvariabler i `.env`:
 - `BAMBUSTUDIO_BIN` (default: `bambu-studio`)
 - `BAMBUSTUDIO_CONFIG_PATH` (valgfri sti til preset/config-fil)
 - `BAMBUSTUDIO_TIMEOUT_SEC` (default: `1800`)
+- `BAMBUSTUDIO_PRINTER_PROFILES` (valgfri komma-separeret fallback-liste)
+- `BAMBUSTUDIO_PRINT_PROFILES` (valgfri komma-separeret fallback-liste)
+- `BAMBUSTUDIO_FILAMENT_PROFILES` (valgfri komma-separeret fallback-liste)
 
 Hvis auto-detektion af release-asset fejler i build, så sæt `BAMBUSTUDIO_APPIMAGE_URL` i `.env` til en konkret AppImage URL og byg igen.
+
+Når du klikker **Slice STL** i appen, åbnes nu en modal hvor du kan vælge:
+
+- Printer
+- Printprofil
+- Filamentprofil
+
+Profiler læses primært fra `BAMBUSTUDIO_CONFIG_PATH`; hvis ingen kan læses, bruges fallback-listerne fra env-variablerne ovenfor.
 
 ### Egne printer-, print- og filamentprofiler
 

@@ -305,6 +305,41 @@
   </main>
 </div>
 
+<div id="sliceModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card slice-modal-card">
+    <div class="toolbar">
+      <h3>Slice STL</h3>
+      <button id="sliceModalCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <p class="hint">Vælg printer, printprofil og filamentprofil før slicing.</p>
+
+    <div id="sliceModalFileName" class="metadata-current-file">-</div>
+
+    <div class="slice-modal-grid">
+      <div class="slice-modal-field">
+        <label for="slicePrinterSelect">Printer</label>
+        <select id="slicePrinterSelect" class="select"></select>
+      </div>
+      <div class="slice-modal-field">
+        <label for="slicePrintProfileSelect">Printprofil</label>
+        <select id="slicePrintProfileSelect" class="select"></select>
+      </div>
+      <div class="slice-modal-field">
+        <label for="sliceFilamentProfileSelect">Filamentprofil</label>
+        <select id="sliceFilamentProfileSelect" class="select"></select>
+      </div>
+    </div>
+
+    <div id="sliceModalStatus" class="status hidden"></div>
+
+    <div class="toolbar">
+      <button id="sliceModalCancelBtn" class="btn" type="button">Annuller</button>
+      <button id="sliceModalStartBtn" class="btn primary" type="button">Start slicing</button>
+    </div>
+  </div>
+</div>
+
 <div id="metadataModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card">

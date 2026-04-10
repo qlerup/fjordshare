@@ -23,6 +23,13 @@
     currentSettingsTab: "shares",
     currentInfoFileId: 0,
     currentFileAttachments: [],
+    currentSliceFileId: 0,
+    sliceProfiles: null,
+    lastSliceSelection: {
+      printer_profile: "",
+      print_profile: "",
+      filament_profile: "",
+    },
     infoDrawerHideTimer: null,
     selectMode: false,
     selectedFolderPaths: new Set(),
@@ -109,6 +116,15 @@
     fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
     fileInfoSliceBtn: document.getElementById("fileInfoSliceBtn"),
     fileInfoOpen3DBtn: document.getElementById("fileInfoOpen3DBtn"),
+    sliceModal: document.getElementById("sliceModal"),
+    sliceModalCloseBtn: document.getElementById("sliceModalCloseBtn"),
+    sliceModalCancelBtn: document.getElementById("sliceModalCancelBtn"),
+    sliceModalStartBtn: document.getElementById("sliceModalStartBtn"),
+    sliceModalFileName: document.getElementById("sliceModalFileName"),
+    sliceModalStatus: document.getElementById("sliceModalStatus"),
+    slicePrinterSelect: document.getElementById("slicePrinterSelect"),
+    slicePrintProfileSelect: document.getElementById("slicePrintProfileSelect"),
+    sliceFilamentProfileSelect: document.getElementById("sliceFilamentProfileSelect"),
     metadataModal: document.getElementById("metadataModal"),
     metadataStepCounter: document.getElementById("metadataStepCounter"),
     metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
@@ -1289,8 +1305,12 @@
       error: { cls: "error", text: "Slice fejl" },
     }[status];
     if (!meta) return "";
-
-    return `<span class="file-slice-badge ${meta.cls}">${esc(meta.text)}</span>`;
+    const fileId = Number(file.id || 0);
+    const disabledAttr = (status === "queued" || status === "processing") ? "disabled" : "";
+    if (!fileId) {
+      return `<span class="file-slice-badge ${meta.cls}">${esc(meta.text)}</span>`;
+    }
+    return `<button class="file-slice-badge ${meta.cls}" type="button" data-action="open-slice" data-file-id="${fileId}" ${disabledAttr}>${esc(meta.text)}</button>`;
   }
 
   function sliceButtonLabelForStatus(status) {
@@ -1299,6 +1319,105 @@
     if (status === "ready") return "Slice igen";
     if (status === "error") return "Prøv slicing igen";
     return "Slice STL";
+  }
+
+  function toStringList(values) {
+    if (!Array.isArray(values)) return [];
+    return values.map((v) => String(v || "").trim()).filter(Boolean);
+  }
+
+  function renderSliceSelect(selectEl, options, placeholder = "Vælg") {
+    if (!selectEl) return;
+    const list = toStringList(options);
+    const html = [`<option value="">${esc(placeholder)}</option>`]
+      .concat(list.map((value) => `<option value="${esc(value)}">${esc(value)}</option>`))
+      .join("");
+    selectEl.innerHTML = html;
+  }
+
+  function setSliceSelectValue(selectEl, preferredValue = "") {
+    if (!selectEl) return;
+    const wanted = String(preferredValue || "").trim();
+    if (!wanted) {
+      selectEl.value = "";
+      return;
+    }
+    const hasOption = Array.from(selectEl.options || []).some((opt) => String(opt.value || "") === wanted);
+    selectEl.value = hasOption ? wanted : "";
+  }
+
+  async function loadSliceProfiles(force = false) {
+    if (!force && state.sliceProfiles && typeof state.sliceProfiles === "object") {
+      return state.sliceProfiles;
+    }
+    const data = await api("/api/slice/profiles");
+    const profiles = data && data.profiles && typeof data.profiles === "object" ? data.profiles : {};
+    state.sliceProfiles = {
+      printers: toStringList(profiles.printers),
+      print_profiles: toStringList(profiles.print_profiles),
+      filament_profiles: toStringList(profiles.filament_profiles),
+      parse_error: String(data.parse_error || ""),
+      source: String(data.source || ""),
+      config_path: String(data.config_path || ""),
+    };
+    return state.sliceProfiles;
+  }
+
+  function closeSliceModal() {
+    state.currentSliceFileId = 0;
+    showStatus(els.sliceModalStatus, "");
+    if (els.sliceModal) els.sliceModal.classList.add("hidden");
+  }
+
+  async function openSliceModal(fileId) {
+    const file = fileById(fileId);
+    if (!file || !file.can_slice || state.role !== "admin") return;
+
+    state.currentSliceFileId = Number(file.id || 0);
+    if (els.sliceModalFileName) els.sliceModalFileName.textContent = String(file.filename || "-");
+    if (els.sliceModal) els.sliceModal.classList.remove("hidden");
+    if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = true;
+    showStatus(els.sliceModalStatus, "Henter slice-profiler...", "ok");
+
+    try {
+      const profiles = await loadSliceProfiles(true);
+      renderSliceSelect(els.slicePrinterSelect, profiles.printers, "Auto / fra config");
+      renderSliceSelect(els.slicePrintProfileSelect, profiles.print_profiles, "Auto / fra config");
+      renderSliceSelect(els.sliceFilamentProfileSelect, profiles.filament_profiles, "Auto / fra config");
+
+      setSliceSelectValue(els.slicePrinterSelect, state.lastSliceSelection.printer_profile);
+      setSliceSelectValue(els.slicePrintProfileSelect, state.lastSliceSelection.print_profile);
+      setSliceSelectValue(els.sliceFilamentProfileSelect, state.lastSliceSelection.filament_profile);
+
+      if (profiles.parse_error) {
+        showStatus(els.sliceModalStatus, `Profil-læsning: ${profiles.parse_error}`, "error");
+      } else {
+        const totalProfiles = profiles.printers.length + profiles.print_profiles.length + profiles.filament_profiles.length;
+        if (totalProfiles > 0) {
+          showStatus(els.sliceModalStatus, "Profiler klar. Vælg og start slicing.", "ok");
+        } else {
+          showStatus(els.sliceModalStatus, "Ingen profiler fundet. Slicing kan stadig startes med standard config.", "ok");
+        }
+      }
+      if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
+    } catch (err) {
+      renderSliceSelect(els.slicePrinterSelect, [], "Auto / fra config");
+      renderSliceSelect(els.slicePrintProfileSelect, [], "Auto / fra config");
+      renderSliceSelect(els.sliceFilamentProfileSelect, [], "Auto / fra config");
+      showStatus(els.sliceModalStatus, err.message || "Kunne ikke hente slice-profiler", "error");
+      if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
+    }
+  }
+
+  function selectedSliceProfiles() {
+    const printer_profile = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
+    const print_profile = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim();
+    const filament_profile = String((els.sliceFilamentProfileSelect && els.sliceFilamentProfileSelect.value) || "").trim();
+    return {
+      printer_profile,
+      print_profile,
+      filament_profile,
+    };
   }
 
   function fileById(fileId) {
@@ -1469,10 +1588,20 @@
     await loadFiles();
   }
 
-  async function sliceFileById(fileId) {
+  async function sliceFileById(fileId, profileSelection = null) {
     const id = Number(fileId || 0);
     if (!id) return;
-    const data = await api(`/api/files/${id}/slice`, { method: "POST" });
+    const profiles = profileSelection && typeof profileSelection === "object" ? profileSelection : {};
+    const body = {};
+    const printerProfile = String(profiles.printer_profile || "").trim();
+    const printProfile = String(profiles.print_profile || "").trim();
+    const filamentProfile = String(profiles.filament_profile || "").trim();
+    if (printerProfile) body.printer_profile = printerProfile;
+    if (printProfile) body.print_profile = printProfile;
+    if (filamentProfile) body.filament_profile = filamentProfile;
+    const options = { method: "POST" };
+    if (Object.keys(body).length) options.body = body;
+    const data = await api(`/api/files/${id}/slice`, options);
     if (data && data.already_running) {
       showStatus(els.uploadStatus, "Slicing kører allerede for filen.", "ok");
     } else {
@@ -3722,6 +3851,19 @@
       return;
     }
 
+    const sliceBtn = event.target.closest("[data-action='open-slice']");
+    if (sliceBtn) {
+      const id = Number(sliceBtn.dataset.fileId || 0);
+      const file = fileById(id);
+      if (!file) return;
+      if (state.role === "admin" && !!file.can_slice && !sliceBtn.disabled) {
+        await openSliceModal(id);
+      } else {
+        openFileInfoDrawer(id);
+      }
+      return;
+    }
+
     const modelBtn = event.target.closest("[data-action='open-3d']");
     if (modelBtn) {
       const id = Number(modelBtn.dataset.fileId || 0);
@@ -4191,16 +4333,62 @@
       els.fileInfoSliceBtn.addEventListener("click", () => {
         const id = Number((els.fileInfoSliceBtn && els.fileInfoSliceBtn.dataset.fileId) || state.currentInfoFileId || 0);
         if (!id) return;
-        sliceFileById(id).catch((err) => {
-          showStatus(els.uploadStatus, err.message || "Kunne ikke starte slicing", "error");
+        openSliceModal(id).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke åbne slice-dialog", "error");
         });
       });
     }
+
+    if (els.sliceModalCloseBtn) {
+      els.sliceModalCloseBtn.addEventListener("click", closeSliceModal);
+    }
+    if (els.sliceModalCancelBtn) {
+      els.sliceModalCancelBtn.addEventListener("click", closeSliceModal);
+    }
+    if (els.sliceModalStartBtn) {
+      els.sliceModalStartBtn.addEventListener("click", () => {
+        const id = Number(state.currentSliceFileId || state.currentInfoFileId || 0);
+        if (!id) return;
+        const profiles = selectedSliceProfiles();
+        state.lastSliceSelection = {
+          printer_profile: String(profiles.printer_profile || ""),
+          print_profile: String(profiles.print_profile || ""),
+          filament_profile: String(profiles.filament_profile || ""),
+        };
+
+        els.sliceModalStartBtn.disabled = true;
+        showStatus(els.sliceModalStatus, "Starter slicing...", "ok");
+
+        sliceFileById(id, profiles)
+          .then(() => {
+            closeSliceModal();
+          })
+          .catch((err) => {
+            showStatus(els.sliceModalStatus, err.message || "Kunne ikke starte slicing", "error");
+          })
+          .finally(() => {
+            if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
+          });
+      });
+    }
+    if (els.sliceModal) {
+      els.sliceModal.addEventListener("click", (event) => {
+        if (event.target === els.sliceModal || event.target.classList.contains("modal-backdrop")) {
+          closeSliceModal();
+        }
+      });
+    }
+
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       const imageModalOpen = !!(els.imagePreviewModal && !els.imagePreviewModal.classList.contains("hidden"));
       if (imageModalOpen) {
         closeImagePreviewModal();
+        return;
+      }
+      const sliceModalOpen = !!(els.sliceModal && !els.sliceModal.classList.contains("hidden"));
+      if (sliceModalOpen) {
+        closeSliceModal();
         return;
       }
       if (state.currentInfoFileId) closeFileInfoDrawer();

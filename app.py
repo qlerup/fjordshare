@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import base64
+import configparser
 import hashlib
 import json
 import mimetypes
@@ -73,6 +74,9 @@ THUMB_RENDER_STYLE_VERSION = "7"
 SLICABLE_3D_EXTENSIONS = {".stl"}
 BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
 BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
+BAMBUSTUDIO_PRINTER_PROFILES = str(os.getenv("BAMBUSTUDIO_PRINTER_PROFILES", "")).strip()
+BAMBUSTUDIO_PRINT_PROFILES = str(os.getenv("BAMBUSTUDIO_PRINT_PROFILES", "")).strip()
+BAMBUSTUDIO_FILAMENT_PROFILES = str(os.getenv("BAMBUSTUDIO_FILAMENT_PROFILES", "")).strip()
 try:
     BAMBUSTUDIO_TIMEOUT_SEC = max(60, int(str(os.getenv("BAMBUSTUDIO_TIMEOUT_SEC", "1800")) or "1800"))
 except Exception:
@@ -703,6 +707,93 @@ def _set_file_slice_state(
         conn.commit()
 
 
+def _split_profile_env_list(raw_value: str) -> list[str]:
+    out: list[str] = []
+    for token in str(raw_value or "").split(","):
+        value = str(token or "").strip()
+        if value:
+            out.append(value)
+    return out
+
+
+def _dedupe_preserve_order(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        key = value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(value)
+    return out
+
+
+def _extract_profile_name_from_section(section_name: str, prefixes: tuple[str, ...]) -> str:
+    original = str(section_name or "").strip()
+    lowered = original.lower()
+    if not original:
+        return ""
+    for prefix in prefixes:
+        if lowered.startswith(prefix):
+            name = original[len(prefix):].strip()
+            if name.startswith(":"):
+                name = name[1:].strip()
+            return name
+    return ""
+
+
+def _read_bambustudio_profiles() -> dict:
+    printers: list[str] = []
+    print_profiles: list[str] = []
+    filament_profiles: list[str] = []
+
+    parse_error = ""
+    source = "env"
+    config_path_raw = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
+
+    if config_path_raw:
+        source = "config"
+        config_path = Path(config_path_raw)
+        if not config_path.exists() or not config_path.is_file():
+            parse_error = f"Config-fil findes ikke: {config_path}"
+        else:
+            parser = configparser.ConfigParser(interpolation=None, strict=False)
+            parser.optionxform = str
+            try:
+                text = config_path.read_text(encoding="utf-8", errors="ignore")
+                parser.read_string(text)
+                for section in parser.sections():
+                    printer_name = _extract_profile_name_from_section(section, ("printer:", "printer "))
+                    if printer_name:
+                        printers.append(printer_name)
+
+                    process_name = _extract_profile_name_from_section(section, ("print:", "process:", "process "))
+                    if process_name:
+                        print_profiles.append(process_name)
+
+                    filament_name = _extract_profile_name_from_section(section, ("filament:", "filament "))
+                    if filament_name:
+                        filament_profiles.append(filament_name)
+            except Exception as exc:
+                parse_error = f"Kunne ikke læse config-profiler: {exc}"
+
+    printers.extend(_split_profile_env_list(BAMBUSTUDIO_PRINTER_PROFILES))
+    print_profiles.extend(_split_profile_env_list(BAMBUSTUDIO_PRINT_PROFILES))
+    filament_profiles.extend(_split_profile_env_list(BAMBUSTUDIO_FILAMENT_PROFILES))
+
+    return {
+        "source": source,
+        "config_path": config_path_raw,
+        "parse_error": parse_error,
+        "printers": _dedupe_preserve_order(printers),
+        "print_profiles": _dedupe_preserve_order(print_profiles),
+        "filament_profiles": _dedupe_preserve_order(filament_profiles),
+    }
+
+
 def _resolve_bambustudio_executable() -> str:
     configured = str(BAMBUSTUDIO_BIN or "").strip()
     if not configured:
@@ -725,7 +816,13 @@ def _resolve_bambustudio_executable() -> str:
     raise RuntimeError(f"BambuStudio blev ikke fundet: {configured}")
 
 
-def _slice_stl_to_gcode(input_stl: Path, output_gcode: Path) -> None:
+def _slice_stl_to_gcode(
+    input_stl: Path,
+    output_gcode: Path,
+    printer_profile: str = "",
+    print_profile: str = "",
+    filament_profile: str = "",
+) -> None:
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
 
@@ -737,6 +834,17 @@ def _slice_stl_to_gcode(input_stl: Path, output_gcode: Path) -> None:
         if not config_path.exists() or not config_path.is_file():
             raise RuntimeError(f"BAMBUSTUDIO_CONFIG_PATH findes ikke: {config_path}")
         cmd.extend(["--load", str(config_path)])
+
+    printer_profile_value = str(printer_profile or "").strip()
+    print_profile_value = str(print_profile or "").strip()
+    filament_profile_value = str(filament_profile or "").strip()
+
+    if printer_profile_value:
+        cmd.extend(["--printer-profile", printer_profile_value])
+    if print_profile_value:
+        cmd.extend(["--print-profile", print_profile_value])
+    if filament_profile_value:
+        cmd.extend(["--filament-profile", filament_profile_value])
 
     cmd.extend(["--export-gcode", "--output", str(output_gcode), str(input_stl)])
 
@@ -766,6 +874,9 @@ def _slice_stl_to_gcode(input_stl: Path, output_gcode: Path) -> None:
 def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     file_id = int(payload.get("file_id") or 0)
     requested_by = str(payload.get("requested_by") or "").strip()
+    printer_profile = str(payload.get("printer_profile") or "").strip()
+    print_profile = str(payload.get("print_profile") or "").strip()
+    filament_profile = str(payload.get("filament_profile") or "").strip()
     if file_id <= 0:
         return
 
@@ -791,7 +902,13 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
         gcode_name = sanitize_filename(f"{base_name}.gcode")
         output_path = allocate_unique_target(folder_abs, gcode_name)
 
-        _slice_stl_to_gcode(source_path, output_path)
+        _slice_stl_to_gcode(
+            source_path,
+            output_path,
+            printer_profile=printer_profile,
+            print_profile=print_profile,
+            filament_profile=filament_profile,
+        )
 
         creator = requested_by or str(row["uploaded_by"] or "slicer")
         upsert_file_record(
@@ -844,14 +961,28 @@ def _start_slice_worker_if_needed() -> None:
     t.start()
 
 
-def enqueue_slice_job(file_id: int, requested_by: str) -> bool:
+def enqueue_slice_job(
+    file_id: int,
+    requested_by: str,
+    printer_profile: str = "",
+    print_profile: str = "",
+    filament_profile: str = "",
+) -> bool:
     fid = int(file_id)
     with SLICE_QUEUE_LOCK:
         if fid in SLICE_QUEUED_IDS:
             return False
         SLICE_QUEUED_IDS.add(fid)
     _start_slice_worker_if_needed()
-    SLICE_QUEUE.put({"file_id": fid, "requested_by": str(requested_by or "")})
+    SLICE_QUEUE.put(
+        {
+            "file_id": fid,
+            "requested_by": str(requested_by or ""),
+            "printer_profile": str(printer_profile or "").strip(),
+            "print_profile": str(print_profile or "").strip(),
+            "filament_profile": str(filament_profile or "").strip(),
+        }
+    )
     return True
 
 
@@ -2477,11 +2608,38 @@ def api_file_metadata_batch():
     return jsonify({"ok": True, "updated": len(updated_ids), "ids": updated_ids})
 
 
+@app.route("/api/slice/profiles", methods=["GET"])
+@login_required
+def api_slice_profiles():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    data = _read_bambustudio_profiles()
+    return jsonify(
+        {
+            "ok": True,
+            "profiles": {
+                "printers": data.get("printers", []),
+                "print_profiles": data.get("print_profiles", []),
+                "filament_profiles": data.get("filament_profiles", []),
+            },
+            "source": str(data.get("source") or ""),
+            "config_path": str(data.get("config_path") or ""),
+            "parse_error": str(data.get("parse_error") or ""),
+        }
+    )
+
+
 @app.route("/api/files/<int:file_id>/slice", methods=["POST"])
 @login_required
 def api_file_slice(file_id: int):
     if not current_user.is_admin:
         return jsonify({"ok": False, "error": "Kun admin kan starte slicing"}), 403
+
+    body = request.get_json(silent=True) or {}
+    printer_profile = str(body.get("printer_profile") or "").strip()[:200]
+    print_profile = str(body.get("print_profile") or "").strip()[:200]
+    filament_profile = str(body.get("filament_profile") or "").strip()[:200]
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -2500,8 +2658,24 @@ def api_file_slice(file_id: int):
         return jsonify({"ok": True, "queued": True, "already_running": True})
 
     _set_file_slice_state(int(file_id), "queued", "")
-    enqueue_slice_job(int(file_id), str(current_user.username or ""))
-    return jsonify({"ok": True, "queued": True})
+    enqueue_slice_job(
+        int(file_id),
+        str(current_user.username or ""),
+        printer_profile=printer_profile,
+        print_profile=print_profile,
+        filament_profile=filament_profile,
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "queued": True,
+            "profiles": {
+                "printer_profile": printer_profile,
+                "print_profile": print_profile,
+                "filament_profile": filament_profile,
+            },
+        }
+    )
 
 
 @app.route("/api/files/printed-batch", methods=["POST"])
