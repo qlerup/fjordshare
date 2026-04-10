@@ -106,6 +106,9 @@ THUMB_QUEUE_LOCK = threading.Lock()
 THUMB_QUEUED_IDS: set[int] = set()
 THUMB_WORKER_LOCK = threading.Lock()
 THUMB_WORKER_STARTED = False
+ZIP_EXTRACT_QUEUE: "queue_mod.Queue[Dict[str, Any]]" = queue_mod.Queue()
+ZIP_EXTRACT_WORKER_LOCK = threading.Lock()
+ZIP_EXTRACT_WORKER_STARTED = False
 
 
 def now_iso() -> str:
@@ -880,6 +883,177 @@ def enqueue_thumbnail(file_id: int) -> None:
     THUMB_QUEUE.put(fid)
 
 
+def _serialize_zip_job_row(row: sqlite3.Row) -> dict:
+    return {
+        "id": int(row["id"]),
+        "folder_path": str(row["folder_path"] or ""),
+        "zip_name": str(row["zip_name"] or ""),
+        "status": str(row["status"] or "queued"),
+        "extracted_files": int(row["extracted_files"] or 0),
+        "error": str(row["error"] or ""),
+        "created_at": str(row["created_at"] or ""),
+        "updated_at": str(row["updated_at"] or ""),
+    }
+
+
+def list_zip_jobs_for_folder(folder_path: str) -> list[dict]:
+    folder = normalize_folder_path(folder_path)
+    if not folder:
+        return []
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM zip_jobs
+            WHERE folder_path=?
+              AND lower(COALESCE(status,'')) IN ('queued', 'processing', 'error')
+            ORDER BY id DESC
+            LIMIT 25
+            """,
+            (folder,),
+        ).fetchall()
+    return [_serialize_zip_job_row(row) for row in rows]
+
+
+def _create_zip_job(
+    folder_path: str,
+    zip_name: str,
+    created_by: str,
+    owner_user_id: Optional[int] = None,
+    share_id: Optional[int] = None,
+) -> int:
+    folder = normalize_folder_path(folder_path)
+    if not folder:
+        raise ValueError("ZIP job kræver en målmappe")
+
+    created = now_iso()
+    with closing(get_conn()) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO zip_jobs(
+                folder_path, zip_name, status, extracted_files, error,
+                owner_user_id, share_id, created_by, created_at, updated_at
+            ) VALUES (?, ?, 'queued', 0, '', ?, ?, ?, ?, ?)
+            """,
+            (
+                folder,
+                str(zip_name or ""),
+                int(owner_user_id) if owner_user_id else None,
+                int(share_id) if share_id else None,
+                str(created_by or ""),
+                created,
+                created,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def _set_zip_job_state(
+    job_id: int,
+    status: str,
+    error: str = "",
+    extracted_files: Optional[int] = None,
+) -> None:
+    jid = int(job_id)
+    safe_status = str(status or "").strip().lower() or "queued"
+    safe_error = str(error or "").strip()[:1000]
+    updated_at = now_iso()
+
+    with closing(get_conn()) as conn:
+        if extracted_files is None:
+            conn.execute(
+                """
+                UPDATE zip_jobs
+                SET status=?, error=?, updated_at=?
+                WHERE id=?
+                """,
+                (safe_status, safe_error, updated_at, jid),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE zip_jobs
+                SET status=?, error=?, extracted_files=?, updated_at=?
+                WHERE id=?
+                """,
+                (safe_status, safe_error, max(0, int(extracted_files)), updated_at, jid),
+            )
+        conn.commit()
+
+
+def _process_zip_extract_job(payload: Dict[str, Any]) -> None:
+    job_id = int(payload.get("job_id") or 0)
+    zip_path_raw = payload.get("zip_path")
+    zip_path = Path(str(zip_path_raw or "")).resolve()
+    base_folder = normalize_folder_path(str(payload.get("base_folder") or ""))
+    uploaded_by = str(payload.get("uploaded_by") or "")
+    upload_client_id = str(payload.get("upload_client_id") or "").strip() or None
+    zip_name = str(payload.get("zip_name") or "")
+    try:
+        last_modified_ms = int(payload.get("last_modified_ms") or 0)
+    except Exception:
+        last_modified_ms = 0
+
+    _set_zip_job_state(job_id, "processing", "")
+    extracted_count = 0
+    err_text = ""
+    try:
+        extracted_count, _row, _created_folders = _extract_zip_upload(
+            zip_path=zip_path,
+            base_folder=base_folder,
+            uploaded_by=uploaded_by,
+            upload_client_id=upload_client_id,
+            last_modified_ms=last_modified_ms,
+            original_zip_name=zip_name,
+        )
+        if extracted_count <= 0:
+            err_text = "ZIP indeholdt ingen gyldige filer."
+            _set_zip_job_state(job_id, "error", err_text, extracted_files=0)
+            return
+        _set_zip_job_state(job_id, "done", "", extracted_files=extracted_count)
+    except Exception as exc:
+        _set_zip_job_state(job_id, "error", str(exc), extracted_files=extracted_count)
+    finally:
+        try:
+            zip_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _zip_extract_worker_loop() -> None:
+    while True:
+        payload = ZIP_EXTRACT_QUEUE.get()
+        try:
+            if isinstance(payload, dict):
+                _process_zip_extract_job(payload)
+        except Exception as exc:
+            try:
+                job_id = int((payload or {}).get("job_id") or 0)
+                if job_id > 0:
+                    _set_zip_job_state(job_id, "error", f"zip worker error: {exc}")
+            except Exception:
+                pass
+        finally:
+            ZIP_EXTRACT_QUEUE.task_done()
+
+
+def _start_zip_extract_worker_if_needed() -> None:
+    global ZIP_EXTRACT_WORKER_STARTED
+    with ZIP_EXTRACT_WORKER_LOCK:
+        if ZIP_EXTRACT_WORKER_STARTED:
+            return
+        ZIP_EXTRACT_WORKER_STARTED = True
+    t = threading.Thread(target=_zip_extract_worker_loop, daemon=True, name="zip-extract-worker")
+    t.start()
+
+
+def enqueue_zip_extract_job(payload: Dict[str, Any]) -> None:
+    _start_zip_extract_worker_if_needed()
+    ZIP_EXTRACT_QUEUE.put(dict(payload or {}))
+
+
 def _bootstrap_thumbnail_queue() -> None:
     _start_thumbnail_worker_if_needed()
     placeholders = ",".join("?" for _ in THUMBABLE_3D_EXTENSIONS)
@@ -952,6 +1126,9 @@ def init_db() -> None:
                 uploaded_at TEXT NOT NULL,
                 note TEXT,
                 quantity INTEGER DEFAULT 1,
+                printed INTEGER NOT NULL DEFAULT 0,
+                printed_at TEXT,
+                printed_by TEXT,
                 upload_client_id TEXT,
                 thumb_rel TEXT,
                 thumb_status TEXT DEFAULT 'none',
@@ -979,6 +1156,21 @@ def init_db() -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS zip_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                folder_path TEXT NOT NULL,
+                zip_name TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                extracted_files INTEGER NOT NULL DEFAULT 0,
+                error TEXT,
+                owner_user_id INTEGER,
+                share_id INTEGER,
+                created_by TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_zip_jobs_folder_status ON zip_jobs(folder_path, status, id DESC);
 
             CREATE TABLE IF NOT EXISTS share_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1024,10 +1216,18 @@ def init_db() -> None:
             conn.execute("ALTER TABLE files ADD COLUMN thumb_error TEXT")
         if "thumb_updated_at" not in file_cols:
             conn.execute("ALTER TABLE files ADD COLUMN thumb_updated_at TEXT")
+        if "printed" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN printed INTEGER NOT NULL DEFAULT 0")
+        if "printed_at" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN printed_at TEXT")
+        if "printed_by" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN printed_by TEXT")
         conn.execute(
             "UPDATE files SET thumb_status='none' WHERE thumb_status IS NULL OR TRIM(thumb_status)=''"
         )
+        conn.execute("UPDATE files SET printed=0 WHERE printed IS NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_files_thumb_status ON files(thumb_status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_files_printed ON files(printed)")
         conn.commit()
 
 
@@ -1356,6 +1556,9 @@ def upsert_file_record(
                 file_size=excluded.file_size,
                 uploaded_by=excluded.uploaded_by,
                 uploaded_at=excluded.uploaded_at,
+                printed=0,
+                printed_at=NULL,
+                printed_by=NULL,
                 upload_client_id=excluded.upload_client_id,
                 thumb_rel=excluded.thumb_rel,
                 thumb_status=excluded.thumb_status,
@@ -1476,6 +1679,9 @@ def serialize_file_row(row: sqlite3.Row, share_token: Optional[str] = None) -> d
         "uploaded_at": str(row["uploaded_at"] or ""),
         "note": str(row["note"] or ""),
         "quantity": int(row["quantity"] or 1),
+        "printed": bool(int(row["printed"] or 0)),
+        "printed_at": str(row["printed_at"] or ""),
+        "printed_by": str(row["printed_by"] or ""),
         "upload_client_id": str(row["upload_client_id"] or ""),
         "thumb_status": thumb_status,
         "thumb_error": str(row["thumb_error"] or ""),
@@ -1909,7 +2115,9 @@ def api_files_list():
                     pass
             items.append(serialize_file_row(row))
 
-    return jsonify({"ok": True, "folder": folder, "items": items})
+    zip_jobs = list_zip_jobs_for_folder(folder)
+
+    return jsonify({"ok": True, "folder": folder, "items": items, "zip_jobs": zip_jobs})
 
 
 @app.route("/api/files/<int:file_id>/content", methods=["GET"])
@@ -2044,6 +2252,72 @@ def api_file_metadata_batch():
         conn.commit()
 
     return jsonify({"ok": True, "updated": len(updated_ids), "ids": updated_ids})
+
+
+@app.route("/api/files/printed-batch", methods=["POST"])
+@login_required
+def api_files_printed_batch():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan markere filer som printet"}), 403
+
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("file_ids")
+    printed = bool(parse_bool(body.get("printed", True)))
+
+    if not isinstance(raw_ids, list):
+        return jsonify({"ok": False, "error": "file_ids skal være en liste"}), 400
+
+    file_ids: list[int] = []
+    seen: set[int] = set()
+    for raw in raw_ids:
+        try:
+            fid = int(raw)
+        except Exception:
+            continue
+        if fid <= 0 or fid in seen:
+            continue
+        seen.add(fid)
+        file_ids.append(fid)
+
+    if not file_ids:
+        return jsonify({"ok": False, "error": "Ingen gyldige filer valgt"}), 400
+
+    placeholders = ",".join("?" for _ in file_ids)
+    now = now_iso() if printed else None
+    by_user = str(current_user.username or "") if printed else None
+    updated_ids: list[int] = []
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM files WHERE id IN ({placeholders})",
+            tuple(file_ids),
+        ).fetchall()
+
+        for row in rows:
+            if not user_can_access_file(current_user, row, "manage"):
+                return jsonify({"ok": False, "error": "Ingen rettighed til en eller flere filer"}), 403
+            updated_ids.append(int(row["id"]))
+
+        if not updated_ids:
+            return jsonify({"ok": False, "error": "Ingen filer fundet"}), 404
+
+        update_placeholders = ",".join("?" for _ in updated_ids)
+        conn.execute(
+            f"""
+            UPDATE files
+            SET printed=?, printed_at=?, printed_by=?
+            WHERE id IN ({update_placeholders})
+            """,
+            (
+                1 if printed else 0,
+                now,
+                by_user,
+                *tuple(updated_ids),
+            ),
+        )
+        conn.commit()
+
+    return jsonify({"ok": True, "updated": len(updated_ids), "ids": sorted(updated_ids), "printed": printed})
 
 
 @app.route("/api/files/by-upload-client/<client_id>", methods=["GET"])
@@ -2879,22 +3153,61 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
     try:
         ext = str(Path(filename).suffix or "").lower()
         if ext == ".zip":
+            owner_user_id: Optional[int] = None
+            share_id: Optional[int] = None
             try:
-                extracted_count, row, _ = _extract_zip_upload(
-                    zip_path=data_path,
-                    base_folder=folder,
-                    uploaded_by=uploaded_by,
-                    upload_client_id=upload_client_id,
-                    last_modified_ms=last_modified_ms,
-                    original_zip_name=filename,
-                )
-            finally:
+                owner_user_id = int(meta.get("owner_user_id") or 0) or None
+            except Exception:
+                owner_user_id = None
+            try:
+                share_id = int(meta.get("share_id") or 0) or None
+            except Exception:
+                share_id = None
+
+            job_id = _create_zip_job(
+                folder_path=folder,
+                zip_name=filename,
+                created_by=uploaded_by,
+                owner_user_id=owner_user_id,
+                share_id=share_id,
+            )
+
+            queued_zip_path = (TUS_TMP_DIR / f"zipjob-{job_id}-{secrets.token_hex(6)}.zip").resolve()
+            if not _is_relative_to(TUS_TMP_DIR, queued_zip_path):
+                _set_zip_job_state(job_id, "error", "Ugyldig intern ZIP-sti")
+                return False, None, "Upload finalize fejlede: Ugyldig intern ZIP-sti"
+
+            try:
+                data_path.replace(queued_zip_path)
+            except Exception as exc:
+                _set_zip_job_state(job_id, "error", f"Kunne ikke klargøre ZIP-job: {exc}")
                 try:
                     data_path.unlink(missing_ok=True)
                 except Exception:
                     pass
-            if extracted_count <= 0:
-                return False, None, "ZIP indeholdt ingen gyldige filer."
+                return False, None, f"Upload finalize fejlede: {exc}"
+
+            try:
+                enqueue_zip_extract_job(
+                    {
+                        "job_id": job_id,
+                        "zip_path": str(queued_zip_path),
+                        "base_folder": folder,
+                        "uploaded_by": uploaded_by,
+                        "upload_client_id": upload_client_id,
+                        "last_modified_ms": last_modified_ms,
+                        "zip_name": filename,
+                    }
+                )
+            except Exception as exc:
+                _set_zip_job_state(job_id, "error", f"Kunne ikke starte ZIP-job: {exc}")
+                try:
+                    queued_zip_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return False, None, f"Upload finalize fejlede: {exc}"
+
+            row = None
         else:
             row = commit_uploaded_file(
                 source_path=data_path,

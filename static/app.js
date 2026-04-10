@@ -11,6 +11,7 @@
     currentFolder: "",
     folders: [],
     files: [],
+    zipJobs: [],
     shares: [],
     users: [],
     pendingMetadata: [],
@@ -82,6 +83,7 @@
     mapperMenuRenameFolder: document.getElementById("mapperMenuRenameFolder"),
     mapperSelectSummary: document.getElementById("mapperSelectSummary"),
     mapperSelectDeleteBtn: document.getElementById("mapperSelectDeleteBtn"),
+    mapperSelectPrintedBtn: document.getElementById("mapperSelectPrintedBtn"),
     mapperSelectExitBtn: document.getElementById("mapperSelectExitBtn"),
     fileInfoBackdrop: document.getElementById("fileInfoBackdrop"),
     fileInfoDrawer: document.getElementById("fileInfoDrawer"),
@@ -402,7 +404,7 @@
               // ignore
             }
             uploadMonitorHideTimer = null;
-          }, 10000);
+          }, 1800);
         }
       } else if (uploadMonitorHideTimer) {
         window.clearTimeout(uploadMonitorHideTimer);
@@ -849,6 +851,10 @@
     return state.selectedFolderPaths.size + state.selectedFileIds.size;
   }
 
+  function selectedFileCount() {
+    return state.selectedFileIds.size;
+  }
+
   function clearSelections() {
     state.selectedFolderPaths.clear();
     state.selectedFileIds.clear();
@@ -883,6 +889,27 @@
     );
     toggleSelectMode(false);
     await loadFolders();
+    await loadFiles();
+  }
+
+  async function setPrintedForSelectedFiles(printed = true) {
+    const fileIds = Array.from(state.selectedFileIds).map((v) => Number(v || 0)).filter((v) => v > 0);
+    if (!fileIds.length) {
+      showStatus(els.uploadStatus, "Vælg mindst én fil for at markere som printet.", "error");
+      return;
+    }
+
+    await api("/api/files/printed-batch", {
+      method: "POST",
+      body: {
+        file_ids: fileIds,
+        printed: !!printed,
+      },
+    });
+
+    state.selectedFileIds.clear();
+    const label = printed ? "printet" : "ikke printet";
+    showStatus(els.uploadStatus, `${fileIds.length} fil(er) markeret som ${label}.`, "ok");
     await loadFiles();
   }
 
@@ -932,6 +959,7 @@
     if (els.mapperShell) els.mapperShell.classList.toggle("select-mode", on);
 
     const count = selectedCount();
+    const fileCount = selectedFileCount();
     if (els.mapperSelectSummary) {
       els.mapperSelectSummary.textContent = on ? `${count} valgt` : "";
       els.mapperSelectSummary.classList.toggle("hidden", !on);
@@ -943,6 +971,12 @@
       els.mapperSelectDeleteBtn.classList.toggle("hidden", !on);
       els.mapperSelectDeleteBtn.disabled = count <= 0;
       els.mapperSelectDeleteBtn.textContent = count > 0 ? `Slet (${count})` : "Slet";
+    }
+    if (els.mapperSelectPrintedBtn) {
+      const allowPrinted = on && state.role === "admin";
+      els.mapperSelectPrintedBtn.classList.toggle("hidden", !allowPrinted);
+      els.mapperSelectPrintedBtn.disabled = fileCount <= 0;
+      els.mapperSelectPrintedBtn.textContent = fileCount > 0 ? `Printet (${fileCount})` : "Printet";
     }
 
     if (els.mapperMenuSelect) {
@@ -1347,6 +1381,7 @@
       if (state.currentInfoFileId) {
         closeFileInfoDrawer();
       }
+      syncThumbPoller();
       updateThumbTopStatus();
       updateStats();
       return;
@@ -1356,11 +1391,14 @@
       .map((file) => {
         const id = Number(file.id || 0);
         const isSelected = state.selectedFileIds.has(id);
+        const isPrinted = !!file.printed;
+        const printedBadge = isPrinted ? `<span class="file-print-badge">Printet</span>` : "";
         return `
           <article class="file-card file-card-compact ${isSelected ? "selected" : ""}" data-file-id="${id}">
             <div class="file-preview">
               <span class="select-mark ${isSelected ? "selected" : ""}"></span>
               <button class="file-info-btn" data-action="open-info" data-file-id="${id}" aria-label="Vis fil-info">i</button>
+              ${printedBadge}
               ${filePreviewHtml(file)}
             </div>
             <div class="file-caption" title="${esc(file.filename)}">${esc(file.filename)}</div>
@@ -1414,10 +1452,33 @@
     return { total, ready, queued, processing, error, pending, done, progress };
   }
 
+  function zipQueueStats() {
+    let total = 0;
+    let queued = 0;
+    let processing = 0;
+    let done = 0;
+    let error = 0;
+
+    for (const job of Array.isArray(state.zipJobs) ? state.zipJobs : []) {
+      if (!job || typeof job !== "object") continue;
+      total += 1;
+      const status = String(job.status || "queued").toLowerCase();
+      if (status === "processing") processing += 1;
+      else if (status === "queued") queued += 1;
+      else if (status === "error") error += 1;
+      else done += 1;
+    }
+
+    const pending = queued + processing;
+    const progress = total > 0 ? Math.max(0, Math.min(100, Math.round(((done + error) / total) * 100))) : 0;
+    return { total, queued, processing, done, error, pending, progress };
+  }
+
   function updateThumbTopStatus() {
     if (!els.thumbTopStatus || !els.thumbTopStatusLabel || !els.thumbTopStatusBar) return;
     const stats = thumbQueueStats();
-    const shouldShow = stats.pending > 0 || stats.error > 0;
+    const zipStats = zipQueueStats();
+    const shouldShow = stats.pending > 0 || stats.error > 0 || zipStats.pending > 0 || zipStats.error > 0;
     els.thumbTopStatus.classList.toggle("hidden", !shouldShow);
     if (!shouldShow) {
       els.thumbTopStatusLabel.textContent = "Thumbnails: Klar";
@@ -1426,25 +1487,40 @@
       return;
     }
 
-    if (stats.pending > 0) {
-      let label = `Thumbnails: ${stats.ready}/${stats.total} klar`;
-      if (stats.processing > 0) label += ` · ${stats.processing} behandler`;
-      if (stats.queued > 0) label += ` · ${stats.queued} i kø`;
-      if (stats.error > 0) label += ` · fejl: ${stats.error}`;
-      els.thumbTopStatusLabel.textContent = label;
-    } else {
-      els.thumbTopStatusLabel.textContent = `Thumbnails færdig · fejl: ${stats.error}`;
+    const labels = [];
+    if (zipStats.pending > 0 || zipStats.error > 0) {
+      let zipLabel = `ZIP udpakning: ${zipStats.done}/${zipStats.total} færdig`;
+      if (zipStats.processing > 0) zipLabel += ` · ${zipStats.processing} behandler`;
+      if (zipStats.queued > 0) zipLabel += ` · ${zipStats.queued} i kø`;
+      if (zipStats.error > 0) zipLabel += ` · fejl: ${zipStats.error}`;
+      labels.push(zipLabel);
     }
 
-    const useIndeterminate = stats.pending > 0 && stats.progress <= 0;
+    if (stats.total > 0 || stats.pending > 0 || stats.error > 0) {
+      if (stats.pending > 0) {
+        let thumbLabel = `Thumbnails: ${stats.ready}/${stats.total} klar`;
+        if (stats.processing > 0) thumbLabel += ` · ${stats.processing} behandler`;
+        if (stats.queued > 0) thumbLabel += ` · ${stats.queued} i kø`;
+        if (stats.error > 0) thumbLabel += ` · fejl: ${stats.error}`;
+        labels.push(thumbLabel);
+      } else if (stats.error > 0) {
+        labels.push(`Thumbnails færdig · fejl: ${stats.error}`);
+      }
+    }
+
+    els.thumbTopStatusLabel.textContent = labels.length ? labels.join(" · ") : "Baggrundsjob kører";
+
+    const useIndeterminate = (stats.pending > 0 && stats.progress <= 0)
+      || (stats.total <= 0 && zipStats.pending > 0 && zipStats.progress <= 0);
     els.thumbTopStatusBar.classList.toggle("indeterminate", useIndeterminate);
     if (!useIndeterminate) {
-      els.thumbTopStatusBar.style.width = `${stats.progress}%`;
+      const mergedProgress = stats.total > 0 ? stats.progress : zipStats.progress;
+      els.thumbTopStatusBar.style.width = `${Math.max(0, Math.min(100, Number(mergedProgress || 0)))}%`;
     }
   }
 
   function hasPendingThumbs() {
-    return thumbQueueStats().pending > 0;
+    return thumbQueueStats().pending > 0 || zipQueueStats().pending > 0;
   }
 
   function syncThumbPoller() {
@@ -1469,6 +1545,7 @@
     }
     const data = await api(`/api/files?folder=${encodeURIComponent(folder)}`);
     state.files = Array.isArray(data.items) ? data.items : [];
+    state.zipJobs = Array.isArray(data.zip_jobs) ? data.zip_jobs : [];
     state.folderPreviewCache[String(folder || "")] = buildFolderPreviewEntry(state.files);
     renderFiles();
     renderFolderBrowser();
@@ -3093,6 +3170,25 @@
         table.add(leg);
       });
 
+      const tableMaterials = [];
+      const seenMaterials = new Set();
+      table.traverse((node) => {
+        if (!node || !node.isMesh || !node.material) return;
+        const materials = Array.isArray(node.material) ? node.material : [node.material];
+        materials.forEach((material) => {
+          if (!material || seenMaterials.has(material)) return;
+          seenMaterials.add(material);
+          const baseOpacity = Number.isFinite(Number(material.opacity)) ? Number(material.opacity) : 1;
+          tableMaterials.push({
+            material,
+            baseOpacity,
+            baseDepthWrite: material.depthWrite !== false,
+          });
+          material.transparent = true;
+          material.opacity = baseOpacity;
+        });
+      });
+
       scene.add(table);
       return {
         modelBox: box.clone(),
@@ -3103,6 +3199,8 @@
         topDepth,
         topWidthMm: topWidth * mmPerUnit,
         topDepthMm: topDepth * mmPerUnit,
+        mmPerUnit,
+        tableMaterials,
       };
     }
 
@@ -3304,9 +3402,34 @@
     }
     resize();
 
+    function updatePresentationTableFade() {
+      if (!tableInfo || !Array.isArray(tableInfo.tableMaterials) || !tableInfo.tableMaterials.length) return;
+      const topSurfaceY = Number(tableInfo.topSurfaceY);
+      if (!Number.isFinite(topSurfaceY)) return;
+
+      const mmPerUnit = Number(tableInfo.mmPerUnit);
+      const unitScale = Number.isFinite(mmPerUnit) && mmPerUnit > 0 ? mmPerUnit : 1;
+      const fadeStart = 18 / unitScale;
+      const fadeEnd = -130 / unitScale;
+      const yDelta = Number(camera.position.y || 0) - topSurfaceY;
+      const ratio = Math.max(0, Math.min(1, (yDelta - fadeEnd) / Math.max(fadeStart - fadeEnd, 1e-6)));
+      const minOpacity = 0.04;
+      const blendOpacity = minOpacity + ((1 - minOpacity) * ratio);
+      const useDepthWrite = blendOpacity >= 0.35;
+
+      tableInfo.tableMaterials.forEach((entry) => {
+        if (!entry || !entry.material) return;
+        const mat = entry.material;
+        const baseOpacity = Number.isFinite(Number(entry.baseOpacity)) ? Number(entry.baseOpacity) : 1;
+        mat.opacity = Math.max(0.001, Math.min(1, baseOpacity * blendOpacity));
+        mat.depthWrite = useDepthWrite && !!entry.baseDepthWrite;
+      });
+    }
+
     function animate() {
       if (!state.three) return;
       updateControls();
+      updatePresentationTableFade();
       renderer.render(scene, camera);
       state.three.frameId = requestAnimationFrame(animate);
     }
@@ -3543,6 +3666,13 @@
       els.mapperSelectDeleteBtn.addEventListener("click", () => {
         deleteSelectedInSelectMode().catch((err) => {
           showStatus(els.uploadStatus, err.message || "Kunne ikke slette valgte elementer", "error");
+        });
+      });
+    }
+    if (els.mapperSelectPrintedBtn) {
+      els.mapperSelectPrintedBtn.addEventListener("click", () => {
+        setPrintedForSelectedFiles(true).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke markere filer som printet", "error");
         });
       });
     }

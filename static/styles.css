@@ -1073,6 +1073,21 @@ input[type="checkbox"] {
   border-color: rgba(255, 255, 255, 0.4);
 }
 
+.file-print-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 3;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(52, 211, 153, 0.65);
+  background: rgba(20, 114, 78, 0.82);
+  color: #e8fff5;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
 .mapper-shell.select-mode .file-info-btn {
   display: none;
 }
