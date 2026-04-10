@@ -155,59 +155,9 @@
 
       <div id="settings-panel-shares" class="settings-subpanel">
         <div class="panel">
-          <h3>Opret deling</h3>
-          <div class="form-grid">
-            <div>
-              <label for="shareNameInput">Navn</label>
-              <input id="shareNameInput" class="input" type="text" placeholder="Fx Kunde 2026">
-            </div>
-            <div>
-              <label for="sharePermissionSelect">Rettighed</label>
-              <select id="sharePermissionSelect" class="select">
-                <option value="view">Se</option>
-                <option value="upload">Se og upload</option>
-                <option value="manage">Se, upload og slet</option>
-              </select>
-            </div>
-            <div>
-              <label for="shareExpireValue">Gyldig i</label>
-              <input id="shareExpireValue" class="input" type="number" min="0" value="7">
-            </div>
-            <div>
-              <label for="shareExpireUnit">Enhed</label>
-              <select id="shareExpireUnit" class="select">
-                <option value="days">Dage</option>
-                <option value="hours">Timer</option>
-              </select>
-            </div>
-          </div>
-
-          <label for="shareFoldersSelect">Mapper</label>
-          <select id="shareFoldersSelect" class="select" multiple size="7"></select>
-
-          <div class="checks">
-            <label><input id="shareUseExternalChk" type="checkbox"> Brug ekstern DNS base-url</label>
-            <label><input id="shareRequireVisitorChk" type="checkbox"> Kræv besøgsnavn</label>
-            <label><input id="shareUsePasswordChk" type="checkbox"> Beskyt med kode</label>
-          </div>
-
-          <div id="sharePasswordWrap" class="hidden">
-            <label for="sharePasswordInput">Kode</label>
-            <input id="sharePasswordInput" class="input" type="password" placeholder="Mindst 4 tegn">
-          </div>
-
-          <div class="toolbar">
-            <button id="createShareBtn" class="btn primary">Opret deling</button>
-          </div>
-          <div id="shareCreateStatus" class="status hidden"></div>
-          <div id="shareResultWrap" class="toolbar hidden">
-            <input id="shareResultLink" class="input" type="text" readonly>
-            <button id="copyShareLinkBtn" class="btn">Kopier</button>
-          </div>
-        </div>
-
-        <div class="panel">
           <h3>Eksisterende delinger</h3>
+          <p class="hint">Opret ny deling fra Mapper via Vælg mode -&gt; Del.</p>
+          <div id="sharesListStatus" class="status hidden"></div>
           <table class="table">
             <thead>
               <tr>
@@ -303,6 +253,69 @@
       </div>
     </section>
   </main>
+</div>
+
+<div id="shareModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card share-modal-card">
+    <div class="toolbar">
+      <h3>Opret deling</h3>
+      <button id="shareModalCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <p class="hint">Vælg de mapper der skal deles, og sæt rettigheder/udløb.</p>
+
+    <div id="shareModalSelected" class="metadata-current-file">Ingen mapper valgt.</div>
+
+    <div class="form-grid">
+      <div>
+        <label for="shareNameInput">Navn</label>
+        <input id="shareNameInput" class="input" type="text" placeholder="Fx Kunde 2026">
+      </div>
+      <div>
+        <label for="sharePermissionSelect">Rettighed</label>
+        <select id="sharePermissionSelect" class="select">
+          <option value="view">Se</option>
+          <option value="upload">Se og upload</option>
+          <option value="manage">Se, upload og slet</option>
+        </select>
+      </div>
+      <div>
+        <label for="shareExpireValue">Gyldig i</label>
+        <input id="shareExpireValue" class="input" type="number" min="0" value="7">
+      </div>
+      <div>
+        <label for="shareExpireUnit">Enhed</label>
+        <select id="shareExpireUnit" class="select">
+          <option value="days">Dage</option>
+          <option value="hours">Timer</option>
+        </select>
+      </div>
+    </div>
+
+    <label for="shareFoldersSelect">Mapper</label>
+    <select id="shareFoldersSelect" class="select" multiple size="8"></select>
+
+    <div class="checks">
+      <label><input id="shareUseExternalChk" type="checkbox"> Brug ekstern DNS base-url</label>
+      <label><input id="shareRequireVisitorChk" type="checkbox"> Kræv besøgsnavn</label>
+      <label><input id="shareUsePasswordChk" type="checkbox"> Beskyt med kode</label>
+    </div>
+
+    <div id="sharePasswordWrap" class="hidden">
+      <label for="sharePasswordInput">Kode</label>
+      <input id="sharePasswordInput" class="input" type="password" placeholder="Mindst 4 tegn">
+    </div>
+
+    <div class="toolbar">
+      <button id="shareModalCancelBtn" class="btn" type="button">Annuller</button>
+      <button id="createShareBtn" class="btn primary" type="button">Opret deling</button>
+    </div>
+    <div id="shareCreateStatus" class="status hidden"></div>
+    <div id="shareResultWrap" class="toolbar hidden">
+      <input id="shareResultLink" class="input" type="text" readonly>
+      <button id="copyShareLinkBtn" class="btn" type="button">Kopier</button>
+    </div>
+  </div>
 </div>
 
 <div id="sliceModal" class="modal hidden">

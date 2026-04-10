@@ -1590,6 +1590,12 @@ input[type="checkbox"] {
   flex-wrap: wrap;
 }
 
+.share-modal-card {
+  width: min(980px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+}
+
 .slice-modal-card {
   width: min(920px, calc(100vw - 24px));
   display: grid;

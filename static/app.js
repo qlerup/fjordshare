@@ -155,6 +155,10 @@
     modelHeightHint: document.getElementById("modelHeightHint"),
     modelScaleHint: document.getElementById("modelScaleHint"),
     modelHint: document.getElementById("modelHint"),
+    shareModal: document.getElementById("shareModal"),
+    shareModalCloseBtn: document.getElementById("shareModalCloseBtn"),
+    shareModalCancelBtn: document.getElementById("shareModalCancelBtn"),
+    shareModalSelected: document.getElementById("shareModalSelected"),
     shareNameInput: document.getElementById("shareNameInput"),
     shareFoldersSelect: document.getElementById("shareFoldersSelect"),
     sharePermissionSelect: document.getElementById("sharePermissionSelect"),
@@ -170,6 +174,7 @@
     shareResultWrap: document.getElementById("shareResultWrap"),
     shareResultLink: document.getElementById("shareResultLink"),
     copyShareLinkBtn: document.getElementById("copyShareLinkBtn"),
+    sharesListStatus: document.getElementById("sharesListStatus"),
     sharesTableBody: document.getElementById("sharesTableBody"),
     dnsExternalBaseUrlInput: document.getElementById("dnsExternalBaseUrlInput"),
     dnsSaveBtn: document.getElementById("dnsSaveBtn"),
@@ -1040,7 +1045,7 @@
       els.mapperMenuCreateFolder.disabled = on;
     }
     if (els.mapperMenuShare) {
-      const hasShareSelection = state.selectedFolderPaths.size > 0;
+      const hasShareSelection = selectedShareFoldersFromSelection().length > 0;
       els.mapperMenuShare.disabled = !on || !hasShareSelection;
     }
     if (els.mapperMenuRenameFolder) {
@@ -2386,14 +2391,119 @@
     return Array.from(els.shareFoldersSelect.selectedOptions).map((o) => String(o.value || ""));
   }
 
+  function selectedShareFoldersFromSelection() {
+    const out = [];
+    const seen = new Set();
+
+    for (const raw of Array.from(state.selectedFolderPaths)) {
+      const value = String(raw || "").trim();
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      out.push(value);
+    }
+
+    for (const rawId of Array.from(state.selectedFileIds)) {
+      const id = Number(rawId || 0);
+      if (!id) continue;
+      const file = state.files.find((item) => Number(item && item.id ? item.id : 0) === id);
+      if (!file) continue;
+      const folderPath = String(file.folder_path || "").trim();
+      if (!folderPath || seen.has(folderPath)) continue;
+      seen.add(folderPath);
+      out.push(folderPath);
+    }
+
+    return out;
+  }
+
+  function describeShareSelection(folderPaths) {
+    const paths = Array.isArray(folderPaths)
+      ? folderPaths.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    if (!paths.length) return "Ingen mapper valgt.";
+    if (paths.length <= 3) return `Valgt: ${paths.join(", ")}`;
+    const head = paths.slice(0, 3).join(", ");
+    return `Valgt (${paths.length}): ${head} +${paths.length - 3} mere`;
+  }
+
+  function updateShareModalSelectionSummary(folderPaths = null) {
+    if (!els.shareModalSelected) return;
+    const paths = Array.isArray(folderPaths) ? folderPaths : selectedShareFolders();
+    els.shareModalSelected.textContent = describeShareSelection(paths);
+  }
+
+  function resetShareModalFeedback() {
+    showStatus(els.shareCreateStatus, "");
+    if (els.shareResultWrap) els.shareResultWrap.classList.add("hidden");
+    if (els.shareResultLink) els.shareResultLink.value = "";
+  }
+
+  function closeShareModal() {
+    resetShareModalFeedback();
+    if (els.shareModal) els.shareModal.classList.add("hidden");
+  }
+
+  async function openShareModal(preselectedFolders = []) {
+    if (state.role !== "admin" || !els.shareModal) return;
+
+    let selected = Array.isArray(preselectedFolders)
+      ? preselectedFolders.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    if (!selected.length) {
+      selected = selectedShareFoldersFromSelection();
+    }
+
+    if (els.shareFoldersSelect && !(els.shareFoldersSelect.options || []).length) {
+      await loadFolders();
+    }
+
+    resetShareModalFeedback();
+
+    if (els.shareFoldersSelect) {
+      const wanted = new Set(selected);
+      Array.from(els.shareFoldersSelect.options || []).forEach((opt) => {
+        const value = String(opt.value || "");
+        opt.selected = wanted.has(value);
+      });
+    }
+
+    if (els.sharePermissionSelect && !String(els.sharePermissionSelect.value || "").trim()) {
+      els.sharePermissionSelect.value = "view";
+    }
+    if (els.shareExpireValue && !String(els.shareExpireValue.value || "").trim()) {
+      els.shareExpireValue.value = "7";
+    }
+    if (els.shareExpireUnit && !String(els.shareExpireUnit.value || "").trim()) {
+      els.shareExpireUnit.value = "days";
+    }
+
+    if (els.shareUsePasswordChk && !els.shareUsePasswordChk.checked && els.sharePasswordInput) {
+      els.sharePasswordInput.value = "";
+    }
+    if (els.sharePasswordWrap && els.shareUsePasswordChk) {
+      els.sharePasswordWrap.classList.toggle("hidden", !els.shareUsePasswordChk.checked);
+    }
+
+    const currentName = String((els.shareNameInput && els.shareNameInput.value) || "").trim();
+    if (!currentName && selected.length) {
+      if (els.shareNameInput) {
+        els.shareNameInput.value = selected.length === 1 ? selected[0] : `${selected.length} mapper`;
+      }
+    }
+
+    updateShareModalSelectionSummary(selected);
+    els.shareModal.classList.remove("hidden");
+  }
+
   async function loadShares() {
     if (!els.sharesTableBody) return;
     try {
       const data = await api("/api/shares");
       state.shares = Array.isArray(data.items) ? data.items : [];
+      showStatus(els.sharesListStatus, "");
     } catch (err) {
       state.shares = [];
-      showStatus(els.shareCreateStatus, err.message || "Kunne ikke hente delinger", "error");
+      showStatus(els.sharesListStatus, err.message || "Kunne ikke hente delinger", "error");
     }
     renderShares();
     updateStats();
@@ -2435,6 +2545,7 @@
     const folders = selectedShareFolders();
     if (!folders.length) {
       showStatus(els.shareCreateStatus, "Vælg mindst en mappe.", "error");
+      updateShareModalSelectionSummary([]);
       return;
     }
     const payload = {
@@ -2453,7 +2564,9 @@
     showStatus(els.shareCreateStatus, "Deling oprettet.", "ok");
     if (els.shareResultWrap) els.shareResultWrap.classList.remove("hidden");
     if (els.shareResultLink) els.shareResultLink.value = data.link || "";
+    updateShareModalSelectionSummary(folders);
     await loadShares();
+    if (state.selectMode) toggleSelectMode(false);
   }
 
   async function onShareTableClick(event) {
@@ -2467,16 +2580,16 @@
     if (action === "copy" && item.link) {
       try {
         await navigator.clipboard.writeText(item.link);
-        showStatus(els.shareCreateStatus, "Link kopieret.", "ok");
+        showStatus(els.sharesListStatus, "Link kopieret.", "ok");
       } catch {
-        showStatus(els.shareCreateStatus, "Kunne ikke kopiere link automatisk.", "error");
+        showStatus(els.sharesListStatus, "Kunne ikke kopiere link automatisk.", "error");
       }
       return;
     }
 
     if (action === "revoke") {
       await api(`/api/shares/${id}/revoke`, { method: "POST" });
-      showStatus(els.shareCreateStatus, "Deling deaktiveret.", "ok");
+      showStatus(els.sharesListStatus, "Deling deaktiveret.", "ok");
       await loadShares();
       return;
     }
@@ -2484,7 +2597,7 @@
     if (action === "delete") {
       if (!window.confirm("Vil du slette delingen permanent?")) return;
       await api(`/api/shares/${id}`, { method: "DELETE" });
-      showStatus(els.shareCreateStatus, "Deling slettet.", "ok");
+      showStatus(els.sharesListStatus, "Deling slettet.", "ok");
       await loadShares();
     }
   }
@@ -3919,22 +4032,13 @@
     }
 
     if (cmd === "share") {
-      if (!state.selectMode || !state.selectedFolderPaths.size) return;
+      const selectedPaths = selectedShareFoldersFromSelection();
+      if (!state.selectMode || !selectedPaths.length) return;
       if (state.role !== "admin") {
         showStatus(els.uploadStatus, "Kun admin kan oprette delinger.", "error");
         return;
       }
-      const selectedPaths = Array.from(state.selectedFolderPaths);
-      setTab("settings");
-      setSettingsTab("shares");
-      await loadShares();
-      if (els.shareFoldersSelect) {
-        const wanted = new Set(selectedPaths);
-        Array.from(els.shareFoldersSelect.options || []).forEach((opt) => {
-          opt.selected = wanted.has(String(opt.value || ""));
-        });
-      }
-      toggleSelectMode(false);
+      await openShareModal(selectedPaths);
       return;
     }
 
@@ -4078,6 +4182,8 @@
 
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
+      const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
+      if (shareModalOpen) return;
       if (!state.selectMode) return;
       toggleSelectMode(false);
     });
@@ -4385,6 +4491,11 @@
         closeImagePreviewModal();
         return;
       }
+      const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
+      if (shareModalOpen) {
+        closeShareModal();
+        return;
+      }
       const sliceModalOpen = !!(els.sliceModal && !els.sliceModal.classList.contains("hidden"));
       if (sliceModalOpen) {
         closeSliceModal();
@@ -4526,6 +4637,26 @@
       });
     }
 
+    if (els.shareFoldersSelect) {
+      els.shareFoldersSelect.addEventListener("change", () => {
+        updateShareModalSelectionSummary();
+      });
+    }
+
+    if (els.shareModalCloseBtn) {
+      els.shareModalCloseBtn.addEventListener("click", closeShareModal);
+    }
+    if (els.shareModalCancelBtn) {
+      els.shareModalCancelBtn.addEventListener("click", closeShareModal);
+    }
+    if (els.shareModal) {
+      els.shareModal.addEventListener("click", (event) => {
+        if (event.target === els.shareModal || event.target.classList.contains("modal-backdrop")) {
+          closeShareModal();
+        }
+      });
+    }
+
     if (els.createShareBtn) {
       els.createShareBtn.addEventListener("click", () => {
         createShare().catch((err) => {
@@ -4550,7 +4681,7 @@
     if (els.sharesTableBody) {
       els.sharesTableBody.addEventListener("click", (event) => {
         onShareTableClick(event).catch((err) => {
-          showStatus(els.shareCreateStatus, err.message || "Fejl i deling", "error");
+          showStatus(els.sharesListStatus, err.message || "Fejl i deling", "error");
         });
       });
     }
