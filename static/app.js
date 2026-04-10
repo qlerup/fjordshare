@@ -49,6 +49,9 @@
     newFolderInput: document.getElementById("newFolderInput"),
     createFolderBtn: document.getElementById("createFolderBtn"),
     uploadStatus: document.getElementById("uploadStatus"),
+    uploadOverlay: document.getElementById("uploadOverlay"),
+    uploadProgressBar: document.getElementById("uploadProgressBar"),
+    uploadProgressText: document.getElementById("uploadProgressText"),
     uploadMonitor: document.getElementById("uploadMonitor"),
     uploadMonitorToggle: document.getElementById("uploadMonitorToggle"),
     uploadMonitorStop: document.getElementById("uploadMonitorStop"),
@@ -188,6 +191,8 @@
   let activeTusUpload = null;
   let uploadMonitorHideTimer = null;
   let uploadMonitorDomEventsBound = false;
+  let globalDropDepth = 0;
+  let internalImageDrag = false;
 
   function ensureUploadMonitorRefs() {
     if (!els.uploadMonitor) els.uploadMonitor = document.getElementById("uploadMonitor");
@@ -197,6 +202,49 @@
     if (!els.uploadMonitorSummary) els.uploadMonitorSummary = document.getElementById("uploadMonitorSummary");
     if (!els.uploadMonitorCurrent) els.uploadMonitorCurrent = document.getElementById("uploadMonitorCurrent");
     if (!els.uploadMonitorList) els.uploadMonitorList = document.getElementById("uploadMonitorList");
+  }
+
+  function ensureUploadOverlayRefs() {
+    if (!els.uploadOverlay) els.uploadOverlay = document.getElementById("uploadOverlay");
+    if (!els.uploadProgressBar) els.uploadProgressBar = document.getElementById("uploadProgressBar");
+    if (!els.uploadProgressText) els.uploadProgressText = document.getElementById("uploadProgressText");
+  }
+
+  function canUploadFromCurrentView() {
+    const filesVisible = !!(els.tabFiles && !els.tabFiles.classList.contains("hidden"));
+    return filesVisible && !state.selectMode;
+  }
+
+  function showGlobalDropOverlay() {
+    ensureUploadOverlayRefs();
+    if (!els.uploadOverlay) return;
+    const canUploadHere = canUploadFromCurrentView();
+    const targetFolder = String(currentFolder() || state.homeFolder || "").trim();
+    const titleEl = els.uploadOverlay.querySelector(".upload-title");
+    if (titleEl) {
+      titleEl.textContent = canUploadHere
+        ? "Slip filer eller mapper for at uploade"
+        : "Upload er ikke aktiv her";
+    }
+    if (els.uploadProgressText) {
+      els.uploadProgressText.textContent = canUploadHere
+        ? `Upload destination: ${targetFolder || "(ingen mappe valgt)"}`
+        : "Gå til Mapper for at uploade";
+    }
+    if (els.uploadProgressBar) {
+      els.uploadProgressBar.style.width = canUploadHere ? "100%" : "0%";
+    }
+    els.uploadOverlay.classList.toggle("upload-ready", canUploadHere);
+    els.uploadOverlay.classList.toggle("upload-blocked", !canUploadHere);
+    els.uploadOverlay.classList.remove("hidden");
+    els.uploadOverlay.classList.add("active");
+  }
+
+  function hideGlobalDropOverlay() {
+    ensureUploadOverlayRefs();
+    if (!els.uploadOverlay) return;
+    els.uploadOverlay.classList.remove("active", "upload-ready", "upload-blocked");
+    els.uploadOverlay.classList.add("hidden");
   }
 
   function isUploadRunning() {
@@ -1204,19 +1252,164 @@
     showStatus(els.uploadStatus, "Metadata gemt for de uploadede filer.", "ok");
   }
 
-  async function startUpload(files) {
-    const list = Array.from(files || []);
-    if (!list.length) return;
+  async function _readDirectoryEntriesRecursive(entry, basePath) {
+    const out = [];
+    if (!entry) return out;
 
-    const folder = currentFolder() || state.homeFolder;
-    if (!folder) {
+    if (entry.isFile) {
+      let file = null;
+      try {
+        file = await new Promise((resolve, reject) => {
+          entry.file(resolve, reject);
+        });
+      } catch {
+        file = null;
+      }
+      if (file) {
+        const relPath = basePath ? `${basePath}/${file.name}` : String(file.name || "");
+        out.push({ file, relPath });
+      }
+      return out;
+    }
+
+    if (!entry.isDirectory) {
+      return out;
+    }
+
+    const dirName = String(entry.name || "").trim();
+    const nextBase = dirName ? (basePath ? `${basePath}/${dirName}` : dirName) : basePath;
+    const reader = entry.createReader();
+
+    while (true) {
+      let batch = [];
+      try {
+        batch = await new Promise((resolve, reject) => {
+          reader.readEntries(resolve, reject);
+        });
+      } catch {
+        batch = [];
+      }
+      if (!batch || !batch.length) break;
+      for (const child of batch) {
+        const nested = await _readDirectoryEntriesRecursive(child, nextBase);
+        out.push(...nested);
+      }
+    }
+
+    return out;
+  }
+
+  async function collectDroppedFilesWithPaths(dataTransfer) {
+    const result = [];
+    try {
+      const items = dataTransfer && dataTransfer.items ? Array.from(dataTransfer.items) : [];
+      const entries = [];
+      for (const item of items) {
+        try {
+          if (item && item.kind === "file" && typeof item.webkitGetAsEntry === "function") {
+            const entry = item.webkitGetAsEntry();
+            if (entry) entries.push(entry);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (entries.length) {
+        for (const entry of entries) {
+          const parts = await _readDirectoryEntriesRecursive(entry, "");
+          result.push(...parts);
+        }
+        if (result.length) return result;
+      }
+    } catch {
+      // ignore
+    }
+
+    const files = dataTransfer && dataTransfer.files ? Array.from(dataTransfer.files) : [];
+    for (const file of files) {
+      const rel = String(file.webkitRelativePath || file.relativePath || file.name || "").trim() || file.name;
+      result.push({ file, relPath: rel });
+    }
+    return result;
+  }
+
+  function groupDroppedFilesByRelativeDir(fileItems) {
+    const groups = new Map();
+    for (const item of fileItems || []) {
+      const file = item && item.file;
+      if (!(file instanceof File)) continue;
+      const relPath = String((item && item.relPath) || "").replace(/\\/g, "/");
+      const parts = relPath.split("/").filter(Boolean);
+      const relDir = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+      if (!groups.has(relDir)) groups.set(relDir, []);
+      groups.get(relDir).push(file);
+    }
+    return groups;
+  }
+
+  async function uploadDroppedDataTransfer(dataTransfer, baseFolder) {
+    const base = String(baseFolder || "").trim();
+    if (!base) {
       showStatus(els.uploadStatus, "Vælg en mappe før upload.", "error");
       return;
     }
 
+    const droppedItems = await collectDroppedFilesWithPaths(dataTransfer);
+    if (!droppedItems.length) return;
+
+    const groups = groupDroppedFilesByRelativeDir(droppedItems);
+    const uploadItems = [];
+    for (const [relDir, files] of groups.entries()) {
+      const cleanDir = String(relDir || "").replace(/\\/g, "/").split("/").filter(Boolean).join("/");
+      const targetFolder = cleanDir ? `${base}/${cleanDir}` : base;
+      for (const file of files) {
+        uploadItems.push({ file, folder: targetFolder });
+      }
+    }
+
+    if (!uploadItems.length) return;
+    await startUpload(uploadItems);
+  }
+
+  async function startUpload(files) {
+    const incoming = Array.from(files || []);
+    if (!incoming.length) return;
+
+    const fallbackFolder = String(currentFolder() || state.homeFolder || "").trim();
+    if (!fallbackFolder) {
+      showStatus(els.uploadStatus, "Vælg en mappe før upload.", "error");
+      return;
+    }
+
+    const list = incoming
+      .map((entry) => {
+        if (!entry) return null;
+        if (entry instanceof File) {
+          return {
+            file: entry,
+            folder: fallbackFolder,
+          };
+        }
+        const file = entry.file;
+        if (!(file instanceof File)) return null;
+        const targetFolder = String(entry.folder || fallbackFolder || "")
+          .replace(/\\/g, "/")
+          .split("/")
+          .filter(Boolean)
+          .join("/");
+        if (!targetFolder) return null;
+        return {
+          file,
+          folder: targetFolder,
+        };
+      })
+      .filter(Boolean);
+
+    if (!list.length) return;
+
     resetUploadUiState();
     uploadUiState.totalFiles = list.length;
-    uploadUiState.totalBytes = list.reduce((sum, file) => sum + Number(file && file.size ? file.size : 0), 0);
+    uploadUiState.totalBytes = list.reduce((sum, item) => sum + Number(item.file && item.file.size ? item.file.size : 0), 0);
     uploadUiState.collapsed = false;
     uploadStopRequested = false;
     uploadWasStopped = false;
@@ -1230,7 +1423,9 @@
       for (let i = 0; i < list.length; i += 1) {
         if (uploadStopRequested) break;
 
-        const file = list[i];
+        const item = list[i];
+        const file = item.file;
+        const targetFolder = String(item.folder || fallbackFolder || "").trim();
         const cid = makeClientUploadId();
         const itemKey = _uploadItemKey(file.name, i);
         uploadUiState.currentPhaseLabel = "Uploader";
@@ -1241,7 +1436,7 @@
         renderUploadMonitor();
 
         try {
-          await uploadSingleTus(file, folder, cid, (uploadedBytes, totalBytes) => {
+          await uploadSingleTus(file, targetFolder, cid, (uploadedBytes, totalBytes) => {
             const pct = totalBytes > 0 ? Math.round((uploadedBytes / totalBytes) * 100) : 0;
             uploadUiState.currentLoaded = Number(uploadedBytes || 0);
             uploadUiState.currentTotal = Number(totalBytes || file.size || 0);
@@ -1956,12 +2151,83 @@
         if (state.selectMode) return;
         event.preventDefault();
         dropZone.classList.remove("dragover");
-        const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
-        startUpload(files).catch((err) => {
+        uploadDroppedDataTransfer(event.dataTransfer, currentFolder() || state.homeFolder).catch((err) => {
           showStatus(els.uploadStatus, err.message || "Upload via dropzone fejlede", "error");
         });
       });
     }
+
+    document.addEventListener("dragstart", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (!target.closest(".file-card") && !target.closest("#fileInfoDrawer")) return;
+      internalImageDrag = true;
+      if (target instanceof HTMLImageElement) {
+        event.preventDefault();
+      }
+    });
+
+    document.addEventListener("dragend", () => {
+      internalImageDrag = false;
+      globalDropDepth = 0;
+      hideGlobalDropOverlay();
+    });
+
+    window.addEventListener("dragenter", (event) => {
+      if (internalImageDrag) return;
+      if (!(event.dataTransfer && event.dataTransfer.types && event.dataTransfer.types.includes("Files"))) return;
+      globalDropDepth += 1;
+      showGlobalDropOverlay();
+    });
+
+    window.addEventListener("dragover", (event) => {
+      if (internalImageDrag) return;
+      if (event.dataTransfer && event.dataTransfer.types && event.dataTransfer.types.includes("Files")) {
+        event.preventDefault();
+        showGlobalDropOverlay();
+      }
+    });
+
+    window.addEventListener("dragleave", () => {
+      globalDropDepth = Math.max(0, globalDropDepth - 1);
+      if (globalDropDepth === 0) hideGlobalDropOverlay();
+    });
+
+    window.addEventListener("drop", async (event) => {
+      globalDropDepth = 0;
+      if (internalImageDrag) {
+        internalImageDrag = false;
+        hideGlobalDropOverlay();
+        return;
+      }
+
+      const hasFiles = !!(event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length);
+      if (!hasFiles) {
+        hideGlobalDropOverlay();
+        return;
+      }
+
+      event.preventDefault();
+      const droppedInsideMapperZone = !!(els.mapperDropZone && event.target instanceof Node && els.mapperDropZone.contains(event.target));
+      if (droppedInsideMapperZone) {
+        hideGlobalDropOverlay();
+        return;
+      }
+
+      if (!canUploadFromCurrentView()) {
+        showStatus(els.uploadStatus, "Gå til Mapper-fanen for at uploade via drag og drop.", "error");
+        hideGlobalDropOverlay();
+        return;
+      }
+
+      try {
+        await uploadDroppedDataTransfer(event.dataTransfer, currentFolder() || state.homeFolder);
+      } catch (err) {
+        showStatus(els.uploadStatus, err.message || "Upload via drag og drop fejlede", "error");
+      } finally {
+        hideGlobalDropOverlay();
+      }
+    });
 
     if (els.createFolderBtn) {
       els.createFolderBtn.addEventListener("click", async () => {
