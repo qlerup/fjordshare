@@ -754,6 +754,37 @@ def ensure_user_home_folder(user_id: int, username: str, home_folder: str) -> No
         conn.commit()
 
 
+def ensure_user_storage_ready(user: User) -> str:
+    home_folder = normalize_folder_path(str(user.home_folder or ""))
+    if not home_folder:
+        fallback = normalize_folder_path(f"users/{username_to_folder_slug(user.username, int(user.id))}")
+        if fallback:
+            home_folder = fallback
+            try:
+                with closing(get_conn()) as conn:
+                    conn.execute("UPDATE users SET home_folder=? WHERE id=?", (home_folder, int(user.id)))
+                    conn.commit()
+            except Exception:
+                pass
+            user.home_folder = home_folder
+
+    if not home_folder:
+        raise ValueError("Kunne ikke bestemme brugerens hjemmemappe")
+
+    ensure_user_home_folder(int(user.id), str(user.username), home_folder)
+    return home_folder
+
+
+def ensure_user_daily_upload_folder(user: User) -> str:
+    home_folder = ensure_user_storage_ready(user)
+    day_segment = datetime.now().strftime("%Y-%m-%d")
+    day_folder = normalize_folder_path(f"{home_folder}/{day_segment}")
+    _, abs_day_folder = folder_abs_path(day_folder)
+    abs_day_folder.mkdir(parents=True, exist_ok=True)
+    ensure_folder_record(day_folder, owner_user_id=int(user.id))
+    return day_folder
+
+
 def create_user(username: str, password: str, role: str = "user") -> int:
     clean_username = normalize_username(username)
     if len(str(password or "")) < 4:
@@ -1339,6 +1370,10 @@ def login():
                     (int(user.id),),
                 ).fetchone()
             if row and check_password_hash(str(row["password_hash"]), password):
+                try:
+                    ensure_user_storage_ready(user)
+                except Exception:
+                    pass
                 login_user(user)
                 return redirect(url_for("index"))
             error = "Forkert brugernavn eller kode."
@@ -1357,6 +1392,10 @@ def logout():
 @login_required
 def index():
     default_folder = normalize_folder_path(str(current_user.home_folder or ""))
+    try:
+        default_folder = ensure_user_storage_ready(current_user)
+    except Exception:
+        pass
     return render_template(
         "index.html",
         username=current_user.username,
@@ -2168,9 +2207,18 @@ def api_upload_tus_create():
     if not filename:
         return jsonify({"ok": False, "error": "Missing filename"}), 400, tus_headers()
 
-    folder = normalize_folder_path(str(meta.get("folder") or ""))
-    if not folder:
-        folder = normalize_folder_path(str(current_user.home_folder or ""))
+    if current_user.is_admin:
+        folder = normalize_folder_path(str(meta.get("folder") or ""))
+        if not folder:
+            try:
+                folder = ensure_user_storage_ready(current_user)
+            except Exception as exc:
+                return jsonify({"ok": False, "error": f"Kunne ikke klargøre hjemmemappe: {exc}"}), 500, tus_headers()
+    else:
+        try:
+            folder = ensure_user_daily_upload_folder(current_user)
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"Kunne ikke klargøre dagsmappe: {exc}"}), 500, tus_headers()
 
     folder_perm = permission_for_user_folder(current_user, folder)
     if not permission_allows(folder_perm, "upload"):

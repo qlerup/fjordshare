@@ -17,26 +17,24 @@
     </div>
 
     <nav id="sidebarNav" class="nav">
-      <button class="nav-item active" data-tab="files">Filer</button>
+      <button class="nav-item active" data-tab="files">Mapper</button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
     </nav>
 
     <div class="sidebar-footer">
-      <a class="mini-link" href="/api/health" target="_blank">API health</a>
-      <a class="mini-link" href="/logout">Log ud</a>
+      <div class="sidebar-user">Bruger: <strong>{{ username }}</strong></div>
+      <div class="sidebar-links">
+        <a class="mini-link" href="/api/health" target="_blank">API health</a>
+        <a class="mini-link" href="/logout">Log ud</a>
+      </div>
     </div>
   </aside>
 
   <main class="main">
-    <header class="topbar">
-      <div class="topbar-spacer"></div>
-      <div class="topbar-user">Bruger: <strong>{{ username }}</strong></div>
-    </header>
-
     <section class="content-header">
       <div>
-        <h1 id="pageTitle">Filer</h1>
-        <p id="pageSubtitle">Upload, mapper og metadata</p>
+        <h1 id="pageTitle">Mapper</h1>
+        <p id="pageSubtitle">Mapper, upload og metadata</p>
       </div>
       <div class="stats">
         <div class="stat-card">
@@ -76,7 +74,7 @@
           <div id="folderList" class="folder-list"></div>
         </div>
         <div class="panel grow">
-          <h3>Filer</h3>
+          <h3>Indhold i valgt mappe</h3>
           <div id="fileGrid" class="file-grid"></div>
         </div>
       </div>

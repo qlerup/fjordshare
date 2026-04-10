@@ -83,8 +83,8 @@
 
   const TABS = {
     files: {
-      title: "Filer",
-      subtitle: "Upload, mapper og metadata",
+      title: "Mapper",
+      subtitle: "Mapper, upload og metadata",
     },
     settings: {
       title: "Indstillinger",
@@ -450,7 +450,7 @@
     const list = Array.from(files || []);
     if (!list.length) return;
 
-    const folder = currentFolder();
+    const folder = currentFolder() || state.homeFolder;
     if (!folder) {
       showStatus(els.uploadStatus, "Vælg en mappe før upload.", "error");
       return;
@@ -476,14 +476,20 @@
       }
     }
 
-    await loadFiles();
-
     if (uploaded.length) {
       showStatus(els.uploadStatus, `Upload færdig: ${uploaded.length}/${list.length} filer.`, "ok");
       const resolved = await resolveUploadedItems(uploaded);
+      const firstFolder = resolved.length ? String(resolved[0].folder_path || "").trim() : "";
+      await loadFolders();
+      if (firstFolder && els.folderSelect) {
+        els.folderSelect.value = firstFolder;
+        state.currentFolder = firstFolder;
+      }
+      await loadFiles();
       if (resolved.length) openMetadataModal(resolved);
     } else {
       showStatus(els.uploadStatus, "Ingen filer blev uploadet.", "error");
+      await loadFiles();
     }
   }
 
