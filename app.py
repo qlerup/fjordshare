@@ -69,7 +69,7 @@ THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
 THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
 THUMB_RENDER_FACE_LIMIT = 120_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
-THUMB_RENDER_STYLE_VERSION = "4"
+THUMB_RENDER_STYLE_VERSION = "5"
 FILE_ATTACHMENT_MAX_BYTES = int(str(os.getenv("FILE_ATTACHMENT_MAX_BYTES", str(20 * 1024 * 1024))) or str(20 * 1024 * 1024))
 FILE_ATTACHMENT_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 FILE_ATTACHMENT_MIME_TO_EXT = {
@@ -730,8 +730,9 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
     ax.set_xlim(center[0] - half, center[0] + half)
     ax.set_ylim(center[1] - half, center[1] + half)
     ax.set_zlim(center[2] - half, center[2] + half)
-    ax.view_init(elev=24, azim=142)
-    ax.set_box_aspect((1.0, 1.0, 0.8))
+    ax.view_init(elev=24, azim=-38)
+    dims = np.maximum(maxs - mins, 1e-6)
+    ax.set_box_aspect((float(dims[0]), float(dims[1]), float(dims[2])))
 
     fig.tight_layout(pad=0.0)
     fig.savefig(str(output_png), dpi=100)
