@@ -624,18 +624,29 @@
     const margin = second ? (second.score - best.score) : 1;
     const confidence = hint
       ? "high"
-      : (margin >= 0.9 ? "high" : (margin >= 0.35 ? "medium" : "low"));
+      : (margin >= 1.1 ? "high" : (margin >= 0.5 ? "medium" : "low"));
 
-    const mmPerUnit = Number(best.candidate.mmPerUnit || 1);
+    const mmCandidate = candidates[0];
+    const guessed = best.candidate;
+    const useConservativeMm = !hint && guessed.unitKey !== "mm" && confidence !== "high";
+    const selected = useConservativeMm ? mmCandidate : guessed;
+    const resolvedConfidence = useConservativeMm ? "low" : confidence;
+    const resolvedSource = hint
+      ? "filename"
+      : (useConservativeMm ? "auto-mm-fallback" : "auto");
+
+    const mmPerUnit = Number(selected.mmPerUnit || 1);
     const canHeightUnits = SCALE_CAN_HEIGHT_MM / mmPerUnit;
     const canDiameterUnits = SCALE_CAN_DIAMETER_MM / mmPerUnit;
 
     return {
-      unitKey: best.candidate.unitKey,
-      unitLabel: best.candidate.unitLabel,
+      unitKey: selected.unitKey,
+      unitLabel: selected.unitLabel,
+      suggestedUnitKey: guessed.unitKey,
+      suggestedUnitLabel: guessed.unitLabel,
       mmPerUnit,
-      confidence,
-      source: hint ? "filename" : "auto",
+      confidence: resolvedConfidence,
+      source: resolvedSource,
       canHeightUnits,
       canDiameterUnits,
       alternatives: scored.slice(0, 4).map((entry) => ({
@@ -678,6 +689,7 @@
   function buildUnitHintText(unitContext = null) {
     if (!unitContext) return "Enheder: forudsat mm.";
     const label = String(unitContext.unitLabel || "mm");
+    const suggestedLabel = String(unitContext.suggestedUnitLabel || label);
     const source = String(unitContext.source || "auto");
     const confidence = String(unitContext.confidence || "low");
 
@@ -686,6 +698,9 @@
     }
     if (source === "filename") {
       return `Enheder: læst som ${label} fra filnavn, konverteret til mm.`;
+    }
+    if (source === "auto-mm-fallback") {
+      return `Enheder: auto-gæt var ${suggestedLabel}, men vises konservativt som mm.`;
     }
     if (confidence === "high") {
       return `Enheder: auto-gættet som ${label}, konverteret til mm.`;
