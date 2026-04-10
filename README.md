@@ -48,6 +48,18 @@ docker compose up -d --build
 
 - `http://localhost:9090` (eller den port du sætter i `.env`)
 
+## STL slicing med BambuStudio
+
+Slicing-funktionen bruger et eksternt program (BambuStudio) via kommandolinje. Der skal derfor ikke installeres ekstra Python-pakker for slicing, men BambuStudio-binæren skal være tilgængelig i containeren.
+
+Miljøvariabler i `.env`:
+
+- `BAMBUSTUDIO_BIN` (default: `bambu-studio`)
+- `BAMBUSTUDIO_CONFIG_PATH` (valgfri sti til preset/config-fil)
+- `BAMBUSTUDIO_TIMEOUT_SEC` (default: `1800`)
+
+Hvis binæren ikke findes i containerens PATH, vil slicing fejle med en tydelig fejlbesked.
+
 ## Data
 
 Data gemmes i volumen mappet til `DATA_DIR`:

@@ -7,6 +7,9 @@
     environment:
       DATA_DIR: /data
       TZ: ${TZ:-Europe/Copenhagen}
+      BAMBUSTUDIO_BIN: ${BAMBUSTUDIO_BIN:-bambu-studio}
+      BAMBUSTUDIO_CONFIG_PATH: ${BAMBUSTUDIO_CONFIG_PATH:-}
+      BAMBUSTUDIO_TIMEOUT_SEC: ${BAMBUSTUDIO_TIMEOUT_SEC:-1800}
     volumes:
       - "${DATA_DIR:-/volume1/docker/fjordshare/data}:/data"
     healthcheck:
