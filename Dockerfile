@@ -18,6 +18,7 @@ RUN set -eux; \
         curl \
         ca-certificates \
         libpangoft2-1.0-0 \
+        libgl1 \
         assimp-utils; \
     mkdir -p /opt/bambu-studio; \
     appimage_url="${BAMBUSTUDIO_APPIMAGE_URL}"; \
