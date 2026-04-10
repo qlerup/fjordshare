@@ -69,7 +69,7 @@ THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
 THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
 THUMB_RENDER_FACE_LIMIT = 120_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
-THUMB_RENDER_STYLE_VERSION = "3"
+THUMB_RENDER_STYLE_VERSION = "4"
 FILE_ATTACHMENT_MAX_BYTES = int(str(os.getenv("FILE_ATTACHMENT_MAX_BYTES", str(20 * 1024 * 1024))) or str(20 * 1024 * 1024))
 FILE_ATTACHMENT_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 FILE_ATTACHMENT_MIME_TO_EXT = {
@@ -697,10 +697,26 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
     normals = mesh.face_normals
 
     if len(faces) > THUMB_RENDER_FACE_LIMIT:
-        # Keep contiguous surface appearance instead of random sparse sampling.
-        step = max(1, int(np.ceil(len(faces) / float(THUMB_RENDER_FACE_LIMIT))))
-        faces = faces[::step]
-        normals = normals[::step]
+        # Prefer proper decimation to keep surfaces closed/solid in thumbnails.
+        simplified = None
+        simplify_fn = getattr(mesh, "simplify_quadric_decimation", None)
+        if callable(simplify_fn):
+            try:
+                candidate = simplify_fn(int(THUMB_RENDER_FACE_LIMIT))
+                if candidate is not None and not candidate.is_empty and candidate.faces is not None and len(candidate.faces) > 0:
+                    simplified = candidate
+            except Exception:
+                simplified = None
+
+        if simplified is not None:
+            mesh = simplified
+            try:
+                mesh.fix_normals()
+            except Exception:
+                pass
+            verts = mesh.vertices
+            faces = mesh.faces
+            normals = mesh.face_normals
 
     triangles = verts[faces]
 
