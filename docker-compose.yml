@@ -1,6 +1,9 @@
 ﻿services:
   fjordshare:
-    build: .
+    build:
+      context: .
+      args:
+        BAMBUSTUDIO_APPIMAGE_URL: ${BAMBUSTUDIO_APPIMAGE_URL:-}
     container_name: fjordshare
     ports:
       - "${APP_PORT:-9090}:8080"

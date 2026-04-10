@@ -50,15 +50,18 @@ docker compose up -d --build
 
 ## STL slicing med BambuStudio
 
-Slicing-funktionen bruger et eksternt program (BambuStudio) via kommandolinje. Der skal derfor ikke installeres ekstra Python-pakker for slicing, men BambuStudio-binæren skal være tilgængelig i containeren.
+Slicing-funktionen bruger et eksternt program (BambuStudio) via kommandolinje. Der skal derfor ikke installeres ekstra Python-pakker for slicing.
+
+Docker-image build forsøger automatisk at hente en BambuStudio AppImage fra officielle releases og installerer en `bambu-studio` CLI-wrapper i containeren.
 
 Miljøvariabler i `.env`:
 
+- `BAMBUSTUDIO_APPIMAGE_URL` (valgfri build override, bruges hvis du vil pinne en bestemt AppImage)
 - `BAMBUSTUDIO_BIN` (default: `bambu-studio`)
 - `BAMBUSTUDIO_CONFIG_PATH` (valgfri sti til preset/config-fil)
 - `BAMBUSTUDIO_TIMEOUT_SEC` (default: `1800`)
 
-Hvis binæren ikke findes i containerens PATH, vil slicing fejle med en tydelig fejlbesked.
+Hvis auto-detektion af release-asset fejler i build, så sæt `BAMBUSTUDIO_APPIMAGE_URL` i `.env` til en konkret AppImage URL og byg igen.
 
 ## Data
 
