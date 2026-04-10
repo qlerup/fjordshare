@@ -18,8 +18,9 @@
 
 html,
 body {
-  margin: 0;
-  padding: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  height: 100%;
   min-height: 100%;
 }
 
@@ -164,10 +165,13 @@ input[type="checkbox"] {
 
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   grid-template-columns: 190px 1fr;
-  margin: 0;
-  padding: 0;
+  margin: 0 !important;
+  margin-top: 0 !important;
+  padding: 0 !important;
+  padding-top: 0 !important;
   align-items: stretch;
 }
 
@@ -175,6 +179,8 @@ input[type="checkbox"] {
   border-right: 1px solid var(--border);
   background: var(--panel);
   padding: 0 8px 12px;
+  margin: 0 !important;
+  margin-top: 0 !important;
   display: flex;
   flex-direction: column;
   position: sticky;
