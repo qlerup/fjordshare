@@ -1992,6 +1992,7 @@
     if (t.onResize) window.removeEventListener("resize", t.onResize);
     if (t.onKeyDown) window.removeEventListener("keydown", t.onKeyDown);
     if (t.onKeyUp) window.removeEventListener("keyup", t.onKeyUp);
+    if (t.onBlur) window.removeEventListener("blur", t.onBlur);
     state.three = null;
   }
 
@@ -2100,6 +2101,7 @@
     let applyControlTarget = (_center, _radius) => {};
     let onFlyKeyDown = null;
     let onFlyKeyUp = null;
+    let onFlyBlur = null;
     let baseMoveSpeed = 120;
 
     const isTouchPrimary = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
@@ -2129,25 +2131,117 @@
       controls.rollSpeed = Math.PI / 8;
       controls.movementSpeed = baseMoveSpeed;
 
+      const clearLookDrift = () => {
+        if (!controls || !controls.moveState) return;
+        controls.moveState.pitchUp = 0;
+        controls.moveState.pitchDown = 0;
+        controls.moveState.yawLeft = 0;
+        controls.moveState.yawRight = 0;
+        if (typeof controls.updateRotationVector === "function") controls.updateRotationVector();
+      };
+
+      const syncMovementVector = () => {
+        if (typeof controls.updateMovementVector === "function") controls.updateMovementVector();
+      };
+
       let speedBoost = 1;
       onFlyKeyDown = (event) => {
-        if (event && event.key === "Shift") speedBoost = 2.7;
+        if (!event) return;
+        const key = String(event.key || "");
+        if (key === "Shift") {
+          speedBoost = 2.7;
+          return;
+        }
+        if (key === "ArrowUp") {
+          controls.moveState.forward = 1;
+          clearLookDrift();
+          syncMovementVector();
+          event.preventDefault();
+          return;
+        }
+        if (key === "ArrowDown") {
+          controls.moveState.back = 1;
+          clearLookDrift();
+          syncMovementVector();
+          event.preventDefault();
+          return;
+        }
+        if (key === "ArrowLeft") {
+          controls.moveState.left = 1;
+          clearLookDrift();
+          syncMovementVector();
+          event.preventDefault();
+          return;
+        }
+        if (key === "ArrowRight") {
+          controls.moveState.right = 1;
+          clearLookDrift();
+          syncMovementVector();
+          event.preventDefault();
+        }
       };
       onFlyKeyUp = (event) => {
-        if (event && event.key === "Shift") speedBoost = 1;
+        if (!event) return;
+        const key = String(event.key || "");
+        if (key === "Shift") {
+          speedBoost = 1;
+          return;
+        }
+        if (key === "ArrowUp") {
+          controls.moveState.forward = 0;
+          clearLookDrift();
+          syncMovementVector();
+          event.preventDefault();
+          return;
+        }
+        if (key === "ArrowDown") {
+          controls.moveState.back = 0;
+          clearLookDrift();
+          syncMovementVector();
+          event.preventDefault();
+          return;
+        }
+        if (key === "ArrowLeft") {
+          controls.moveState.left = 0;
+          clearLookDrift();
+          syncMovementVector();
+          event.preventDefault();
+          return;
+        }
+        if (key === "ArrowRight") {
+          controls.moveState.right = 0;
+          clearLookDrift();
+          syncMovementVector();
+          event.preventDefault();
+        }
+      };
+      onFlyBlur = () => {
+        speedBoost = 1;
+        if (!controls || !controls.moveState) return;
+        controls.moveState.forward = 0;
+        controls.moveState.back = 0;
+        controls.moveState.left = 0;
+        controls.moveState.right = 0;
+        controls.moveState.up = 0;
+        controls.moveState.down = 0;
+        clearLookDrift();
+        syncMovementVector();
       };
       window.addEventListener("keydown", onFlyKeyDown);
       window.addEventListener("keyup", onFlyKeyUp);
+      window.addEventListener("blur", onFlyBlur);
 
       const clock = new THREE.Clock();
       updateControls = () => {
         controls.movementSpeed = baseMoveSpeed * speedBoost;
         controls.update(clock.getDelta());
+        clearLookDrift();
       };
       applyControlTarget = (center, radius) => {
         camera.lookAt(center);
         baseMoveSpeed = Math.max(radius * 1.65, 40);
         controls.movementSpeed = baseMoveSpeed;
+        clearLookDrift();
       };
       controlsHintText = modelControlsText("fly");
     }
@@ -2705,7 +2799,7 @@
 
     const onResize = () => resize();
     window.addEventListener("resize", onResize);
-    state.three = { renderer, scene, camera, controls, frameId: 0, onResize, onKeyDown: onFlyKeyDown, onKeyUp: onFlyKeyUp };
+    state.three = { renderer, scene, camera, controls, frameId: 0, onResize, onKeyDown: onFlyKeyDown, onKeyUp: onFlyKeyUp, onBlur: onFlyBlur };
     animate();
 
     const heightValue = modelOnlySize && Number.isFinite(Number(modelOnlySize.y))
