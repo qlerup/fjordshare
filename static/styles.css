@@ -1557,6 +1557,11 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 1000px) {
+  body.app-mode {
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
   .app-shell {
     position: static;
     inset: auto;
