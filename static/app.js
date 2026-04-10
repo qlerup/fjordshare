@@ -533,8 +533,11 @@
   const SCALE_CAN_HEIGHT_MM = 122;
   const SCALE_CAN_DIAMETER_MM = 66;
 
-  function modelControlsText() {
-    return "Fri rotation: træk. Zoom: scroll/2 fingre.";
+  function modelControlsText(mode = "orbit") {
+    if (mode === "fly") {
+      return "Fri flyvning: hold venstre museknap og kig. W/A/S/D + R/F bevæger. Shift = hurtigere.";
+    }
+    return "Træk for rotation. Zoom med scroll/2 fingre.";
   }
 
   function formatModelHeight(value) {
@@ -563,8 +566,8 @@
     }
   }
 
-  function buildModelHint(heightValue = 0, extras = []) {
-    const controls = modelControlsText();
+  function buildModelHint(heightValue = 0, extras = [], controlsText = modelControlsText("orbit")) {
+    const controls = String(controlsText || modelControlsText("orbit"));
     const heightText = formatModelHeight(heightValue);
     const parts = [controls];
     if (heightText) parts.push(heightText);
@@ -1946,12 +1949,14 @@
       {
         three: "https://esm.sh/three@0.166.1",
         trackball: "https://esm.sh/three@0.166.1/examples/jsm/controls/TrackballControls.js",
+        fly: "https://esm.sh/three@0.166.1/examples/jsm/controls/FlyControls.js",
         stl: "https://esm.sh/three@0.166.1/examples/jsm/loaders/STLLoader.js",
         obj: "https://esm.sh/three@0.166.1/examples/jsm/loaders/OBJLoader.js",
       },
       {
         three: "https://cdn.jsdelivr.net/npm/three@0.166.1/+esm",
         trackball: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/TrackballControls.js/+esm",
+        fly: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/FlyControls.js/+esm",
         stl: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/STLLoader.js/+esm",
         obj: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/OBJLoader.js/+esm",
       },
@@ -1961,12 +1966,13 @@
     for (const src of sources) {
       try {
         const THREE = await import(src.three);
-        const [{ TrackballControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
+        const [{ TrackballControls }, { FlyControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
           import(src.trackball),
+          import(src.fly),
           import(src.stl),
           import(src.obj),
         ]);
-        state.threeModules = { THREE, TrackballControls, STLLoader, OBJLoader };
+        state.threeModules = { THREE, TrackballControls, FlyControls, STLLoader, OBJLoader };
         return state.threeModules;
       } catch (err) {
         lastErr = err;
@@ -1981,9 +1987,11 @@
     if (!state.three) return;
     const t = state.three;
     if (t.frameId) cancelAnimationFrame(t.frameId);
-    if (t.controls) t.controls.dispose();
+    if (t.controls && typeof t.controls.dispose === "function") t.controls.dispose();
     if (t.renderer) t.renderer.dispose();
     if (t.onResize) window.removeEventListener("resize", t.onResize);
+    if (t.onKeyDown) window.removeEventListener("keydown", t.onKeyDown);
+    if (t.onKeyUp) window.removeEventListener("keyup", t.onKeyUp);
     state.three = null;
   }
 
@@ -2068,7 +2076,7 @@
       setModelHintMessage(`Kunne ikke indlæse 3D viewer: ${err.message || err}`);
       return;
     }
-    const { THREE, TrackballControls, STLLoader, OBJLoader } = modules;
+    const { THREE, TrackballControls, FlyControls, STLLoader, OBJLoader } = modules;
 
     cleanupThree();
 
@@ -2085,12 +2093,63 @@
     camera.up.set(0, 1, 0);
 
     canvas.style.touchAction = "none";
-    const controls = new TrackballControls(camera, canvas);
-    controls.noPan = true;
-    controls.rotateSpeed = 4.2;
-    controls.zoomSpeed = 1.25;
-    controls.dynamicDampingFactor = 0.12;
-    controls.staticMoving = false;
+    let controls = null;
+    let controlsHintText = modelControlsText("fly");
+    let updateControls = () => {};
+    let handleControlsResize = () => {};
+    let applyControlTarget = (_center, _radius) => {};
+    let onFlyKeyDown = null;
+    let onFlyKeyUp = null;
+    let baseMoveSpeed = 120;
+
+    const isTouchPrimary = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+    if (isTouchPrimary) {
+      controls = new TrackballControls(camera, canvas);
+      controls.noPan = true;
+      controls.rotateSpeed = 4.0;
+      controls.zoomSpeed = 1.2;
+      controls.dynamicDampingFactor = 0.14;
+      controls.staticMoving = false;
+      controlsHintText = modelControlsText("orbit");
+      updateControls = () => controls.update();
+      handleControlsResize = () => {
+        if (typeof controls.handleResize === "function") controls.handleResize();
+      };
+      applyControlTarget = (center) => {
+        if (controls && controls.target) {
+          controls.target.copy(center);
+          controls.update();
+        }
+      };
+    } else {
+      controls = new FlyControls(camera, canvas);
+      controls.dragToLook = true;
+      controls.autoForward = false;
+      controls.rollSpeed = Math.PI / 8;
+      controls.movementSpeed = baseMoveSpeed;
+
+      let speedBoost = 1;
+      onFlyKeyDown = (event) => {
+        if (event && event.key === "Shift") speedBoost = 2.7;
+      };
+      onFlyKeyUp = (event) => {
+        if (event && event.key === "Shift") speedBoost = 1;
+      };
+      window.addEventListener("keydown", onFlyKeyDown);
+      window.addEventListener("keyup", onFlyKeyUp);
+
+      const clock = new THREE.Clock();
+      updateControls = () => {
+        controls.movementSpeed = baseMoveSpeed * speedBoost;
+        controls.update(clock.getDelta());
+      };
+      applyControlTarget = (center, radius) => {
+        camera.lookAt(center);
+        baseMoveSpeed = Math.max(radius * 1.65, 40);
+        controls.movementSpeed = baseMoveSpeed;
+      };
+      controlsHintText = modelControlsText("fly");
+    }
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.9);
     scene.add(hemi);
@@ -2242,40 +2301,133 @@
       };
     }
 
-    function applyBestStandingOrientation(object) {
-      const candidateRotations = [
-        [0, 0, 0],
-        [-Math.PI / 2, 0, 0],
-        [Math.PI / 2, 0, 0],
-        [Math.PI, 0, 0],
-        [0, 0, -Math.PI / 2],
-        [0, 0, Math.PI / 2],
-        [0, 0, Math.PI],
-      ];
+    function collectModelSamplePoints(object, maxPoints = 6500) {
+      const meshes = [];
+      object.traverse((node) => {
+        if (!node || !node.isMesh || !node.geometry || typeof node.geometry.getAttribute !== "function") return;
+        const pos = node.geometry.getAttribute("position");
+        if (!pos || !pos.count) return;
+        meshes.push(node);
+      });
+      if (!meshes.length) return [];
 
+      object.updateMatrixWorld(true);
+      const invRoot = object.matrixWorld.clone().invert();
+      const perMeshTarget = Math.max(120, Math.floor(maxPoints / meshes.length));
+      const points = [];
+      const localVertex = new THREE.Vector3();
+      const normalized = new THREE.Vector3();
+
+      for (const mesh of meshes) {
+        const pos = mesh.geometry.getAttribute("position");
+        const step = Math.max(1, Math.floor(pos.count / perMeshTarget));
+        for (let i = 0; i < pos.count; i += step) {
+          localVertex.fromBufferAttribute(pos, i);
+          normalized.copy(localVertex).applyMatrix4(mesh.matrixWorld).applyMatrix4(invRoot);
+          points.push(normalized.clone());
+          if (points.length >= maxPoints) return points;
+        }
+      }
+      return points;
+    }
+
+    function applyBestStandingOrientation(object) {
       const baseQuaternion = object.quaternion.clone();
-      const tempBox = new THREE.Box3();
-      const tempSize = new THREE.Vector3();
+      const samplePoints = collectModelSamplePoints(object, 6500);
       const bestQuaternion = new THREE.Quaternion();
+      const tempPoint = new THREE.Vector3();
       let bestScore = -Infinity;
 
-      candidateRotations.forEach(([rx, ry, rz]) => {
-        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz));
-        object.quaternion.copy(baseQuaternion).multiply(q);
+      if (!samplePoints.length) {
+        object.quaternion.copy(baseQuaternion);
         object.updateMatrixWorld(true);
+        return;
+      }
 
-        tempBox.setFromObject(object);
-        if (tempBox.isEmpty()) return;
-        tempBox.getSize(tempSize);
+      const yUp = new THREE.Vector3(0, 1, 0);
+      const upAxes = [
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3(0, -1, 0),
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(-1, 0, 0),
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(0, 0, -1),
+      ];
 
-        const footprint = Math.max(tempSize.x, 1e-6) * Math.max(tempSize.z, 1e-6);
-        const height = Math.max(tempSize.y, 1e-6);
-        const aspect = height / Math.max(tempSize.x, tempSize.z, 1e-6);
-        const flattenPenalty = aspect < 0.45 ? 0.35 : 1;
-        const score = (footprint / height) * flattenPenalty;
+      const candidates = [];
+      const seen = new Set();
+      upAxes.forEach((axis) => {
+        const align = new THREE.Quaternion().setFromUnitVectors(axis, yUp);
+        for (let i = 0; i < 4; i += 1) {
+          const spin = new THREE.Quaternion().setFromAxisAngle(yUp, i * (Math.PI / 2));
+          const localQ = align.clone().multiply(spin);
+          const key = `${localQ.x.toFixed(4)}|${localQ.y.toFixed(4)}|${localQ.z.toFixed(4)}|${localQ.w.toFixed(4)}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            candidates.push(localQ);
+          }
+        }
+      });
+
+      const evaluateOrientation = (quat) => {
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        let minZ = Infinity;
+        let maxZ = -Infinity;
+
+        for (let i = 0; i < samplePoints.length; i += 1) {
+          tempPoint.copy(samplePoints[i]).applyQuaternion(quat);
+          if (tempPoint.x < minX) minX = tempPoint.x;
+          if (tempPoint.x > maxX) maxX = tempPoint.x;
+          if (tempPoint.y < minY) minY = tempPoint.y;
+          if (tempPoint.y > maxY) maxY = tempPoint.y;
+          if (tempPoint.z < minZ) minZ = tempPoint.z;
+          if (tempPoint.z > maxZ) maxZ = tempPoint.z;
+        }
+
+        const width = Math.max(maxX - minX, 1e-6);
+        const depth = Math.max(maxZ - minZ, 1e-6);
+        const height = Math.max(maxY - minY, 1e-6);
+        const footprintArea = width * depth;
+        const contactTolerance = Math.max(height * 0.014, 0.4);
+
+        let contactCount = 0;
+        let cMinX = Infinity;
+        let cMaxX = -Infinity;
+        let cMinZ = Infinity;
+        let cMaxZ = -Infinity;
+
+        for (let i = 0; i < samplePoints.length; i += 1) {
+          tempPoint.copy(samplePoints[i]).applyQuaternion(quat);
+          if (tempPoint.y > minY + contactTolerance) continue;
+          contactCount += 1;
+          if (tempPoint.x < cMinX) cMinX = tempPoint.x;
+          if (tempPoint.x > cMaxX) cMaxX = tempPoint.x;
+          if (tempPoint.z < cMinZ) cMinZ = tempPoint.z;
+          if (tempPoint.z > cMaxZ) cMaxZ = tempPoint.z;
+        }
+
+        if (contactCount < 8) return -Infinity;
+
+        const contactWidth = Math.max(cMaxX - cMinX, 1e-6);
+        const contactDepth = Math.max(cMaxZ - cMinZ, 1e-6);
+        const contactArea = contactWidth * contactDepth;
+        const contactRatio = contactArea / footprintArea;
+        const contactAspect = Math.min(contactWidth, contactDepth) / Math.max(contactWidth, contactDepth);
+        const density = contactCount / Math.max(samplePoints.length, 1);
+        const uprightness = height / Math.max(width, depth, 1e-6);
+
+        return (contactRatio * 7.0) + (contactAspect * 2.8) + (density * 2.6) + (Math.min(uprightness, 4) * 0.55);
+      };
+
+      candidates.forEach((localQ) => {
+        const fullQ = baseQuaternion.clone().multiply(localQ);
+        const score = evaluateOrientation(fullQ);
         if (score > bestScore) {
           bestScore = score;
-          bestQuaternion.copy(object.quaternion);
+          bestQuaternion.copy(fullQ);
         }
       });
 
@@ -2468,8 +2620,7 @@
       camera.position.set(center.x + radius * 1.6, center.y + radius * 1.3, center.z + radius * 1.6);
       camera.lookAt(center);
       camera.updateProjectionMatrix();
-      controls.target.copy(center);
-      controls.update();
+      applyControlTarget(center, radius);
 
       const shadowSpan = radius * 2.2;
       dir.position.set(center.x + radius * 2.1, center.y + radius * 2.9, center.z + radius * 1.6);
@@ -2506,6 +2657,7 @@
     });
 
     let fittedSize = null;
+    let modelOnlySize = null;
     let canInfo = null;
     try {
       const obj = await loadObjPromise;
@@ -2517,6 +2669,7 @@
         }
       });
       scene.add(obj);
+      modelOnlySize = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
       const tableInfo = addPresentationTable(obj);
       canInfo = addScaleCan(tableInfo);
       fittedSize = fit(obj, [canInfo && canInfo.group ? canInfo.group : null]);
@@ -2538,30 +2691,32 @@
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      if (typeof controls.handleResize === "function") controls.handleResize();
+      handleControlsResize();
     }
     resize();
 
     function animate() {
       if (!state.three) return;
-      controls.update();
+      updateControls();
       renderer.render(scene, camera);
       state.three.frameId = requestAnimationFrame(animate);
     }
 
     const onResize = () => resize();
     window.addEventListener("resize", onResize);
-    state.three = { renderer, scene, camera, controls, frameId: 0, onResize };
+    state.three = { renderer, scene, camera, controls, frameId: 0, onResize, onKeyDown: onFlyKeyDown, onKeyUp: onFlyKeyUp };
     animate();
 
-    const heightValue = fittedSize && Number.isFinite(Number(fittedSize.y)) ? Number(fittedSize.y) : 0;
+    const heightValue = modelOnlySize && Number.isFinite(Number(modelOnlySize.y))
+      ? Number(modelOnlySize.y)
+      : (fittedSize && Number.isFinite(Number(fittedSize.y)) ? Number(fittedSize.y) : 0);
     const heightLabel = heightValue > 0 ? `${heightValue >= 100 ? heightValue.toFixed(0) : heightValue.toFixed(1)} model-enheder` : "Ukendt";
     const scaleLabel = canInfo
       ? `Dåse ${canInfo.canHeight}x${canInfo.canDiameter} mm`
       : `Dåse ${SCALE_CAN_HEIGHT_MM}x${SCALE_CAN_DIAMETER_MM} mm`;
 
     updateModelInfoBar({
-      controls: modelControlsText(),
+      controls: controlsHintText,
       height: heightLabel,
       scale: scaleLabel,
     });
@@ -2570,7 +2725,7 @@
     if (canInfo) {
       extraHints.push(`Skala-reference: sodavandsdåse ${canInfo.canHeight}x${canInfo.canDiameter} mm (forudsat mm-enheder).`);
     }
-    if (els.modelHint) els.modelHint.textContent = buildModelHint(heightValue, extraHints);
+    if (els.modelHint) els.modelHint.textContent = buildModelHint(heightValue, extraHints, controlsHintText);
   }
 
   function close3DModal() {
