@@ -479,6 +479,7 @@ def _extract_zip_upload(
     uploaded_by: str,
     upload_client_id: Optional[str],
     last_modified_ms: int = 0,
+    original_zip_name: str = "",
 ) -> Tuple[int, Optional[sqlite3.Row], list[str]]:
     _ = upload_client_id
     base = normalize_folder_path(base_folder)
@@ -493,10 +494,48 @@ def _extract_zip_upload(
     first_row: Optional[sqlite3.Row] = None
     created_folders: set[str] = set()
 
+    def _zip_name_key(raw: str) -> str:
+        value = str(raw or "").strip().lower().replace("\\", "/")
+        if "/" in value:
+            value = value.split("/")[-1]
+        if value.endswith(".zip"):
+            value = value[:-4]
+        value = value.replace("_", "-").replace(" ", "-")
+        value = re.sub(r"-+", "-", value)
+        return value.strip("-._ ")
+
     with zipfile.ZipFile(zip_path, "r") as archive:
         infos = archive.infolist()
         if len(infos) > ZIP_UPLOAD_MAX_FILES:
             raise ValueError(f"ZIP indeholder for mange elementer (maks {ZIP_UPLOAD_MAX_FILES})")
+
+        wrapper_prefix = ""
+        zip_key = _zip_name_key(original_zip_name)
+        if zip_key:
+            first_parts: set[str] = set()
+            has_root_files = False
+            for info in infos:
+                if info.is_dir() or _zip_info_is_symlink(info):
+                    continue
+                parts = _zip_member_parts(info.filename)
+                if not parts:
+                    continue
+                joined = "/".join(parts)
+                if joined.startswith("__MACOSX/"):
+                    continue
+                if parts[-1] in {".DS_Store", "Thumbs.db"}:
+                    continue
+                if len(parts) <= 1:
+                    has_root_files = True
+                    break
+                first_parts.add(parts[0])
+                if len(first_parts) > 1:
+                    break
+
+            if not has_root_files and len(first_parts) == 1:
+                candidate = next(iter(first_parts))
+                if _zip_name_key(candidate) == zip_key:
+                    wrapper_prefix = candidate
 
         total_uncompressed = 0
         for info in infos:
@@ -519,6 +558,11 @@ def _extract_zip_upload(
                 continue
             if parts[-1] in {".DS_Store", "Thumbs.db"}:
                 continue
+
+            if wrapper_prefix and parts[0] == wrapper_prefix:
+                parts = parts[1:]
+                if not parts:
+                    continue
 
             if info.is_dir():
                 try:
@@ -2842,6 +2886,7 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
                     uploaded_by=uploaded_by,
                     upload_client_id=upload_client_id,
                     last_modified_ms=last_modified_ms,
+                    original_zip_name=filename,
                 )
             finally:
                 try:
