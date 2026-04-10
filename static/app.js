@@ -42,6 +42,12 @@
     uploadStatus: document.getElementById("uploadStatus"),
     folderList: document.getElementById("folderList"),
     fileGrid: document.getElementById("fileGrid"),
+    currentFolderLabel: document.getElementById("currentFolderLabel"),
+    folderUpBtn: document.getElementById("folderUpBtn"),
+    mapperDropZone: document.getElementById("mapperDropZone"),
+    mapperSearchBtn: document.getElementById("mapperSearchBtn"),
+    mapperMenuBtn: document.getElementById("mapperMenuBtn"),
+    mapperMenu: document.getElementById("mapperMenu"),
     metadataModal: document.getElementById("metadataModal"),
     metadataTableBody: document.getElementById("metadataTableBody"),
     metadataCancelBtn: document.getElementById("metadataCancelBtn"),
@@ -215,8 +221,85 @@
     updateStats();
   }
 
+  function parentFolder(path) {
+    const value = String(path || "").trim();
+    if (!value || !value.includes("/")) return "";
+    const parts = value.split("/").filter(Boolean);
+    if (parts.length <= 1) return "";
+    parts.pop();
+    return parts.join("/");
+  }
+
   function currentFolder() {
     return String((els.folderSelect && els.folderSelect.value) || state.currentFolder || "");
+  }
+
+  function listDirectChildren(baseFolder) {
+    const base = String(baseFolder || "").trim();
+    const out = new Map();
+    for (const item of state.folders) {
+      const fullPath = String((item && item.path) || "").trim();
+      if (!fullPath || fullPath === base) continue;
+
+      const isNested = base
+        ? fullPath.startsWith(base + "/")
+        : !fullPath.startsWith("/");
+      if (!isNested) continue;
+
+      const remainder = base ? fullPath.slice(base.length + 1) : fullPath;
+      if (!remainder) continue;
+      const nextPart = remainder.split("/").filter(Boolean)[0] || "";
+      if (!nextPart) continue;
+      const childPath = base ? `${base}/${nextPart}` : nextPart;
+
+      if (!out.has(childPath)) {
+        out.set(childPath, {
+          path: childPath,
+          name: nextPart,
+          permission: String(item.permission || ""),
+        });
+      }
+    }
+    return Array.from(out.values()).sort((a, b) => a.name.localeCompare(b.name, "da"));
+  }
+
+  function updateFolderUiState() {
+    const folder = currentFolder() || state.homeFolder || "";
+    const isRoot = !!folder && !!state.homeFolder && folder === state.homeFolder;
+    const folderLabel = isRoot ? `${folder} (rodmappe)` : (folder || "-");
+    if (els.currentFolderLabel) {
+      els.currentFolderLabel.textContent = folderLabel;
+    }
+    if (els.mapperDropZone) {
+      els.mapperDropZone.textContent = `Slip filer eller mapper her for at uploade til: ${folderLabel}`;
+    }
+    if (els.folderUpBtn) {
+      const parent = parentFolder(folder);
+      const canGoUp = !!parent && state.folders.some((f) => String(f.path || "") === parent);
+      els.folderUpBtn.disabled = !canGoUp;
+    }
+  }
+
+  function renderFolderBrowser() {
+    if (!els.folderList) return;
+    const folder = currentFolder() || state.homeFolder || "";
+    const children = listDirectChildren(folder);
+    if (!children.length) {
+      els.folderList.innerHTML = `<div class="panel"><p class="hint">Ingen undermapper i denne mappe endnu.</p></div>`;
+      return;
+    }
+    els.folderList.innerHTML = children
+      .map((child) => {
+        const perm = child.permission ? ` · ${esc(child.permission)}` : "";
+        return `
+          <button class="folder-tile" type="button" data-folder="${esc(child.path)}">
+            <div class="folder-tile-preview">&#128193;</div>
+            <div class="folder-tile-name">${esc(child.name)}</div>
+            <div class="folder-tile-meta">${esc(child.path)}${perm}</div>
+          </button>
+        `;
+      })
+      .join("");
   }
 
   async function loadFolders() {
@@ -240,15 +323,6 @@
       els.folderSelect.value = state.currentFolder;
     }
 
-    if (els.folderList) {
-      els.folderList.innerHTML = state.folders
-        .map((f) => {
-          const badge = f.permission ? ` (${esc(f.permission)})` : "";
-          return `<button class="folder-item" data-folder="${esc(f.path)}">${esc(f.path)}${badge}</button>`;
-        })
-        .join("");
-    }
-
     if (els.shareFoldersSelect) {
       const shareOptions = state.folders
         .filter((f) => !!f.can_manage)
@@ -256,6 +330,8 @@
         .join("");
       els.shareFoldersSelect.innerHTML = shareOptions;
     }
+    renderFolderBrowser();
+    updateFolderUiState();
     updateStats();
   }
 
@@ -341,11 +417,16 @@
   }
 
   async function loadFiles() {
-    const folder = currentFolder();
+    const folder = currentFolder() || state.homeFolder || "";
     state.currentFolder = folder;
+    if (els.folderSelect && folder) {
+      els.folderSelect.value = folder;
+    }
     const data = await api(`/api/files?folder=${encodeURIComponent(folder)}`);
     state.files = Array.isArray(data.items) ? data.items : [];
     renderFiles();
+    renderFolderBrowser();
+    updateFolderUiState();
   }
 
   function makeClientUploadId() {
@@ -493,8 +574,8 @@
     }
   }
 
-  async function createFolder() {
-    const name = String((els.newFolderInput && els.newFolderInput.value) || "").trim();
+  async function createFolder(nameOverride = "") {
+    const name = String(nameOverride || (els.newFolderInput && els.newFolderInput.value) || "").trim();
     if (!name) {
       showStatus(els.uploadStatus, "Skriv et mappenavn først.", "error");
       return;
@@ -875,6 +956,50 @@
     }
   }
 
+  function setMapperMenuOpen(open) {
+    if (!els.mapperMenu || !els.mapperMenuBtn) return;
+    const isOpen = !!open;
+    els.mapperMenu.classList.toggle("hidden", !isOpen);
+    els.mapperMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  }
+
+  async function onMapperMenuAction(action) {
+    const cmd = String(action || "").trim().toLowerCase();
+    if (!cmd) return;
+
+    if (cmd === "upload") {
+      if (els.fileInput) els.fileInput.click();
+      return;
+    }
+
+    if (cmd === "create-folder") {
+      const name = window.prompt("Nyt mappenavn:");
+      if (!name) return;
+      await createFolder(name);
+      return;
+    }
+
+    if (cmd === "share") {
+      if (state.role !== "admin") {
+        showStatus(els.uploadStatus, "Kun admin kan oprette delinger.", "error");
+        return;
+      }
+      setTab("settings");
+      setSettingsTab("shares");
+      await loadShares();
+      return;
+    }
+
+    if (cmd === "select") {
+      showStatus(els.uploadStatus, "Vælg-tilstand kommer snart.", "ok");
+      return;
+    }
+
+    if (cmd === "rename-folder") {
+      showStatus(els.uploadStatus, "Omdøb mappe er ikke aktiveret endnu.", "error");
+    }
+  }
+
   function bindEvents() {
     if (els.sidebarNav) {
       els.sidebarNav.addEventListener("click", async (event) => {
@@ -923,6 +1048,61 @@
       });
     }
 
+    if (els.folderUpBtn) {
+      els.folderUpBtn.addEventListener("click", async () => {
+        const current = currentFolder();
+        const parent = parentFolder(current);
+        if (!parent) return;
+        if (!state.folders.some((f) => String(f.path || "") === parent)) return;
+        state.currentFolder = parent;
+        if (els.folderSelect) els.folderSelect.value = parent;
+        await loadFiles();
+      });
+    }
+
+    if (els.mapperSearchBtn) {
+      els.mapperSearchBtn.addEventListener("click", async () => {
+        const query = String(window.prompt("Søg efter mappe (navn eller sti):") || "").trim().toLowerCase();
+        if (!query) return;
+        const hit = state.folders.find((f) => String(f.path || "").toLowerCase().includes(query));
+        if (!hit) {
+          showStatus(els.uploadStatus, "Ingen mappe matcher søgningen.", "error");
+          return;
+        }
+        const target = String(hit.path || "");
+        state.currentFolder = target;
+        if (els.folderSelect) els.folderSelect.value = target;
+        await loadFiles();
+      });
+    }
+
+    if (els.mapperMenuBtn) {
+      els.mapperMenuBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const isOpen = !!(els.mapperMenu && !els.mapperMenu.classList.contains("hidden"));
+        setMapperMenuOpen(!isOpen);
+      });
+    }
+
+    if (els.mapperMenu) {
+      els.mapperMenu.addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-mapper-action]");
+        if (!btn) return;
+        const action = String(btn.dataset.mapperAction || "");
+        setMapperMenuOpen(false);
+        onMapperMenuAction(action).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Menu handling fejlede", "error");
+        });
+      });
+    }
+
+    document.addEventListener("click", (event) => {
+      if (!els.mapperMenu || !els.mapperMenuBtn) return;
+      const withinMenu = event.target.closest("#mapperMenu");
+      const withinBtn = event.target.closest("#mapperMenuBtn");
+      if (!withinMenu && !withinBtn) setMapperMenuOpen(false);
+    });
+
     if (els.folderSelect) {
       els.folderSelect.addEventListener("change", async () => {
         state.currentFolder = els.folderSelect.value || "";
@@ -943,6 +1123,32 @@
         const files = Array.from(els.fileInput.files || []);
         await startUpload(files);
         els.fileInput.value = "";
+      });
+    }
+
+    if (els.mapperDropZone) {
+      const dropZone = els.mapperDropZone;
+      dropZone.addEventListener("click", () => {
+        if (els.fileInput) els.fileInput.click();
+      });
+      dropZone.addEventListener("dragenter", (event) => {
+        event.preventDefault();
+        dropZone.classList.add("dragover");
+      });
+      dropZone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        dropZone.classList.add("dragover");
+      });
+      dropZone.addEventListener("dragleave", () => {
+        dropZone.classList.remove("dragover");
+      });
+      dropZone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        dropZone.classList.remove("dragover");
+        const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+        startUpload(files).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Upload via dropzone fejlede", "error");
+        });
       });
     }
 

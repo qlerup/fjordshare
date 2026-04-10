@@ -53,30 +53,48 @@
     </section>
 
     <section id="tab-files" class="tab-section">
-      <div class="toolbar">
-        <label for="folderSelect">Mappe</label>
-        <select id="folderSelect" class="select"></select>
-        <button id="refreshFilesBtn" class="btn">Opdater</button>
-        <button id="uploadBtn" class="btn primary">Upload filer</button>
+      <div class="mapper-shell panel">
+        <div class="mapper-topbar">
+          <h3>Mapper</h3>
+          <div class="mapper-tools">
+            <button id="mapperSearchBtn" class="icon-btn" type="button" title="Søg mappe" aria-label="Søg mappe">&#128269;</button>
+            <div class="menu-wrap">
+              <button id="mapperMenuBtn" class="icon-btn" type="button" title="Mapper menu" aria-haspopup="true" aria-expanded="false" aria-controls="mapperMenu">&#8942;</button>
+              <div id="mapperMenu" class="mapper-menu hidden" role="menu">
+                <button class="menu-item" type="button" data-mapper-action="select" role="menuitem">Vælg</button>
+                <button class="menu-item admin-only" type="button" data-mapper-action="share" role="menuitem">Del</button>
+                <button class="menu-item" type="button" data-mapper-action="upload" role="menuitem">Upload</button>
+                <button class="menu-item" type="button" data-mapper-action="create-folder" role="menuitem">Opret mappe</button>
+                <button class="menu-item" type="button" data-mapper-action="rename-folder" role="menuitem">Omdøb mappe</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mapper-current-row">
+          <div class="mapper-current">Aktuel mappe: <strong id="currentFolderLabel">-</strong></div>
+          <button id="folderUpBtn" class="btn" type="button">Tilbage</button>
+        </div>
+
+        <div id="mapperDropZone" class="mapper-dropzone">Slip filer eller mapper her for at uploade til valgt mappe</div>
+
+        <div class="mapper-hidden-controls" aria-hidden="true">
+          <label for="folderSelect">Mappe</label>
+          <select id="folderSelect" class="select"></select>
+          <button id="refreshFilesBtn" class="btn" type="button">Opdater</button>
+          <button id="uploadBtn" class="btn primary" type="button">Upload filer</button>
+          <input id="newFolderInput" class="input" type="text" placeholder="Ny mappe i valgt mappe">
+          <button id="createFolderBtn" class="btn" type="button">Opret mappe</button>
+        </div>
+
         <input id="fileInput" type="file" multiple style="display:none;">
-      </div>
 
-      <div class="toolbar">
-        <input id="newFolderInput" class="input" type="text" placeholder="Ny mappe i valgt mappe">
-        <button id="createFolderBtn" class="btn">Opret mappe</button>
-      </div>
+        <div id="uploadStatus" class="status hidden"></div>
 
-      <div id="uploadStatus" class="status hidden"></div>
+        <div id="folderList" class="folder-browser"></div>
 
-      <div class="split">
-        <div class="panel">
-          <h3>Tilgængelige mapper</h3>
-          <div id="folderList" class="folder-list"></div>
-        </div>
-        <div class="panel grow">
-          <h3>Indhold i valgt mappe</h3>
-          <div id="fileGrid" class="file-grid"></div>
-        </div>
+        <h4 class="mapper-section-title">Indhold i valgt mappe</h4>
+        <div id="fileGrid" class="file-grid"></div>
       </div>
     </section>
 
