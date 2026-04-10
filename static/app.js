@@ -2574,8 +2574,7 @@
     try {
       const data = await api("/api/admin/logs?limit=200");
       state.adminLogs = Array.isArray(data.items) ? data.items : [];
-      const count = Number(data.count || state.adminLogs.length || 0);
-      showStatus(els.logsStatus, count > 0 ? `Viser ${count} log-linje(r).` : "Ingen fejl i logs.", "ok");
+      showStatus(els.logsStatus, "");
     } catch (err) {
       state.adminLogs = [];
       showStatus(els.logsStatus, err.message || "Kunne ikke hente logs", "error");
