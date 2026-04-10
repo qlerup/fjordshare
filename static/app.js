@@ -2595,8 +2595,8 @@
 
         if (flyState.dragMode === "orbit") {
           const orbitSensitivity = 0.0046;
-          flyState.orbitSpherical.theta += dx * orbitSensitivity;
-          flyState.orbitSpherical.phi += dy * orbitSensitivity;
+          flyState.orbitSpherical.theta -= dx * orbitSensitivity;
+          flyState.orbitSpherical.phi -= dy * orbitSensitivity;
           const minPhi = 0.03;
           const maxPhi = Math.PI - 0.03;
           flyState.orbitSpherical.phi = Math.max(minPhi, Math.min(maxPhi, flyState.orbitSpherical.phi));
