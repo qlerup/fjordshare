@@ -17,6 +17,7 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
+        libpangoft2-1.0-0 \
         assimp-utils; \
     mkdir -p /opt/bambu-studio; \
     appimage_url="${BAMBUSTUDIO_APPIMAGE_URL}"; \
