@@ -105,6 +105,7 @@
     fileInfoAttachList: document.getElementById("fileInfoAttachList"),
     fileInfoSaveBtn: document.getElementById("fileInfoSaveBtn"),
     fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
+    fileInfoSliceBtn: document.getElementById("fileInfoSliceBtn"),
     fileInfoOpen3DBtn: document.getElementById("fileInfoOpen3DBtn"),
     metadataModal: document.getElementById("metadataModal"),
     metadataStepCounter: document.getElementById("metadataStepCounter"),
@@ -1221,6 +1222,39 @@
     return `<div class="placeholder">${esc(file.ext || "fil").toUpperCase()}</div>`;
   }
 
+  function normalizedSliceStatus(file) {
+    if (!file || !file.can_slice) return "none";
+    const status = String(file.slice_status || "none").trim().toLowerCase();
+    if (status === "queued" || status === "processing" || status === "ready" || status === "error") {
+      return status;
+    }
+    return "none";
+  }
+
+  function sliceBadgeHtml(file) {
+    if (!file || !file.can_slice) return "";
+    const status = normalizedSliceStatus(file);
+    if (status === "none") return "";
+
+    const meta = {
+      queued: { cls: "queued", text: "Slice i kø" },
+      processing: { cls: "processing", text: "Slicer..." },
+      ready: { cls: "ready", text: "Slice klar" },
+      error: { cls: "error", text: "Slice fejl" },
+    }[status];
+    if (!meta) return "";
+
+    return `<span class="file-slice-badge ${meta.cls}">${esc(meta.text)}</span>`;
+  }
+
+  function sliceButtonLabelForStatus(status) {
+    if (status === "queued") return "Slicer i kø";
+    if (status === "processing") return "Slicer...";
+    if (status === "ready") return "Slice igen";
+    if (status === "error") return "Prøv slicing igen";
+    return "Slice STL";
+  }
+
   function fileById(fileId) {
     const id = Number(fileId || 0);
     if (!id) return null;
@@ -1309,6 +1343,21 @@
       els.fileInfoOpen3DBtn.classList.toggle("hidden", !file.is_3d_openable);
       els.fileInfoOpen3DBtn.dataset.fileId = String(id);
     }
+    if (els.fileInfoSliceBtn) {
+      const canSlice = state.role === "admin" && !!file.can_slice;
+      const sliceStatus = normalizedSliceStatus(file);
+      const isBusy = sliceStatus === "queued" || sliceStatus === "processing";
+      els.fileInfoSliceBtn.classList.toggle("hidden", !canSlice);
+      els.fileInfoSliceBtn.disabled = !canSlice || isBusy;
+      els.fileInfoSliceBtn.dataset.fileId = String(id);
+      els.fileInfoSliceBtn.textContent = sliceButtonLabelForStatus(sliceStatus);
+      const errorMessage = String(file.slice_error || "").trim();
+      if (sliceStatus === "error" && errorMessage) {
+        els.fileInfoSliceBtn.title = errorMessage;
+      } else {
+        els.fileInfoSliceBtn.removeAttribute("title");
+      }
+    }
   }
 
   async function openFileInfoDrawer(fileId) {
@@ -1374,6 +1423,18 @@
     await loadFiles();
   }
 
+  async function sliceFileById(fileId) {
+    const id = Number(fileId || 0);
+    if (!id) return;
+    const data = await api(`/api/files/${id}/slice`, { method: "POST" });
+    if (data && data.already_running) {
+      showStatus(els.uploadStatus, "Slicing kører allerede for filen.", "ok");
+    } else {
+      showStatus(els.uploadStatus, "Slicing sat i kø.", "ok");
+    }
+    await loadFiles();
+  }
+
   function renderFiles() {
     if (!els.fileGrid) return;
     if (!state.files.length) {
@@ -1393,12 +1454,14 @@
         const isSelected = state.selectedFileIds.has(id);
         const isPrinted = !!file.printed;
         const printedBadge = isPrinted ? `<span class="file-print-badge">Printet</span>` : "";
+        const sliceBadge = sliceBadgeHtml(file);
         return `
           <article class="file-card file-card-compact ${isSelected ? "selected" : ""}" data-file-id="${id}">
             <div class="file-preview">
               <span class="select-mark ${isSelected ? "selected" : ""}"></span>
               <button class="file-info-btn" data-action="open-info" data-file-id="${id}" aria-label="Vis fil-info">i</button>
               ${printedBadge}
+              ${sliceBadge}
               ${filePreviewHtml(file)}
             </div>
             <div class="file-caption" title="${esc(file.filename)}">${esc(file.filename)}</div>
@@ -1474,11 +1537,41 @@
     return { total, queued, processing, done, error, pending, progress };
   }
 
+  function sliceQueueStats() {
+    let total = 0;
+    let queued = 0;
+    let processing = 0;
+    let ready = 0;
+    let error = 0;
+
+    for (const file of Array.isArray(state.files) ? state.files : []) {
+      if (!file || !file.can_slice) continue;
+      const status = normalizedSliceStatus(file);
+      if (status === "none") continue;
+      total += 1;
+      if (status === "queued") queued += 1;
+      else if (status === "processing") processing += 1;
+      else if (status === "ready") ready += 1;
+      else if (status === "error") error += 1;
+    }
+
+    const pending = queued + processing;
+    const done = ready + error;
+    const progress = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
+    return { total, queued, processing, ready, error, pending, done, progress };
+  }
+
   function updateThumbTopStatus() {
     if (!els.thumbTopStatus || !els.thumbTopStatusLabel || !els.thumbTopStatusBar) return;
     const stats = thumbQueueStats();
     const zipStats = zipQueueStats();
-    const shouldShow = stats.pending > 0 || stats.error > 0 || zipStats.pending > 0 || zipStats.error > 0;
+    const sliceStats = sliceQueueStats();
+    const shouldShow = stats.pending > 0
+      || stats.error > 0
+      || zipStats.pending > 0
+      || zipStats.error > 0
+      || sliceStats.pending > 0
+      || sliceStats.error > 0;
     els.thumbTopStatus.classList.toggle("hidden", !shouldShow);
     if (!shouldShow) {
       els.thumbTopStatusLabel.textContent = "Thumbnails: Klar";
@@ -1496,6 +1589,14 @@
       labels.push(zipLabel);
     }
 
+    if (sliceStats.pending > 0 || sliceStats.error > 0) {
+      let sliceLabel = `Slicing: ${sliceStats.ready}/${sliceStats.total} færdig`;
+      if (sliceStats.processing > 0) sliceLabel += ` · ${sliceStats.processing} behandler`;
+      if (sliceStats.queued > 0) sliceLabel += ` · ${sliceStats.queued} i kø`;
+      if (sliceStats.error > 0) sliceLabel += ` · fejl: ${sliceStats.error}`;
+      labels.push(sliceLabel);
+    }
+
     if (stats.total > 0 || stats.pending > 0 || stats.error > 0) {
       if (stats.pending > 0) {
         let thumbLabel = `Thumbnails: ${stats.ready}/${stats.total} klar`;
@@ -1511,16 +1612,25 @@
     els.thumbTopStatusLabel.textContent = labels.length ? labels.join(" · ") : "Baggrundsjob kører";
 
     const useIndeterminate = (stats.pending > 0 && stats.progress <= 0)
-      || (stats.total <= 0 && zipStats.pending > 0 && zipStats.progress <= 0);
+      || (zipStats.pending > 0 && zipStats.progress <= 0)
+      || (sliceStats.pending > 0 && sliceStats.progress <= 0);
     els.thumbTopStatusBar.classList.toggle("indeterminate", useIndeterminate);
     if (!useIndeterminate) {
-      const mergedProgress = stats.total > 0 ? stats.progress : zipStats.progress;
+      const progressValues = [];
+      if (stats.total > 0 && (stats.pending > 0 || stats.error > 0)) progressValues.push(stats.progress);
+      if (zipStats.total > 0 && (zipStats.pending > 0 || zipStats.error > 0)) progressValues.push(zipStats.progress);
+      if (sliceStats.total > 0 && (sliceStats.pending > 0 || sliceStats.error > 0)) {
+        progressValues.push(sliceStats.progress);
+      }
+      const mergedProgress = progressValues.length
+        ? Math.round(progressValues.reduce((sum, value) => sum + Number(value || 0), 0) / progressValues.length)
+        : 0;
       els.thumbTopStatusBar.style.width = `${Math.max(0, Math.min(100, Number(mergedProgress || 0)))}%`;
     }
   }
 
   function hasPendingThumbs() {
-    return thumbQueueStats().pending > 0 || zipQueueStats().pending > 0;
+    return thumbQueueStats().pending > 0 || zipQueueStats().pending > 0 || sliceQueueStats().pending > 0;
   }
 
   function syncThumbPoller() {
@@ -3983,6 +4093,15 @@
         showStatus(els.uploadStatus, "");
         open3DModal(file).catch((err) => {
           showStatus(els.uploadStatus, err.message || "Kunne ikke åbne 3D", "error");
+        });
+      });
+    }
+    if (els.fileInfoSliceBtn) {
+      els.fileInfoSliceBtn.addEventListener("click", () => {
+        const id = Number((els.fileInfoSliceBtn && els.fileInfoSliceBtn.dataset.fileId) || state.currentInfoFileId || 0);
+        if (!id) return;
+        sliceFileById(id).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke starte slicing", "error");
         });
       });
     }

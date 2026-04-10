@@ -1088,6 +1088,45 @@ input[type="checkbox"] {
   line-height: 1.15;
 }
 
+.file-slice-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 3;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(122, 162, 255, 0.65);
+  background: rgba(45, 75, 150, 0.82);
+  color: #ecf2ff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.file-slice-badge.queued {
+  border-color: rgba(122, 162, 255, 0.65);
+  background: rgba(45, 75, 150, 0.82);
+  color: #ecf2ff;
+}
+
+.file-slice-badge.processing {
+  border-color: rgba(250, 204, 21, 0.7);
+  background: rgba(133, 100, 9, 0.82);
+  color: #fff7da;
+}
+
+.file-slice-badge.ready {
+  border-color: rgba(52, 211, 153, 0.65);
+  background: rgba(20, 114, 78, 0.82);
+  color: #e8fff5;
+}
+
+.file-slice-badge.error {
+  border-color: rgba(248, 113, 113, 0.72);
+  background: rgba(126, 33, 33, 0.86);
+  color: #ffecec;
+}
+
 .mapper-shell.select-mode .file-info-btn {
   display: none;
 }

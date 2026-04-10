@@ -70,6 +70,13 @@ THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
 THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
 THUMB_RENDER_STYLE_VERSION = "7"
+SLICABLE_3D_EXTENSIONS = {".stl"}
+BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
+BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
+try:
+    BAMBUSTUDIO_TIMEOUT_SEC = max(60, int(str(os.getenv("BAMBUSTUDIO_TIMEOUT_SEC", "1800")) or "1800"))
+except Exception:
+    BAMBUSTUDIO_TIMEOUT_SEC = 1800
 FILE_ATTACHMENT_MAX_BYTES = int(str(os.getenv("FILE_ATTACHMENT_MAX_BYTES", str(20 * 1024 * 1024))) or str(20 * 1024 * 1024))
 FILE_ATTACHMENT_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 FILE_ATTACHMENT_MIME_TO_EXT = {
@@ -106,6 +113,11 @@ THUMB_QUEUE_LOCK = threading.Lock()
 THUMB_QUEUED_IDS: set[int] = set()
 THUMB_WORKER_LOCK = threading.Lock()
 THUMB_WORKER_STARTED = False
+SLICE_QUEUE: "queue_mod.Queue[Dict[str, Any]]" = queue_mod.Queue()
+SLICE_QUEUE_LOCK = threading.Lock()
+SLICE_QUEUED_IDS: set[int] = set()
+SLICE_WORKER_LOCK = threading.Lock()
+SLICE_WORKER_STARTED = False
 ZIP_EXTRACT_QUEUE: "queue_mod.Queue[Dict[str, Any]]" = queue_mod.Queue()
 ZIP_EXTRACT_WORKER_LOCK = threading.Lock()
 ZIP_EXTRACT_WORKER_STARTED = False
@@ -661,6 +673,188 @@ def _supports_thumbnail_for_ext(ext: str) -> bool:
     return str(ext or "").lower() in THUMBABLE_3D_EXTENSIONS
 
 
+def _supports_slicing_for_ext(ext: str) -> bool:
+    return str(ext or "").lower() in SLICABLE_3D_EXTENSIONS
+
+
+def _set_file_slice_state(
+    file_id: int,
+    status: str,
+    error: str = "",
+) -> None:
+    safe_status = str(status or "").strip().lower() or "none"
+    safe_error = str(error or "").strip()
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE files
+            SET slice_status=?,
+                slice_error=?,
+                slice_updated_at=?
+            WHERE id=?
+            """,
+            (
+                safe_status,
+                safe_error[:1000] or None,
+                now_iso(),
+                int(file_id),
+            ),
+        )
+        conn.commit()
+
+
+def _resolve_bambustudio_executable() -> str:
+    configured = str(BAMBUSTUDIO_BIN or "").strip()
+    if not configured:
+        raise RuntimeError("BAMBUSTUDIO_BIN er ikke konfigureret")
+
+    candidate_path = Path(configured)
+    if candidate_path.is_file():
+        return str(candidate_path)
+
+    resolved = shutil.which(configured)
+    if resolved:
+        return resolved
+
+    if configured.lower() in {"bambu-studio", "bambustudio"}:
+        for alt in ("BambuStudio", "bambu-studio", "BambuStudio-console", "bambu-studio-console"):
+            resolved_alt = shutil.which(alt)
+            if resolved_alt:
+                return resolved_alt
+
+    raise RuntimeError(f"BambuStudio blev ikke fundet: {configured}")
+
+
+def _slice_stl_to_gcode(input_stl: Path, output_gcode: Path) -> None:
+    if not input_stl.exists() or not input_stl.is_file():
+        raise RuntimeError("STL filen findes ikke på disk")
+
+    executable = _resolve_bambustudio_executable()
+    cmd = [executable]
+
+    if BAMBUSTUDIO_CONFIG_PATH:
+        config_path = Path(BAMBUSTUDIO_CONFIG_PATH)
+        if not config_path.exists() or not config_path.is_file():
+            raise RuntimeError(f"BAMBUSTUDIO_CONFIG_PATH findes ikke: {config_path}")
+        cmd.extend(["--load", str(config_path)])
+
+    cmd.extend(["--export-gcode", "--output", str(output_gcode), str(input_stl)])
+
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=BAMBUSTUDIO_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("BambuStudio timeout")
+    except FileNotFoundError:
+        raise RuntimeError(f"BambuStudio blev ikke fundet: {executable}")
+    except Exception as exc:
+        raise RuntimeError(f"Kunne ikke starte BambuStudio: {exc}")
+
+    if proc.returncode != 0:
+        details = (proc.stderr or proc.stdout or "Ukendt fejl").strip()
+        raise RuntimeError(f"BambuStudio fejl: {details[:1000]}")
+
+    if not output_gcode.exists() or not output_gcode.is_file() or output_gcode.stat().st_size <= 0:
+        raise RuntimeError("BambuStudio lavede ingen output-fil")
+
+
+def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
+    file_id = int(payload.get("file_id") or 0)
+    requested_by = str(payload.get("requested_by") or "").strip()
+    if file_id <= 0:
+        return
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM files WHERE id=?", (file_id,)).fetchone()
+
+    if row is None:
+        return
+
+    ext = str(row["ext"] or "").lower()
+    if not _supports_slicing_for_ext(ext):
+        _set_file_slice_state(file_id, "error", "Slicing understøtter kun STL")
+        return
+
+    _set_file_slice_state(file_id, "processing", "")
+
+    output_path: Optional[Path] = None
+    try:
+        source_path = file_disk_path(row)
+        folder_path = normalize_folder_path(str(row["folder_path"] or ""))
+        _, folder_abs = folder_abs_path(folder_path)
+        base_name = Path(str(row["filename"] or "model.stl")).stem
+        gcode_name = sanitize_filename(f"{base_name}.gcode")
+        output_path = allocate_unique_target(folder_abs, gcode_name)
+
+        _slice_stl_to_gcode(source_path, output_path)
+
+        creator = requested_by or str(row["uploaded_by"] or "slicer")
+        upsert_file_record(
+            folder_path=folder_path,
+            filename=output_path.name,
+            disk_path=output_path,
+            uploaded_by=creator,
+            upload_client_id=None,
+        )
+
+        _set_file_slice_state(file_id, "ready", "")
+    except Exception as exc:
+        try:
+            if output_path and output_path.exists() and output_path.is_file():
+                output_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        _set_file_slice_state(file_id, "error", str(exc))
+
+
+def _slice_worker_loop() -> None:
+    while True:
+        payload = SLICE_QUEUE.get()
+        file_id_for_cleanup = 0
+        try:
+            if isinstance(payload, dict):
+                file_id_for_cleanup = int(payload.get("file_id") or 0)
+                _process_slice_job_payload(payload)
+        except Exception as exc:
+            try:
+                fid = int((payload or {}).get("file_id") or 0)
+                if fid > 0:
+                    _set_file_slice_state(fid, "error", f"slice worker error: {exc}")
+            except Exception:
+                pass
+        finally:
+            with SLICE_QUEUE_LOCK:
+                if file_id_for_cleanup > 0:
+                    SLICE_QUEUED_IDS.discard(file_id_for_cleanup)
+            SLICE_QUEUE.task_done()
+
+
+def _start_slice_worker_if_needed() -> None:
+    global SLICE_WORKER_STARTED
+    with SLICE_WORKER_LOCK:
+        if SLICE_WORKER_STARTED:
+            return
+        SLICE_WORKER_STARTED = True
+    t = threading.Thread(target=_slice_worker_loop, daemon=True, name="slice-worker")
+    t.start()
+
+
+def enqueue_slice_job(file_id: int, requested_by: str) -> bool:
+    fid = int(file_id)
+    with SLICE_QUEUE_LOCK:
+        if fid in SLICE_QUEUED_IDS:
+            return False
+        SLICE_QUEUED_IDS.add(fid)
+    _start_slice_worker_if_needed()
+    SLICE_QUEUE.put({"file_id": fid, "requested_by": str(requested_by or "")})
+    return True
+
+
 def _load_mesh_for_thumbnail(mesh_path: Path):
     import trimesh
 
@@ -1129,6 +1323,9 @@ def init_db() -> None:
                 printed INTEGER NOT NULL DEFAULT 0,
                 printed_at TEXT,
                 printed_by TEXT,
+                slice_status TEXT DEFAULT 'none',
+                slice_error TEXT,
+                slice_updated_at TEXT,
                 upload_client_id TEXT,
                 thumb_rel TEXT,
                 thumb_status TEXT DEFAULT 'none',
@@ -1222,12 +1419,22 @@ def init_db() -> None:
             conn.execute("ALTER TABLE files ADD COLUMN printed_at TEXT")
         if "printed_by" not in file_cols:
             conn.execute("ALTER TABLE files ADD COLUMN printed_by TEXT")
+        if "slice_status" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN slice_status TEXT DEFAULT 'none'")
+        if "slice_error" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN slice_error TEXT")
+        if "slice_updated_at" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN slice_updated_at TEXT")
         conn.execute(
             "UPDATE files SET thumb_status='none' WHERE thumb_status IS NULL OR TRIM(thumb_status)=''"
         )
         conn.execute("UPDATE files SET printed=0 WHERE printed IS NULL")
+        conn.execute(
+            "UPDATE files SET slice_status='none' WHERE slice_status IS NULL OR TRIM(slice_status)=''"
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_files_thumb_status ON files(thumb_status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_files_printed ON files(printed)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_files_slice_status ON files(slice_status)")
         conn.commit()
 
 
@@ -1531,6 +1738,9 @@ def upsert_file_record(
     rel_path = upload_relative_path(folder, filename)
     ext = Path(filename).suffix.lower()
     mime_type = guess_mime(filename, ext)
+    slice_status = "none"
+    slice_error = ""
+    slice_updated_at = now_iso()
     thumb_status = "queued" if _supports_thumbnail_for_ext(ext) else "none"
     thumb_rel = ""
     thumb_error = ""
@@ -1546,9 +1756,10 @@ def upsert_file_record(
             """
             INSERT INTO files(
                 folder_path, rel_path, filename, ext, mime_type, file_size,
-                uploaded_by, uploaded_at, note, quantity, upload_client_id,
+                uploaded_by, uploaded_at, note, quantity,
+                slice_status, slice_error, slice_updated_at, upload_client_id,
                 thumb_rel, thumb_status, thumb_error, thumb_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(rel_path) DO UPDATE SET
                 filename=excluded.filename,
                 ext=excluded.ext,
@@ -1559,6 +1770,9 @@ def upsert_file_record(
                 printed=0,
                 printed_at=NULL,
                 printed_by=NULL,
+                slice_status=excluded.slice_status,
+                slice_error=excluded.slice_error,
+                slice_updated_at=excluded.slice_updated_at,
                 upload_client_id=excluded.upload_client_id,
                 thumb_rel=excluded.thumb_rel,
                 thumb_status=excluded.thumb_status,
@@ -1574,6 +1788,9 @@ def upsert_file_record(
                 file_size,
                 str(uploaded_by or ""),
                 now_iso(),
+                slice_status,
+                slice_error,
+                slice_updated_at,
                 str(upload_client_id or "") if upload_client_id else None,
                 thumb_rel,
                 thumb_status,
@@ -1652,6 +1869,8 @@ def serialize_file_row(row: sqlite3.Row, share_token: Optional[str] = None) -> d
     ext = str(row["ext"] or "").lower()
     is_3d = ext in THREE_D_EXTENSIONS
     is_3d_openable = ext in THREE_D_VIEWER_EXTENSIONS
+    can_slice = _supports_slicing_for_ext(ext)
+    slice_status = str(row["slice_status"] or "none").strip().lower() or "none"
     preview_3d_thumbnail = ext in THREE_D_THUMBNAIL_EXTENSIONS
     thumb_supported = _supports_thumbnail_for_ext(ext)
     thumb_status = str(row["thumb_status"] or "none").strip().lower() or "none"
@@ -1682,6 +1901,10 @@ def serialize_file_row(row: sqlite3.Row, share_token: Optional[str] = None) -> d
         "printed": bool(int(row["printed"] or 0)),
         "printed_at": str(row["printed_at"] or ""),
         "printed_by": str(row["printed_by"] or ""),
+        "can_slice": bool(can_slice),
+        "slice_status": slice_status,
+        "slice_error": str(row["slice_error"] or ""),
+        "slice_updated_at": str(row["slice_updated_at"] or ""),
         "upload_client_id": str(row["upload_client_id"] or ""),
         "thumb_status": thumb_status,
         "thumb_error": str(row["thumb_error"] or ""),
@@ -2252,6 +2475,33 @@ def api_file_metadata_batch():
         conn.commit()
 
     return jsonify({"ok": True, "updated": len(updated_ids), "ids": updated_ids})
+
+
+@app.route("/api/files/<int:file_id>/slice", methods=["POST"])
+@login_required
+def api_file_slice(file_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan starte slicing"}), 403
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+
+    if row is None:
+        return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
+    if not user_can_access_file(current_user, row, "upload"):
+        return jsonify({"ok": False, "error": "Ingen rettighed til at slice filen"}), 403
+
+    ext = str(row["ext"] or "").lower()
+    if not _supports_slicing_for_ext(ext):
+        return jsonify({"ok": False, "error": "Kun STL filer kan slices"}), 400
+
+    status_now = str(row["slice_status"] or "none").strip().lower() or "none"
+    if status_now in {"queued", "processing"}:
+        return jsonify({"ok": True, "queued": True, "already_running": True})
+
+    _set_file_slice_state(int(file_id), "queued", "")
+    enqueue_slice_job(int(file_id), str(current_user.username or ""))
+    return jsonify({"ok": True, "queued": True})
 
 
 @app.route("/api/files/printed-batch", methods=["POST"])
