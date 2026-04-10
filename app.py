@@ -67,9 +67,9 @@ THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", "
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
 THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
 THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
-THUMB_RENDER_FACE_LIMIT = 120_000
+THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
-THUMB_RENDER_STYLE_VERSION = "5"
+THUMB_RENDER_STYLE_VERSION = "6"
 FILE_ATTACHMENT_MAX_BYTES = int(str(os.getenv("FILE_ATTACHMENT_MAX_BYTES", str(20 * 1024 * 1024))) or str(20 * 1024 * 1024))
 FILE_ATTACHMENT_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 FILE_ATTACHMENT_MIME_TO_EXT = {
@@ -712,9 +712,13 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
 
     light = np.array([0.25, 0.45, 0.85], dtype=float)
     light = light / np.linalg.norm(light)
-    intensity = np.clip(normals.dot(light), 0.15, 1.0)
+    safe_normals = np.asarray(normals, dtype=float)
+    norm_len = np.linalg.norm(safe_normals, axis=1, keepdims=True)
+    safe_normals = safe_normals / np.maximum(norm_len, 1e-9)
+    # Use absolute dot so inconsistent winding does not create random dark patches.
+    intensity = np.clip(np.abs(safe_normals.dot(light)), 0.55, 1.0)
     base_rgb = np.array([0.66, 0.79, 0.95], dtype=float)
-    face_rgb = np.clip((0.55 + 0.45 * intensity[:, None]) * base_rgb, 0.0, 1.0)
+    face_rgb = np.clip((0.78 + 0.22 * intensity[:, None]) * base_rgb, 0.0, 1.0)
     face_rgba = np.concatenate([face_rgb, np.ones((face_rgb.shape[0], 1), dtype=float)], axis=1)
 
     poly = Poly3DCollection(triangles, linewidths=0.0, antialiaseds=False)
