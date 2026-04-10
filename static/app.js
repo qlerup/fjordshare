@@ -532,19 +532,176 @@
 
   const SCALE_CAN_HEIGHT_MM = 122;
   const SCALE_CAN_DIAMETER_MM = 66;
+  const PRESENTATION_TABLE_SIZE_MM = 600;
+  const GLTF_UNIT_CONTEXT = Object.freeze({
+    unitKey: "m",
+    unitLabel: "m",
+    mmPerUnit: 1000,
+    confidence: "high",
+    source: "gltf-standard",
+    canHeightUnits: SCALE_CAN_HEIGHT_MM / 1000,
+    canDiameterUnits: SCALE_CAN_DIAMETER_MM / 1000,
+    alternatives: [],
+  });
 
   function modelControlsText(mode = "orbit") {
     if (mode === "fly") {
-      return "Fri flyvning: hold venstre museknap nede og træk for at kigge. W/A/S/D + piletaster + R/F bevæger. Shift = hurtigere.";
+      return "Venstre træk: kig rundt. Højre træk: roter omkring objekt. W/A/S/D + piletaster + R/F bevæger. Shift = hurtigere.";
     }
     return "Mobil: 1 finger roter, 2 fingre zoom.";
   }
 
-  function formatModelHeight(value) {
+  function formatNumberCompact(value) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n)) return "0";
+    const abs = Math.abs(n);
+    let decimals = 2;
+    if (abs >= 100) decimals = 0;
+    else if (abs >= 10) decimals = 1;
+    else if (abs >= 1) decimals = 2;
+    else decimals = 3;
+    return n.toFixed(decimals).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  }
+
+  function extractUnitHintFromFilename(filename = "") {
+    const name = String(filename || "").toLowerCase();
+    if (!name) return "";
+    const token = "(?:^|[ _\\-.])";
+    const tail = "(?:$|[ _\\-.])";
+    if (new RegExp(`${token}(mm|millimeter|millimeters|millimetre|millimetres)${tail}`).test(name)) return "mm";
+    if (new RegExp(`${token}(cm|centimeter|centimeters|centimetre|centimetres)${tail}`).test(name)) return "cm";
+    if (new RegExp(`${token}(in|inch|inches)${tail}`).test(name)) return "in";
+    if (new RegExp(`${token}(m|meter|meters|metre|metres)${tail}`).test(name)) return "m";
+    return "";
+  }
+
+  function buildModelUnitContext(rawHeightUnits = 0, filename = "") {
+    const raw = Number(rawHeightUnits || 0);
+    const candidates = [
+      { unitKey: "mm", unitLabel: "mm", mmPerUnit: 1, priorPenalty: 0 },
+      { unitKey: "cm", unitLabel: "cm", mmPerUnit: 10, priorPenalty: 0.45 },
+      { unitKey: "in", unitLabel: "inch", mmPerUnit: 25.4, priorPenalty: 0.7 },
+      { unitKey: "m", unitLabel: "m", mmPerUnit: 1000, priorPenalty: 1.2 },
+    ];
+    const defaultContext = {
+      unitKey: "mm",
+      unitLabel: "mm",
+      mmPerUnit: 1,
+      confidence: "low",
+      source: "fallback",
+      canHeightUnits: SCALE_CAN_HEIGHT_MM,
+      canDiameterUnits: SCALE_CAN_DIAMETER_MM,
+      alternatives: [],
+    };
+    if (!Number.isFinite(raw) || raw <= 0) return defaultContext;
+
+    const hint = extractUnitHintFromFilename(filename);
+    const scoreHeightMm = (heightMm, priorPenalty = 0) => {
+      const h = Number(heightMm || 0);
+      if (!Number.isFinite(h) || h <= 0) return 999;
+      const center = 220;
+      let score = Math.abs(Math.log(h / center)) + priorPenalty;
+      if (h < 20 || h > 5000) score += 1.25;
+      if (h < 5 || h > 20000) score += 2.4;
+      return score;
+    };
+
+    const scored = candidates
+      .map((candidate) => {
+        const heightMm = raw * candidate.mmPerUnit;
+        let score = scoreHeightMm(heightMm, candidate.priorPenalty);
+        if (hint && hint === candidate.unitKey) score -= 2.2;
+        return {
+          candidate,
+          heightMm,
+          score,
+        };
+      })
+      .sort((a, b) => a.score - b.score);
+
+    const best = scored[0];
+    const second = scored[1];
+    const margin = second ? (second.score - best.score) : 1;
+    const confidence = hint
+      ? "high"
+      : (margin >= 0.9 ? "high" : (margin >= 0.35 ? "medium" : "low"));
+
+    const mmPerUnit = Number(best.candidate.mmPerUnit || 1);
+    const canHeightUnits = SCALE_CAN_HEIGHT_MM / mmPerUnit;
+    const canDiameterUnits = SCALE_CAN_DIAMETER_MM / mmPerUnit;
+
+    return {
+      unitKey: best.candidate.unitKey,
+      unitLabel: best.candidate.unitLabel,
+      mmPerUnit,
+      confidence,
+      source: hint ? "filename" : "auto",
+      canHeightUnits,
+      canDiameterUnits,
+      alternatives: scored.slice(0, 4).map((entry) => ({
+        unitKey: entry.candidate.unitKey,
+        unitLabel: entry.candidate.unitLabel,
+        heightMm: entry.heightMm,
+      })),
+    };
+  }
+
+  function formatModelHeight(value, unitContext = null) {
     const n = Number(value || 0);
     if (!Number.isFinite(n) || n <= 0) return "";
+    return `Højde: ${formatHeightDisplayValue(n, unitContext)}`;
+  }
+
+  function formatHeightDisplayValue(value, unitContext = null) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return "Ukendt";
+    if (unitContext && Number.isFinite(Number(unitContext.mmPerUnit)) && Number(unitContext.mmPerUnit) > 0) {
+      const mmPerUnit = Number(unitContext.mmPerUnit);
+      const label = String(unitContext.unitLabel || "mm");
+      const confidence = String(unitContext.confidence || "low");
+      const mmValue = n * mmPerUnit;
+      const prettyMm = formatNumberCompact(mmValue);
+      if (label === "mm") {
+        if (confidence === "low") return `${prettyMm} mm (auto-usikker)`;
+        if (confidence === "medium") return `${prettyMm} mm (auto: mm)`;
+        return `${prettyMm} mm`;
+      }
+      const rawPretty = formatNumberCompact(n);
+      if (confidence === "low") return `${prettyMm} mm (auto-usikker: ${rawPretty} ${label}?)`;
+      if (confidence === "medium") return `${prettyMm} mm (auto: ${rawPretty} ${label})`;
+      return `${prettyMm} mm (fra ${rawPretty} ${label})`;
+    }
     const pretty = n >= 100 ? n.toFixed(0) : n.toFixed(1);
-    return `Højde: ${pretty} model-enheder (ofte mm i STL/OBJ).`;
+    return `${pretty} mm (forudsat mm-eksport)`;
+  }
+
+  function buildUnitHintText(unitContext = null) {
+    if (!unitContext) return "Enheder: forudsat mm.";
+    const label = String(unitContext.unitLabel || "mm");
+    const source = String(unitContext.source || "auto");
+    const confidence = String(unitContext.confidence || "low");
+
+    if (source === "gltf-standard") {
+      return "Enheder: glTF bruger meter, vises konverteret til mm.";
+    }
+    if (source === "filename") {
+      return `Enheder: læst som ${label} fra filnavn, konverteret til mm.`;
+    }
+    if (confidence === "high") {
+      return `Enheder: auto-gættet som ${label}, konverteret til mm.`;
+    }
+    if (confidence === "medium") {
+      return `Enheder: auto-gæt ${label}, konverteret til mm.`;
+    }
+
+    if (Array.isArray(unitContext.alternatives) && unitContext.alternatives.length > 1) {
+      const alt = unitContext.alternatives
+        .slice(0, 3)
+        .map((item) => `${formatNumberCompact(item.heightMm)} mm (${item.unitLabel})`)
+        .join(" / ");
+      return `Enheder usikre. Mulige højder: ${alt}.`;
+    }
+    return `Enheder usikre (auto-gæt: ${label}).`;
   }
 
   function setModelHintMessage(message = "") {
@@ -566,9 +723,9 @@
     }
   }
 
-  function buildModelHint(heightValue = 0, extras = [], controlsText = modelControlsText("orbit")) {
+  function buildModelHint(heightValue = 0, extras = [], controlsText = modelControlsText("orbit"), unitContext = null) {
     const controls = String(controlsText || modelControlsText("orbit"));
-    const heightText = formatModelHeight(heightValue);
+    const heightText = formatModelHeight(heightValue, unitContext);
     const parts = [controls];
     if (heightText) parts.push(heightText);
     if (Array.isArray(extras) && extras.length) {
@@ -2036,13 +2193,15 @@
           } catch (_err) {
             height = 0;
           }
-          const heightLabel = height > 0 ? `${height >= 100 ? height.toFixed(0) : height.toFixed(1)} model-enheder` : "Ukendt";
+          const unitContext = GLTF_UNIT_CONTEXT;
+          const heightLabel = formatHeightDisplayValue(height, unitContext);
           updateModelInfoBar({
             controls: modelControlsText(),
             height: heightLabel,
             scale: "Reference-dåse vises i STL/OBJ preview",
           });
-          if (els.modelHint) els.modelHint.textContent = buildModelHint(height);
+          const extraHints = [buildUnitHintText(unitContext)];
+          if (els.modelHint) els.modelHint.textContent = buildModelHint(height, extraHints, modelControlsText(), unitContext);
         }, { once: true });
       }
       updateModelInfoBar({
@@ -2113,6 +2272,8 @@
     let onFlyMouseLeave = null;
     let onFlyContextMenu = null;
     let baseMoveSpeed = 120;
+    let orbitPickObjects = [];
+    const orbitFallbackTarget = new THREE.Vector3();
 
     const isTouchPrimary = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
     if (isTouchPrimary) {
@@ -2137,10 +2298,13 @@
       canvas.style.outline = "none";
       const flyState = {
         dragging: false,
+        dragMode: "",
         lastX: 0,
         lastY: 0,
         yaw: 0,
         pitch: 0,
+        orbitTarget: new THREE.Vector3(),
+        orbitSpherical: new THREE.Spherical(1, Math.PI / 2, 0),
         speedBoost: 1,
         keys: {
           forward: false,
@@ -2160,6 +2324,9 @@
       const forwardVec = new THREE.Vector3();
       const rightVec = new THREE.Vector3();
       const worldUp = new THREE.Vector3(0, 1, 0);
+      const orbitRaycaster = new THREE.Raycaster();
+      const orbitPointer = new THREE.Vector2();
+      const orbitOffset = new THREE.Vector3();
 
       const syncYawPitchFromCamera = () => {
         euler.setFromQuaternion(camera.quaternion, "YXZ");
@@ -2182,6 +2349,31 @@
         );
         if (dir.lengthSq() > 1) dir.normalize();
         return dir;
+      };
+
+      const pickOrbitTargetFromEvent = (event) => {
+        const rect = canvas.getBoundingClientRect();
+        const width = Math.max(1, Number(rect.width || 1));
+        const height = Math.max(1, Number(rect.height || 1));
+        const x = ((Number(event.clientX || 0) - rect.left) / width) * 2 - 1;
+        const y = -(((Number(event.clientY || 0) - rect.top) / height) * 2 - 1);
+        orbitPointer.set(x, y);
+        orbitRaycaster.setFromCamera(orbitPointer, camera);
+        if (Array.isArray(orbitPickObjects) && orbitPickObjects.length) {
+          const hits = orbitRaycaster.intersectObjects(orbitPickObjects, true);
+          if (hits && hits.length && hits[0] && hits[0].point) {
+            return hits[0].point;
+          }
+        }
+        return orbitFallbackTarget;
+      };
+
+      const beginOrbitDrag = (event) => {
+        const target = pickOrbitTargetFromEvent(event);
+        flyState.orbitTarget.copy(target);
+        orbitOffset.copy(camera.position).sub(flyState.orbitTarget);
+        if (orbitOffset.lengthSq() < 1e-8) orbitOffset.set(0, 0, 1);
+        flyState.orbitSpherical.setFromVector3(orbitOffset);
       };
 
       syncYawPitchFromCamera();
@@ -2263,10 +2455,16 @@
       };
 
       onFlyMouseDown = (event) => {
-        if (!event || event.button !== 0) return;
+        if (!event) return;
+        const button = Number(event.button);
+        if (button !== 0 && button !== 2) return;
         flyState.dragging = true;
+        flyState.dragMode = button === 2 ? "orbit" : "look";
         flyState.lastX = Number(event.clientX || 0);
         flyState.lastY = Number(event.clientY || 0);
+        if (flyState.dragMode === "orbit") {
+          beginOrbitDrag(event);
+        }
         canvas.focus({ preventScroll: true });
         event.preventDefault();
       };
@@ -2280,6 +2478,20 @@
         flyState.lastX = currentX;
         flyState.lastY = currentY;
 
+        if (flyState.dragMode === "orbit") {
+          const orbitSensitivity = 0.0046;
+          flyState.orbitSpherical.theta += dx * orbitSensitivity;
+          flyState.orbitSpherical.phi += dy * orbitSensitivity;
+          const minPhi = 0.03;
+          const maxPhi = Math.PI - 0.03;
+          flyState.orbitSpherical.phi = Math.max(minPhi, Math.min(maxPhi, flyState.orbitSpherical.phi));
+          orbitOffset.setFromSpherical(flyState.orbitSpherical);
+          camera.position.copy(flyState.orbitTarget).add(orbitOffset);
+          camera.lookAt(flyState.orbitTarget);
+          syncYawPitchFromCamera();
+          return;
+        }
+
         const lookSensitivity = 0.0024;
         flyState.yaw -= dx * lookSensitivity;
         flyState.pitch -= dy * lookSensitivity;
@@ -2289,6 +2501,7 @@
       onFlyBlur = () => {
         flyState.speedBoost = 1;
         flyState.dragging = false;
+        flyState.dragMode = "";
         flyState.keys.forward = false;
         flyState.keys.back = false;
         flyState.keys.left = false;
@@ -2299,10 +2512,12 @@
 
       onFlyMouseUp = () => {
         flyState.dragging = false;
+        flyState.dragMode = "";
       };
 
       onFlyMouseLeave = () => {
         flyState.dragging = false;
+        flyState.dragMode = "";
       };
 
       onFlyContextMenu = (event) => {
@@ -2631,18 +2846,31 @@
       object.updateMatrixWorld(true);
     }
 
-    function addPresentationTable(object) {
+    function addPresentationTable(object, unitContext = null) {
       const box = new THREE.Box3().setFromObject(object);
       const size = box.getSize(new THREE.Vector3());
       const center = box.getCenter(new THREE.Vector3());
+      const mmPerUnitRaw = Number(unitContext && unitContext.mmPerUnit);
+      const mmPerUnit = Number.isFinite(mmPerUnitRaw) && mmPerUnitRaw > 0 ? mmPerUnitRaw : 1;
+      const mmToUnits = (mm) => Number(mm || 0) / mmPerUnit;
+      const canHeightUnits = Number(unitContext && unitContext.canHeightUnits);
+      const canDiameterUnits = Number(unitContext && unitContext.canDiameterUnits);
+      const referenceCanHeight = Number.isFinite(canHeightUnits) && canHeightUnits > 0
+        ? canHeightUnits
+        : SCALE_CAN_HEIGHT_MM;
+      const referenceCanDiameter = Number.isFinite(canDiameterUnits) && canDiameterUnits > 0
+        ? canDiameterUnits
+        : SCALE_CAN_DIAMETER_MM;
 
-      const modelSpan = Math.max(size.x, size.z, 1);
-      const topWidth = Math.max(size.x * 3.2, modelSpan * 2.9, SCALE_CAN_DIAMETER_MM * 4.2);
-      const topDepth = Math.max(size.z * 3.2, modelSpan * 2.9, SCALE_CAN_DIAMETER_MM * 3.6);
-      const topThickness = Math.max(modelSpan * 0.065, 4);
-      const legHeight = Math.max(size.y * 0.95, modelSpan * 0.95, SCALE_CAN_HEIGHT_MM * 0.45);
-      const legThickness = Math.max(Math.min(topWidth, topDepth) * 0.06, 6);
-      const clearance = Math.max(topThickness * 0.22, 1.4);
+      const targetTableSize = mmToUnits(PRESENTATION_TABLE_SIZE_MM);
+      const edgeMargin = Math.max(referenceCanDiameter * 1.25, mmToUnits(45));
+      const topWidth = Math.max(targetTableSize, size.x + edgeMargin * 2);
+      const topDepth = Math.max(targetTableSize, size.z + edgeMargin * 2);
+      const modelSpan = Math.max(size.x, size.z, referenceCanDiameter);
+      const topThickness = Math.max(mmToUnits(24), modelSpan * 0.055);
+      const legHeight = Math.max(mmToUnits(340), modelSpan * 0.9, size.y * 0.8, referenceCanHeight * 0.45);
+      const legThickness = Math.max(mmToUnits(38), Math.min(topWidth, topDepth) * 0.06);
+      const clearance = Math.max(mmToUnits(2), topThickness * 0.14);
 
       const topCenterY = box.min.y - clearance - topThickness / 2;
       const topSurfaceY = topCenterY + topThickness / 2;
@@ -2655,7 +2883,9 @@
 
       const walnutTopTexture = createWalnutTexture();
       if (walnutTopTexture) {
-        walnutTopTexture.repeat.set(Math.max(topWidth / 120, 1), Math.max(topDepth / 120, 1));
+        const topWidthMm = topWidth * mmPerUnit;
+        const topDepthMm = topDepth * mmPerUnit;
+        walnutTopTexture.repeat.set(Math.max(topWidthMm / 120, 1), Math.max(topDepthMm / 120, 1));
       }
 
       const topMaterialConfig = {
@@ -2677,7 +2907,8 @@
       const legGeometry = new THREE.BoxGeometry(legThickness, legHeight, legThickness);
       const walnutLegTexture = walnutTopTexture ? walnutTopTexture.clone() : null;
       if (walnutLegTexture) {
-        walnutLegTexture.repeat.set(1, Math.max(legHeight / 70, 1));
+        const legHeightMm = legHeight * mmPerUnit;
+        walnutLegTexture.repeat.set(1, Math.max(legHeightMm / 70, 1));
       }
       const legMaterialConfig = {
         color: 0x3f2a1d,
@@ -2707,19 +2938,29 @@
         topSurfaceY,
         topWidth,
         topDepth,
+        topWidthMm: topWidth * mmPerUnit,
+        topDepthMm: topDepth * mmPerUnit,
       };
     }
 
-    function addScaleCan(tableInfo) {
+    function addScaleCan(tableInfo, unitContext = null) {
       if (!tableInfo) return null;
-      const canHeight = SCALE_CAN_HEIGHT_MM;
-      const canDiameter = SCALE_CAN_DIAMETER_MM;
+      const mmPerUnitRaw = Number(unitContext && unitContext.mmPerUnit);
+      const mmPerUnit = Number.isFinite(mmPerUnitRaw) && mmPerUnitRaw > 0 ? mmPerUnitRaw : 1;
+      const canHeightUnits = Number(unitContext && unitContext.canHeightUnits);
+      const canDiameterUnits = Number(unitContext && unitContext.canDiameterUnits);
+      const canHeight = Number.isFinite(canHeightUnits) && canHeightUnits > 0
+        ? canHeightUnits
+        : SCALE_CAN_HEIGHT_MM;
+      const canDiameter = Number.isFinite(canDiameterUnits) && canDiameterUnits > 0
+        ? canDiameterUnits
+        : SCALE_CAN_DIAMETER_MM;
       const canRadius = canDiameter / 2;
 
       const { topSurfaceY } = tableInfo;
       const { x: canX, z: canZ } = chooseCanPosition(tableInfo, canRadius);
 
-      const canBaseY = topSurfaceY + 0.25;
+      const canBaseY = topSurfaceY + (0.25 / mmPerUnit);
       const canGroup = new THREE.Group();
       canGroup.name = "scaleCan";
 
@@ -2796,7 +3037,13 @@
       canGroup.add(capBottom);
 
       scene.add(canGroup);
-      return { canHeight, canDiameter, group: canGroup };
+      return {
+        canHeight,
+        canDiameter,
+        canHeightMm: SCALE_CAN_HEIGHT_MM,
+        canDiameterMm: SCALE_CAN_DIAMETER_MM,
+        group: canGroup,
+      };
     }
 
     function fit(object, extraObjects = []) {
@@ -2850,7 +3097,9 @@
 
     let fittedSize = null;
     let modelOnlySize = null;
+    let tableInfo = null;
     let canInfo = null;
+    let unitContext = null;
     try {
       const obj = await loadObjPromise;
       applyBestStandingOrientation(obj);
@@ -2861,9 +3110,14 @@
         }
       });
       scene.add(obj);
-      modelOnlySize = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
-      const tableInfo = addPresentationTable(obj);
-      canInfo = addScaleCan(tableInfo);
+      const modelOnlyBox = new THREE.Box3().setFromObject(obj);
+      modelOnlySize = modelOnlyBox.getSize(new THREE.Vector3());
+      unitContext = buildModelUnitContext(modelOnlySize && modelOnlySize.y, file.filename || "");
+      orbitFallbackTarget.copy(modelOnlyBox.getCenter(new THREE.Vector3()));
+      orbitPickObjects = [obj];
+      tableInfo = addPresentationTable(obj, unitContext);
+      canInfo = addScaleCan(tableInfo, unitContext);
+      if (canInfo && canInfo.group) orbitPickObjects.push(canInfo.group);
       fittedSize = fit(obj, [canInfo && canInfo.group ? canInfo.group : null]);
     } catch (err) {
       updateModelInfoBar({
@@ -2918,9 +3172,12 @@
     const heightValue = modelOnlySize && Number.isFinite(Number(modelOnlySize.y))
       ? Number(modelOnlySize.y)
       : (fittedSize && Number.isFinite(Number(fittedSize.y)) ? Number(fittedSize.y) : 0);
-    const heightLabel = heightValue > 0 ? `${heightValue >= 100 ? heightValue.toFixed(0) : heightValue.toFixed(1)} model-enheder` : "Ukendt";
+    if (!unitContext) {
+      unitContext = buildModelUnitContext(heightValue, file.filename || "");
+    }
+    const heightLabel = formatHeightDisplayValue(heightValue, unitContext);
     const scaleLabel = canInfo
-      ? `Dåse ${canInfo.canHeight}x${canInfo.canDiameter} mm`
+      ? `Dåse ${canInfo.canHeightMm}x${canInfo.canDiameterMm} mm`
       : `Dåse ${SCALE_CAN_HEIGHT_MM}x${SCALE_CAN_DIAMETER_MM} mm`;
 
     updateModelInfoBar({
@@ -2930,10 +3187,21 @@
     });
 
     const extraHints = [];
-    if (canInfo) {
-      extraHints.push(`Skala-reference: sodavandsdåse ${canInfo.canHeight}x${canInfo.canDiameter} mm (forudsat mm-enheder).`);
+    if (tableInfo && Number.isFinite(Number(tableInfo.topWidthMm)) && Number.isFinite(Number(tableInfo.topDepthMm))) {
+      extraHints.push(
+        `Bord: ${formatNumberCompact(Number(tableInfo.topWidthMm) / 10)}x${formatNumberCompact(Number(tableInfo.topDepthMm) / 10)} cm.`
+      );
+    } else {
+      extraHints.push(`Bord: ${formatNumberCompact(PRESENTATION_TABLE_SIZE_MM / 10)}x${formatNumberCompact(PRESENTATION_TABLE_SIZE_MM / 10)} cm.`);
     }
-    if (els.modelHint) els.modelHint.textContent = buildModelHint(heightValue, extraHints, controlsHintText);
+    if (canInfo) {
+      const unitLabel = unitContext && unitContext.unitLabel ? unitContext.unitLabel : "model-enheder";
+      extraHints.push(
+        `Skala-reference: sodavandsdåse ${canInfo.canHeightMm}x${canInfo.canDiameterMm} mm (tegnet som ${formatNumberCompact(canInfo.canHeight)}x${formatNumberCompact(canInfo.canDiameter)} ${unitLabel}).`
+      );
+    }
+    extraHints.push(buildUnitHintText(unitContext));
+    if (els.modelHint) els.modelHint.textContent = buildModelHint(heightValue, extraHints, controlsHintText, unitContext);
   }
 
   function close3DModal() {
