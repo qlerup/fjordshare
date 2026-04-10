@@ -41,6 +41,17 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
+try:
+    from PIL import Image, ImageOps
+except Exception:
+    Image = None
+    ImageOps = None
+
+try:
+    from pillow_heif import register_heif_opener
+except Exception:
+    register_heif_opener = None
+
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data")).resolve()
 UPLOAD_ROOT = DATA_DIR / "uploads"
@@ -69,10 +80,26 @@ FILE_ATTACHMENT_MIME_TO_EXT = {
     "image/bmp": ".bmp",
     "image/avif": ".avif",
 }
+FILE_ATTACHMENT_HEIC_EXTS = {".heic", ".heif"}
+FILE_ATTACHMENT_HEIC_MIME_TYPES = {
+    "image/heic",
+    "image/heif",
+    "image/heic-sequence",
+    "image/heif-sequence",
+    "application/heic",
+    "application/heif",
+}
 ZIP_UPLOAD_MAX_FILES = int(str(os.getenv("ZIP_UPLOAD_MAX_FILES", "10000")) or "10000")
 ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES = int(str(os.getenv("ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES", str(2 * 1024 * 1024 * 1024))) or str(2 * 1024 * 1024 * 1024))
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
+
+HEIC_CONVERSION_AVAILABLE = bool(Image and ImageOps and register_heif_opener)
+if HEIC_CONVERSION_AVAILABLE:
+    try:
+        register_heif_opener()
+    except Exception:
+        HEIC_CONVERSION_AVAILABLE = False
 
 THUMB_QUEUE: "queue_mod.Queue[int]" = queue_mod.Queue()
 THUMB_QUEUE_LOCK = threading.Lock()
@@ -368,6 +395,33 @@ def _attachment_ext_from_upload(filename: str, mime_type: str) -> str:
         return ext
     mapped = FILE_ATTACHMENT_MIME_TO_EXT.get(str(mime_type or "").strip().lower(), "")
     return mapped if mapped in FILE_ATTACHMENT_ALLOWED_EXTS else ""
+
+
+def _attachment_is_heic_upload(filename: str, mime_type: str) -> bool:
+    ext = str(Path(filename or "").suffix or "").lower()
+    if ext in FILE_ATTACHMENT_HEIC_EXTS:
+        return True
+    return str(mime_type or "").strip().lower() in FILE_ATTACHMENT_HEIC_MIME_TYPES
+
+
+def _attachment_save_heic_as_jpg(upload: Any, abs_path: Path) -> bool:
+    if not HEIC_CONVERSION_AVAILABLE:
+        return False
+    try:
+        stream = getattr(upload, "stream", None)
+        if stream is None:
+            return False
+        stream.seek(0)
+        with Image.open(stream) as src_img:
+            img = ImageOps.exif_transpose(src_img)
+            if img.mode not in {"RGB", "L"}:
+                img = img.convert("RGB")
+            elif img.mode == "L":
+                img = img.convert("RGB")
+            img.save(abs_path, format="JPEG", quality=92, optimize=True)
+        return True
+    except Exception:
+        return False
 
 
 def _attachment_size_from_filestorage(file_storage: Any) -> int:
@@ -2110,14 +2164,24 @@ def api_file_attachments(file_id: int):
         for upload in valid_uploads:
             original_name = sanitize_filename(str(upload.filename or "billede"))
             mime_type = str(getattr(upload, "mimetype", "") or "").strip().lower()
-            if not mime_type.startswith("image/"):
+            is_heic = _attachment_is_heic_upload(original_name, mime_type)
+            if not mime_type.startswith("image/") and not is_heic:
                 skipped.append(f"{original_name}: ikke et billede")
                 continue
 
-            ext = _attachment_ext_from_upload(original_name, mime_type)
+            ext = ".jpg" if is_heic else _attachment_ext_from_upload(original_name, mime_type)
             if not ext:
                 skipped.append(f"{original_name}: filtype ikke understøttet")
                 continue
+
+            stored_name = original_name
+            stored_mime_type = mime_type
+            if is_heic:
+                if not HEIC_CONVERSION_AVAILABLE:
+                    skipped.append(f"{original_name}: HEIC-konvertering ikke tilgængelig på serveren")
+                    continue
+                stored_name = sanitize_filename(f"{Path(original_name).stem}.jpg")
+                stored_mime_type = "image/jpeg"
 
             size_guess = _attachment_size_from_filestorage(upload)
             if size_guess > FILE_ATTACHMENT_MAX_BYTES:
@@ -2136,7 +2200,18 @@ def api_file_attachments(file_id: int):
                 upload.stream.seek(0)
             except Exception:
                 pass
-            upload.save(abs_path)
+
+            if is_heic:
+                if not _attachment_save_heic_as_jpg(upload, abs_path):
+                    skipped.append(f"{original_name}: kunne ikke konverteres fra HEIC")
+                    try:
+                        abs_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+            else:
+                upload.save(abs_path)
+
             try:
                 file_size = int(abs_path.stat().st_size)
             except Exception:
@@ -2157,7 +2232,7 @@ def api_file_attachments(file_id: int):
                 INSERT INTO file_attachments(file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at)
                 VALUES(?,?,?,?,?,?,?)
                 """,
-                (file_id_i, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at),
+                (file_id_i, rel_name, stored_name, stored_mime_type, file_size, uploaded_by, uploaded_at),
             )
             row = conn.execute(
                 """
