@@ -40,8 +40,9 @@ RUN set -eux; \
     fi; \
     curl -fL "$appimage_url" -o /opt/bambu-studio/BambuStudio.AppImage; \
     chmod +x /opt/bambu-studio/BambuStudio.AppImage; \
-    /opt/bambu-studio/BambuStudio.AppImage --appimage-extract >/dev/null; \
-    mv /opt/bambu-studio/squashfs-root /opt/bambu-studio/appdir; \
+    cd /opt/bambu-studio; \
+    ./BambuStudio.AppImage --appimage-extract >/dev/null; \
+    mv squashfs-root appdir; \
     ln -sf /opt/bambu-studio/appdir/AppRun /usr/local/bin/bambu-studio; \
     ln -sf /usr/local/bin/bambu-studio /usr/local/bin/BambuStudio; \
     rm -f /opt/bambu-studio/BambuStudio.AppImage; \
