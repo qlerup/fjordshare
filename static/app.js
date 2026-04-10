@@ -526,6 +526,19 @@
     return d.toLocaleString();
   }
 
+  function formatModelHeight(value) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    const pretty = n >= 100 ? n.toFixed(0) : n.toFixed(1);
+    return `Højde: ${pretty} model-enheder (ofte mm i STL/OBJ).`;
+  }
+
+  function buildModelHint(heightValue = 0) {
+    const controls = "Desktop: træk for at rotere, scroll for zoom. Mobil: 1 finger roter, 2 fingre zoom/roter.";
+    const heightText = formatModelHeight(heightValue);
+    return heightText ? `${controls} ${heightText}` : controls;
+  }
+
   function setTab(tab) {
     const target = String(tab || "files");
     const map = {
@@ -1947,8 +1960,25 @@
       cleanupThree();
       if (els.modelViewerPane) els.modelViewerPane.classList.remove("hidden");
       if (els.threePane) els.threePane.classList.add("hidden");
-      if (els.modelViewer) els.modelViewer.setAttribute("src", file.content_url || "");
-      if (els.modelHint) els.modelHint.textContent = "Du kan rotere og zoome direkte i modellen.";
+      if (els.modelViewer) {
+        const viewer = els.modelViewer;
+        viewer.setAttribute("src", file.content_url || "");
+        viewer.addEventListener("load", () => {
+          let height = 0;
+          try {
+            if (typeof viewer.getDimensions === "function") {
+              const dims = viewer.getDimensions();
+              if (dims && Number.isFinite(Number(dims.y))) {
+                height = Number(dims.y);
+              }
+            }
+          } catch (_err) {
+            height = 0;
+          }
+          if (els.modelHint) els.modelHint.textContent = buildModelHint(height);
+        }, { once: true });
+      }
+      if (els.modelHint) els.modelHint.textContent = `${buildModelHint()} Måler model...`;
       return;
     }
 
@@ -2011,6 +2041,7 @@
       camera.updateProjectionMatrix();
       controls.target.copy(center);
       controls.update();
+      return size;
     }
 
     const modelUrl = file.content_url;
@@ -2034,10 +2065,11 @@
       loader.load(modelUrl, resolve, undefined, reject);
     });
 
+    let fittedSize = null;
     try {
       const obj = await loadObjPromise;
       scene.add(obj);
-      fit(obj);
+      fittedSize = fit(obj);
     } catch (err) {
       if (els.modelHint) {
         els.modelHint.textContent = `Kunne ikke åbne 3D filen: ${err.message || err}`;
@@ -2068,7 +2100,8 @@
     state.three = { renderer, scene, camera, controls, frameId: 0, onResize };
     animate();
 
-    if (els.modelHint) els.modelHint.textContent = "Desktop: træk for at rotere, scroll for zoom. Mobil: 1 finger roter, 2 fingre zoom/roter.";
+    const heightValue = fittedSize && Number.isFinite(Number(fittedSize.y)) ? Number(fittedSize.y) : 0;
+    if (els.modelHint) els.modelHint.textContent = buildModelHint(heightValue);
   }
 
   function close3DModal() {
