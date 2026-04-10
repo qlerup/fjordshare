@@ -56,6 +56,7 @@ THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
 THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
 THUMB_RENDER_FACE_LIMIT = 120_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
+THUMB_RENDER_STYLE_VERSION = "2"
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
 
@@ -409,15 +410,24 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
     mesh = _load_mesh_for_thumbnail(mesh_path)
+    try:
+        mesh.remove_degenerate_faces()
+    except Exception:
+        pass
+    try:
+        mesh.fix_normals()
+    except Exception:
+        pass
 
     verts = mesh.vertices
     faces = mesh.faces
     normals = mesh.face_normals
 
     if len(faces) > THUMB_RENDER_FACE_LIMIT:
-        idx = np.random.choice(len(faces), THUMB_RENDER_FACE_LIMIT, replace=False)
-        faces = faces[idx]
-        normals = normals[idx]
+        # Keep contiguous surface appearance instead of random sparse sampling.
+        step = max(1, int(np.ceil(len(faces) / float(THUMB_RENDER_FACE_LIMIT))))
+        faces = faces[::step]
+        normals = normals[::step]
 
     triangles = verts[faces]
 
@@ -429,12 +439,12 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
 
     light = np.array([0.25, 0.45, 0.85], dtype=float)
     light = light / np.linalg.norm(light)
-    intensity = np.clip(normals.dot(light), 0.05, 1.0)
+    intensity = np.clip(normals.dot(light), 0.15, 1.0)
     base_rgb = np.array([0.66, 0.79, 0.95], dtype=float)
-    face_rgb = np.clip((0.35 + 0.65 * intensity[:, None]) * base_rgb, 0.0, 1.0)
+    face_rgb = np.clip((0.55 + 0.45 * intensity[:, None]) * base_rgb, 0.0, 1.0)
     face_rgba = np.concatenate([face_rgb, np.ones((face_rgb.shape[0], 1), dtype=float)], axis=1)
 
-    poly = Poly3DCollection(triangles, linewidths=0.0)
+    poly = Poly3DCollection(triangles, linewidths=0.0, antialiaseds=False)
     poly.set_facecolor(face_rgba)
     poly.set_edgecolor((0.0, 0.0, 0.0, 0.0))
     ax.add_collection3d(poly)
@@ -723,6 +733,46 @@ def set_setting(key: str, value: str) -> None:
             (str(key), str(value)),
         )
         conn.commit()
+
+
+def migrate_thumbnail_render_style_if_needed() -> None:
+    current = str(get_setting("thumb_render_style_version", "") or "").strip()
+    if current == THUMB_RENDER_STYLE_VERSION:
+        return
+
+    rels_to_remove: list[str] = []
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, thumb_rel
+            FROM files
+            WHERE lower(COALESCE(ext,'')) IN ({",".join("?" for _ in THUMBABLE_3D_EXTENSIONS)})
+            """,
+            tuple(sorted(THUMBABLE_3D_EXTENSIONS)),
+        ).fetchall()
+
+        for row in rows:
+            rel = str(row["thumb_rel"] or "").strip()
+            if rel:
+                rels_to_remove.append(rel)
+
+        conn.execute(
+            f"""
+            UPDATE files
+            SET thumb_rel='',
+                thumb_status='queued',
+                thumb_error='',
+                thumb_updated_at=?
+            WHERE lower(COALESCE(ext,'')) IN ({",".join("?" for _ in THUMBABLE_3D_EXTENSIONS)})
+            """,
+            (now_iso(), *tuple(sorted(THUMBABLE_3D_EXTENSIONS))),
+        )
+        conn.commit()
+
+    for rel in rels_to_remove:
+        _safe_remove_thumbnail(rel)
+
+    set_setting("thumb_render_style_version", THUMB_RENDER_STYLE_VERSION)
 
 
 def ensure_folder_record(folder_path: str, owner_user_id: Optional[int] = None) -> None:
@@ -1270,6 +1320,7 @@ def build_share_url(token: str, use_external_base_url: bool = False) -> str:
 
 _ensure_storage_dirs()
 init_db()
+migrate_thumbnail_render_style_if_needed()
 
 app = Flask(__name__)
 app.secret_key = _load_or_create_secret()

@@ -32,6 +32,12 @@ body {
   color: var(--text);
 }
 
+#bootstrap {
+  display: none !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+
 a {
   color: inherit;
 }
@@ -154,6 +160,8 @@ input[type="checkbox"] {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 190px 1fr;
+  margin: 0;
+  padding: 0;
 }
 
 .sidebar {
@@ -385,6 +393,18 @@ input[type="checkbox"] {
   background: var(--panel-2);
 }
 
+.icon-btn.disabled,
+.icon-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn.disabled,
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .menu-wrap {
   position: relative;
 }
@@ -432,6 +452,12 @@ input[type="checkbox"] {
   padding: 10px 12px 8px;
 }
 
+.mapper-current-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .mapper-current {
   color: var(--muted);
   font-size: 0.95rem;
@@ -439,6 +465,15 @@ input[type="checkbox"] {
 
 .mapper-current strong {
   color: var(--text);
+}
+
+.mapper-select-summary {
+  color: #dbe7ff;
+  font-size: 0.85rem;
+  border: 1px solid rgba(91, 140, 255, 0.6);
+  border-radius: 999px;
+  background: rgba(91, 140, 255, 0.15);
+  padding: 5px 10px;
 }
 
 .mapper-dropzone {
@@ -461,6 +496,11 @@ input[type="checkbox"] {
   color: #dbe7ff;
 }
 
+.mapper-dropzone.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .mapper-hidden-controls {
   display: none;
 }
@@ -473,6 +513,7 @@ input[type="checkbox"] {
 }
 
 .folder-tile {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel-2);
@@ -487,6 +528,12 @@ input[type="checkbox"] {
 .folder-tile:hover {
   border-color: rgba(91, 140, 255, 0.55);
   background: var(--panel-3);
+}
+
+.folder-tile.selected {
+  border-color: rgba(91, 140, 255, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(91, 140, 255, 0.75);
+  background: rgba(91, 140, 255, 0.14);
 }
 
 .folder-tile-preview {
@@ -636,12 +683,22 @@ input[type="checkbox"] {
   display: grid;
 }
 
+.file-card.file-card-compact {
+  grid-template-rows: auto auto;
+  position: relative;
+}
+
 .file-preview {
   aspect-ratio: 16 / 10;
   background: #0d1117;
   display: grid;
   place-items: center;
   overflow: hidden;
+}
+
+.file-card-compact .file-preview {
+  aspect-ratio: 1 / 1;
+  position: relative;
 }
 
 .file-preview img,
@@ -657,6 +714,79 @@ input[type="checkbox"] {
   font-size: 0.9rem;
   text-align: center;
   padding: 0 8px;
+}
+
+.file-info-btn {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(5, 10, 18, 0.72);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.file-info-btn:hover {
+  background: rgba(91, 140, 255, 0.78);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.mapper-shell.select-mode .file-info-btn {
+  display: none;
+}
+
+.file-card.selected {
+  border-color: rgba(91, 140, 255, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(91, 140, 255, 0.75);
+  background: rgba(91, 140, 255, 0.14);
+}
+
+.select-mark {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: rgba(10, 16, 26, 0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+}
+
+.mapper-shell.select-mode .select-mark {
+  display: flex;
+}
+
+.select-mark.selected {
+  border-color: rgba(91, 140, 255, 0.95);
+  background: var(--accent);
+}
+
+.select-mark.selected::before {
+  content: "\2713";
+  font-size: 0.78rem;
+  color: #fff;
+  font-weight: 700;
+}
+
+.file-caption {
+  padding: 9px 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .file-body {
@@ -684,6 +814,131 @@ input[type="checkbox"] {
 .file-actions {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.file-info-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 7, 14, 0.55);
+  z-index: 70;
+  opacity: 0;
+  transition: opacity .16s ease;
+}
+
+.file-info-backdrop.open {
+  opacity: 1;
+}
+
+.file-info-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100dvh;
+  width: min(430px, calc(100vw - 14px));
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  z-index: 80;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  transform: translateX(100%);
+  transition: transform .19s ease;
+}
+
+.file-info-drawer.open {
+  transform: translateX(0);
+}
+
+.file-info-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.file-info-head h3 {
+  margin: 0;
+}
+
+.file-info-body {
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.file-info-preview {
+  aspect-ratio: 16 / 10;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0d1117;
+  display: grid;
+  place-items: center;
+}
+
+.file-info-preview img,
+.file-info-preview video,
+.file-info-preview model-viewer {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.file-info-name {
+  font-size: 1.06rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.file-info-meta {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.file-info-grid {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  padding: 10px;
+}
+
+.file-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.file-info-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.file-info-value {
+  text-align: right;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.file-info-fields {
+  display: grid;
+  gap: 6px;
+}
+
+.file-info-fields label {
+  font-size: 0.82rem;
+}
+
+.file-info-actions {
+  border-top: 1px solid var(--border);
+  padding: 10px 12px;
+  display: flex;
+  gap: 8px;
   flex-wrap: wrap;
 }
 

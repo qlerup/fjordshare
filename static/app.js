@@ -16,9 +16,15 @@
     three: null,
     thumbPollTimer: null,
     currentSettingsTab: "shares",
+    currentInfoFileId: 0,
+    infoDrawerHideTimer: null,
+    selectMode: false,
+    selectedFolderPaths: new Set(),
+    selectedFileIds: new Set(),
   };
 
   const els = {
+    contentHeader: document.getElementById("contentHeader"),
     pageTitle: document.getElementById("pageTitle"),
     pageSubtitle: document.getElementById("pageSubtitle"),
     statFiles: document.getElementById("statFiles"),
@@ -48,6 +54,30 @@
     mapperSearchBtn: document.getElementById("mapperSearchBtn"),
     mapperMenuBtn: document.getElementById("mapperMenuBtn"),
     mapperMenu: document.getElementById("mapperMenu"),
+    mapperShell: document.getElementById("mapperShell"),
+    mapperMenuSelect: document.getElementById("mapperMenuSelect"),
+    mapperMenuShare: document.getElementById("mapperMenuShare"),
+    mapperMenuUpload: document.getElementById("mapperMenuUpload"),
+    mapperMenuCreateFolder: document.getElementById("mapperMenuCreateFolder"),
+    mapperMenuRenameFolder: document.getElementById("mapperMenuRenameFolder"),
+    mapperSelectSummary: document.getElementById("mapperSelectSummary"),
+    mapperSelectExitBtn: document.getElementById("mapperSelectExitBtn"),
+    fileInfoBackdrop: document.getElementById("fileInfoBackdrop"),
+    fileInfoDrawer: document.getElementById("fileInfoDrawer"),
+    closeFileInfoBtn: document.getElementById("closeFileInfoBtn"),
+    fileInfoPreview: document.getElementById("fileInfoPreview"),
+    fileInfoName: document.getElementById("fileInfoName"),
+    fileInfoMeta: document.getElementById("fileInfoMeta"),
+    fileInfoFolder: document.getElementById("fileInfoFolder"),
+    fileInfoExt: document.getElementById("fileInfoExt"),
+    fileInfoSize: document.getElementById("fileInfoSize"),
+    fileInfoUploadedAt: document.getElementById("fileInfoUploadedAt"),
+    fileInfoUploadedBy: document.getElementById("fileInfoUploadedBy"),
+    fileInfoNote: document.getElementById("fileInfoNote"),
+    fileInfoQty: document.getElementById("fileInfoQty"),
+    fileInfoSaveBtn: document.getElementById("fileInfoSaveBtn"),
+    fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
+    fileInfoOpen3DBtn: document.getElementById("fileInfoOpen3DBtn"),
     metadataModal: document.getElementById("metadataModal"),
     metadataTableBody: document.getElementById("metadataTableBody"),
     metadataCancelBtn: document.getElementById("metadataCancelBtn"),
@@ -170,12 +200,21 @@
     });
     const navButtons = Array.from((els.sidebarNav && els.sidebarNav.querySelectorAll(".nav-item")) || []);
     navButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === target));
+    if (els.contentHeader) {
+      els.contentHeader.classList.toggle("hidden", target === "files");
+    }
     const tabMeta = TABS[target] || { title: "FjordShare", subtitle: "" };
     if (els.pageTitle) els.pageTitle.textContent = tabMeta.title || "FjordShare";
     if (els.pageSubtitle) els.pageSubtitle.textContent = tabMeta.subtitle || "";
 
     if (target === "settings" && state.role === "admin") {
       setSettingsTab(state.currentSettingsTab || "shares");
+    }
+    if (target !== "files" && state.selectMode) {
+      toggleSelectMode(false);
+    }
+    if (target !== "files" && state.currentInfoFileId) {
+      closeFileInfoDrawer();
     }
   }
 
@@ -234,6 +273,98 @@
     return String((els.folderSelect && els.folderSelect.value) || state.currentFolder || "");
   }
 
+  function selectedCount() {
+    return state.selectedFolderPaths.size + state.selectedFileIds.size;
+  }
+
+  function clearSelections() {
+    state.selectedFolderPaths.clear();
+    state.selectedFileIds.clear();
+  }
+
+  function toggleSelectMode(forceValue = null) {
+    const next = forceValue == null ? !state.selectMode : !!forceValue;
+    if (state.selectMode === next) return;
+    state.selectMode = next;
+    if (!next) {
+      clearSelections();
+    } else {
+      closeFileInfoDrawer();
+    }
+    updateSelectModeUi();
+    renderFolderBrowser();
+    renderFiles();
+  }
+
+  function toggleFolderSelection(folderPath) {
+    const key = String(folderPath || "").trim();
+    if (!key) return;
+    if (state.selectedFolderPaths.has(key)) state.selectedFolderPaths.delete(key);
+    else state.selectedFolderPaths.add(key);
+  }
+
+  function toggleFileSelection(fileId) {
+    const id = Number(fileId || 0);
+    if (!id) return;
+    if (state.selectedFileIds.has(id)) state.selectedFileIds.delete(id);
+    else state.selectedFileIds.add(id);
+  }
+
+  function pruneSelections() {
+    const currentFolderPath = currentFolder() || state.homeFolder || "";
+    const childPathSet = new Set(listDirectChildren(currentFolderPath).map((c) => String(c.path || "")));
+    const fileIdSet = new Set(state.files.map((f) => Number(f.id || 0)).filter((n) => n > 0));
+
+    for (const folderPath of Array.from(state.selectedFolderPaths)) {
+      if (!childPathSet.has(folderPath)) state.selectedFolderPaths.delete(folderPath);
+    }
+    for (const id of Array.from(state.selectedFileIds)) {
+      if (!fileIdSet.has(Number(id))) state.selectedFileIds.delete(Number(id));
+    }
+  }
+
+  function updateSelectModeUi() {
+    const on = !!state.selectMode;
+    if (els.mapperShell) els.mapperShell.classList.toggle("select-mode", on);
+
+    const count = selectedCount();
+    if (els.mapperSelectSummary) {
+      els.mapperSelectSummary.textContent = on ? `${count} valgt` : "";
+      els.mapperSelectSummary.classList.toggle("hidden", !on);
+    }
+    if (els.mapperSelectExitBtn) {
+      els.mapperSelectExitBtn.classList.toggle("hidden", !on);
+    }
+
+    if (els.mapperMenuSelect) {
+      els.mapperMenuSelect.textContent = on ? "Afslut vælg" : "Vælg";
+    }
+    if (els.mapperMenuUpload) {
+      els.mapperMenuUpload.disabled = on;
+    }
+    if (els.mapperMenuCreateFolder) {
+      els.mapperMenuCreateFolder.disabled = on;
+    }
+    if (els.mapperMenuShare) {
+      const hasShareSelection = state.selectedFolderPaths.size > 0;
+      els.mapperMenuShare.disabled = !on || !hasShareSelection;
+    }
+    if (els.mapperMenuRenameFolder) {
+      els.mapperMenuRenameFolder.disabled = !on || state.selectedFolderPaths.size !== 1;
+    }
+
+    if (els.mapperSearchBtn) {
+      els.mapperSearchBtn.disabled = on;
+      els.mapperSearchBtn.classList.toggle("disabled", on);
+    }
+    if (els.folderUpBtn) {
+      els.folderUpBtn.classList.toggle("disabled", on);
+    }
+    if (els.mapperDropZone) {
+      els.mapperDropZone.classList.toggle("disabled", on);
+    }
+  }
+
   function listDirectChildren(baseFolder) {
     const base = String(baseFolder || "").trim();
     const out = new Map();
@@ -276,7 +407,7 @@
     if (els.folderUpBtn) {
       const parent = parentFolder(folder);
       const canGoUp = !!parent && state.folders.some((f) => String(f.path || "") === parent);
-      els.folderUpBtn.disabled = !canGoUp;
+      els.folderUpBtn.disabled = state.selectMode || !canGoUp;
     }
   }
 
@@ -291,8 +422,10 @@
     els.folderList.innerHTML = children
       .map((child) => {
         const perm = child.permission ? ` · ${esc(child.permission)}` : "";
+        const isSelected = state.selectedFolderPaths.has(String(child.path || ""));
         return `
-          <button class="folder-tile" type="button" data-folder="${esc(child.path)}">
+          <button class="folder-tile ${isSelected ? "selected" : ""}" type="button" data-folder="${esc(child.path)}">
+            <span class="select-mark ${isSelected ? "selected" : ""}"></span>
             <div class="folder-tile-preview">&#128193;</div>
             <div class="folder-tile-name">${esc(child.name)}</div>
             <div class="folder-tile-meta">${esc(child.path)}${perm}</div>
@@ -330,8 +463,10 @@
         .join("");
       els.shareFoldersSelect.innerHTML = shareOptions;
     }
+    pruneSelections();
     renderFolderBrowser();
     updateFolderUiState();
+    updateSelectModeUi();
     updateStats();
   }
 
@@ -357,10 +492,98 @@
     return `<div class="placeholder">${esc(file.ext || "fil").toUpperCase()}</div>`;
   }
 
+  function fileById(fileId) {
+    const id = Number(fileId || 0);
+    if (!id) return null;
+    return state.files.find((f) => Number(f.id || 0) === id) || null;
+  }
+
+  function renderFileInfoDrawer(file) {
+    if (!file || !els.fileInfoDrawer) return;
+    const id = Number(file.id || 0);
+    if (!id) return;
+
+    if (els.fileInfoPreview) {
+      els.fileInfoPreview.innerHTML = filePreviewHtml(file);
+    }
+    if (els.fileInfoName) els.fileInfoName.textContent = String(file.filename || "-");
+    if (els.fileInfoMeta) {
+      els.fileInfoMeta.textContent = `${formatSize(file.file_size)} · ${String(file.ext || "-")} · ${formatDate(file.uploaded_at)}`;
+    }
+    if (els.fileInfoFolder) els.fileInfoFolder.textContent = String(file.folder_path || "-");
+    if (els.fileInfoExt) els.fileInfoExt.textContent = String(file.ext || "-");
+    if (els.fileInfoSize) els.fileInfoSize.textContent = formatSize(file.file_size);
+    if (els.fileInfoUploadedAt) els.fileInfoUploadedAt.textContent = formatDate(file.uploaded_at);
+    if (els.fileInfoUploadedBy) els.fileInfoUploadedBy.textContent = String(file.uploaded_by || "-");
+    if (els.fileInfoNote) els.fileInfoNote.value = String(file.note || "");
+    if (els.fileInfoQty) els.fileInfoQty.value = String(Math.max(1, Number(file.quantity || 1) || 1));
+    if (els.fileInfoDownloadLink) {
+      els.fileInfoDownloadLink.href = String(file.download_url || "#");
+    }
+    if (els.fileInfoOpen3DBtn) {
+      els.fileInfoOpen3DBtn.classList.toggle("hidden", !file.is_3d_openable);
+      els.fileInfoOpen3DBtn.dataset.fileId = String(id);
+    }
+  }
+
+  function openFileInfoDrawer(fileId) {
+    const file = fileById(fileId);
+    if (!file) return;
+    state.currentInfoFileId = Number(file.id || 0);
+    renderFileInfoDrawer(file);
+
+    if (state.infoDrawerHideTimer) {
+      clearTimeout(state.infoDrawerHideTimer);
+      state.infoDrawerHideTimer = null;
+    }
+
+    if (els.fileInfoBackdrop) {
+      els.fileInfoBackdrop.classList.remove("hidden");
+      requestAnimationFrame(() => els.fileInfoBackdrop.classList.add("open"));
+    }
+    if (els.fileInfoDrawer) {
+      els.fileInfoDrawer.classList.remove("hidden");
+      els.fileInfoDrawer.setAttribute("aria-hidden", "false");
+      requestAnimationFrame(() => els.fileInfoDrawer.classList.add("open"));
+    }
+  }
+
+  function closeFileInfoDrawer() {
+    state.currentInfoFileId = 0;
+    if (els.fileInfoDrawer) {
+      els.fileInfoDrawer.classList.remove("open");
+      els.fileInfoDrawer.setAttribute("aria-hidden", "true");
+    }
+    if (els.fileInfoBackdrop) {
+      els.fileInfoBackdrop.classList.remove("open");
+    }
+    if (state.infoDrawerHideTimer) {
+      clearTimeout(state.infoDrawerHideTimer);
+    }
+    state.infoDrawerHideTimer = setTimeout(() => {
+      if (els.fileInfoDrawer) els.fileInfoDrawer.classList.add("hidden");
+      if (els.fileInfoBackdrop) els.fileInfoBackdrop.classList.add("hidden");
+      state.infoDrawerHideTimer = null;
+    }, 200);
+  }
+
+  async function saveCurrentFileInfo() {
+    const id = Number(state.currentInfoFileId || 0);
+    if (!id) return;
+    const note = String((els.fileInfoNote && els.fileInfoNote.value) || "");
+    const quantity = Math.max(1, Number((els.fileInfoQty && els.fileInfoQty.value) || 1) || 1);
+    await api(`/api/files/${id}/metadata`, { method: "PATCH", body: { note, quantity } });
+    showStatus(els.uploadStatus, "Fil-information gemt.", "ok");
+    await loadFiles();
+  }
+
   function renderFiles() {
     if (!els.fileGrid) return;
     if (!state.files.length) {
       els.fileGrid.innerHTML = `<div class="panel"><p class="hint">Ingen filer i denne mappe endnu.</p></div>`;
+      if (state.currentInfoFileId) {
+        closeFileInfoDrawer();
+      }
       updateStats();
       return;
     }
@@ -368,27 +591,30 @@
     const html = state.files
       .map((file) => {
         const id = Number(file.id || 0);
+        const isSelected = state.selectedFileIds.has(id);
         return `
-          <article class="file-card">
-            <div class="file-preview">${filePreviewHtml(file)}</div>
-            <div class="file-body">
-              <div class="file-name">${esc(file.filename)}</div>
-              <div class="file-meta">${formatSize(file.file_size)}  -  ${esc(file.ext || "-")}  -  ${formatDate(file.uploaded_at)}</div>
-              <div class="file-inputs">
-                <input class="input note-input" data-file-id="${id}" type="text" placeholder="Bemærkning" value="${esc(file.note || "")}">
-                <input class="input qty-input" data-file-id="${id}" type="number" min="1" value="${Number(file.quantity || 1)}">
-              </div>
-              <div class="file-actions">
-                <button class="btn" data-action="save-meta" data-file-id="${id}">Gem info</button>
-                <a class="btn" href="${esc(file.download_url)}" target="_blank" rel="noopener">Download</a>
-                ${file.is_3d_openable ? `<button class="btn" data-action="open-3d" data-file-id="${id}">Åbn 3D</button>` : ""}
-              </div>
+          <article class="file-card file-card-compact ${isSelected ? "selected" : ""}" data-file-id="${id}">
+            <div class="file-preview">
+              <span class="select-mark ${isSelected ? "selected" : ""}"></span>
+              <button class="file-info-btn" data-action="open-info" data-file-id="${id}" aria-label="Vis fil-info">i</button>
+              ${filePreviewHtml(file)}
             </div>
+            <div class="file-caption" title="${esc(file.filename)}">${esc(file.filename)}</div>
           </article>
         `;
       })
       .join("");
     els.fileGrid.innerHTML = html;
+
+    pruneSelections();
+
+    if (state.currentInfoFileId) {
+      const selected = fileById(state.currentInfoFileId);
+      if (selected) renderFileInfoDrawer(selected);
+      else closeFileInfoDrawer();
+    }
+
+    updateSelectModeUi();
     syncThumbPoller();
     updateStats();
   }
@@ -786,12 +1012,39 @@
 
   async function ensureThreeModules() {
     if (state.threeModules) return state.threeModules;
-    const THREE = await import("https://unpkg.com/three@0.166.1/build/three.module.js");
-    const { OrbitControls } = await import("https://unpkg.com/three@0.166.1/examples/jsm/controls/OrbitControls.js");
-    const { STLLoader } = await import("https://unpkg.com/three@0.166.1/examples/jsm/loaders/STLLoader.js");
-    const { OBJLoader } = await import("https://unpkg.com/three@0.166.1/examples/jsm/loaders/OBJLoader.js");
-    state.threeModules = { THREE, OrbitControls, STLLoader, OBJLoader };
-    return state.threeModules;
+    const sources = [
+      {
+        three: "https://esm.sh/three@0.166.1",
+        orbit: "https://esm.sh/three@0.166.1/examples/jsm/controls/OrbitControls.js",
+        stl: "https://esm.sh/three@0.166.1/examples/jsm/loaders/STLLoader.js",
+        obj: "https://esm.sh/three@0.166.1/examples/jsm/loaders/OBJLoader.js",
+      },
+      {
+        three: "https://cdn.jsdelivr.net/npm/three@0.166.1/+esm",
+        orbit: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/OrbitControls.js/+esm",
+        stl: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/STLLoader.js/+esm",
+        obj: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/OBJLoader.js/+esm",
+      },
+    ];
+
+    let lastErr = null;
+    for (const src of sources) {
+      try {
+        const THREE = await import(src.three);
+        const [{ OrbitControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
+          import(src.orbit),
+          import(src.stl),
+          import(src.obj),
+        ]);
+        state.threeModules = { THREE, OrbitControls, STLLoader, OBJLoader };
+        return state.threeModules;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+
+    const message = lastErr && lastErr.message ? lastErr.message : "Ukendt importfejl";
+    throw new Error(`Kunne ikke indlæse 3D biblioteker: ${message}`);
   }
 
   function cleanupThree() {
@@ -831,7 +1084,15 @@
     if (els.threePane) els.threePane.classList.remove("hidden");
     if (els.modelViewer) els.modelViewer.removeAttribute("src");
 
-    const modules = await ensureThreeModules();
+    let modules;
+    try {
+      modules = await ensureThreeModules();
+    } catch (err) {
+      if (els.modelHint) {
+        els.modelHint.textContent = `Kunne ikke indlæse 3D viewer: ${err.message || err}`;
+      }
+      return;
+    }
     const { THREE, OrbitControls, STLLoader, OBJLoader } = modules;
 
     cleanupThree();
@@ -934,23 +1195,31 @@
   }
 
   async function onFileGridClick(event) {
-    const saveBtn = event.target.closest("[data-action='save-meta']");
-    if (saveBtn) {
-      const id = Number(saveBtn.dataset.fileId || 0);
-      const noteInput = document.querySelector(`.note-input[data-file-id='${id}']`);
-      const qtyInput = document.querySelector(`.qty-input[data-file-id='${id}']`);
-      const note = (noteInput && noteInput.value) || "";
-      const quantity = Math.max(1, Number((qtyInput && qtyInput.value) || 1) || 1);
-      await api(`/api/files/${id}/metadata`, { method: "PATCH", body: { note, quantity } });
-      showStatus(els.uploadStatus, "Fil-information gemt.", "ok");
+    if (state.selectMode) {
+      const card = event.target.closest("[data-file-id]");
+      if (card) {
+        const id = Number(card.dataset.fileId || 0);
+        if (id) {
+          toggleFileSelection(id);
+          renderFiles();
+        }
+      }
+      return;
+    }
+
+    const infoBtn = event.target.closest("[data-action='open-info']");
+    if (infoBtn) {
+      const id = Number(infoBtn.dataset.fileId || 0);
+      if (id) openFileInfoDrawer(id);
       return;
     }
 
     const modelBtn = event.target.closest("[data-action='open-3d']");
     if (modelBtn) {
       const id = Number(modelBtn.dataset.fileId || 0);
-      const file = state.files.find((f) => Number(f.id || 0) === id);
+      const file = fileById(id);
       if (file) {
+        showStatus(els.uploadStatus, "");
         await open3DModal(file);
       }
     }
@@ -967,12 +1236,19 @@
     const cmd = String(action || "").trim().toLowerCase();
     if (!cmd) return;
 
+    if (cmd === "select") {
+      toggleSelectMode();
+      return;
+    }
+
     if (cmd === "upload") {
+      if (state.selectMode) return;
       if (els.fileInput) els.fileInput.click();
       return;
     }
 
     if (cmd === "create-folder") {
+      if (state.selectMode) return;
       const name = window.prompt("Nyt mappenavn:");
       if (!name) return;
       await createFolder(name);
@@ -980,22 +1256,27 @@
     }
 
     if (cmd === "share") {
+      if (!state.selectMode || !state.selectedFolderPaths.size) return;
       if (state.role !== "admin") {
         showStatus(els.uploadStatus, "Kun admin kan oprette delinger.", "error");
         return;
       }
+      const selectedPaths = Array.from(state.selectedFolderPaths);
       setTab("settings");
       setSettingsTab("shares");
       await loadShares();
-      return;
-    }
-
-    if (cmd === "select") {
-      showStatus(els.uploadStatus, "Vælg-tilstand kommer snart.", "ok");
+      if (els.shareFoldersSelect) {
+        const wanted = new Set(selectedPaths);
+        Array.from(els.shareFoldersSelect.options || []).forEach((opt) => {
+          opt.selected = wanted.has(String(opt.value || ""));
+        });
+      }
+      toggleSelectMode(false);
       return;
     }
 
     if (cmd === "rename-folder") {
+      if (!state.selectMode || state.selectedFolderPaths.size !== 1) return;
       showStatus(els.uploadStatus, "Omdøb mappe er ikke aktiveret endnu.", "error");
     }
   }
@@ -1042,14 +1323,25 @@
       els.folderList.addEventListener("click", async (event) => {
         const btn = event.target.closest("[data-folder]");
         if (!btn || !els.folderSelect) return;
+        if (state.selectMode) {
+          toggleFolderSelection(btn.dataset.folder || "");
+          renderFolderBrowser();
+          updateSelectModeUi();
+          return;
+        }
         els.folderSelect.value = btn.dataset.folder || "";
         state.currentFolder = els.folderSelect.value;
         await loadFiles();
       });
     }
 
+    if (els.mapperSelectExitBtn) {
+      els.mapperSelectExitBtn.addEventListener("click", () => toggleSelectMode(false));
+    }
+
     if (els.folderUpBtn) {
       els.folderUpBtn.addEventListener("click", async () => {
+        if (state.selectMode) return;
         const current = currentFolder();
         const parent = parentFolder(current);
         if (!parent) return;
@@ -1062,6 +1354,7 @@
 
     if (els.mapperSearchBtn) {
       els.mapperSearchBtn.addEventListener("click", async () => {
+        if (state.selectMode) return;
         const query = String(window.prompt("Søg efter mappe (navn eller sti):") || "").trim().toLowerCase();
         if (!query) return;
         const hit = state.folders.find((f) => String(f.path || "").toLowerCase().includes(query));
@@ -1129,6 +1422,7 @@
     if (els.mapperDropZone) {
       const dropZone = els.mapperDropZone;
       dropZone.addEventListener("click", () => {
+        if (state.selectMode) return;
         if (els.fileInput) els.fileInput.click();
       });
       dropZone.addEventListener("dragenter", (event) => {
@@ -1143,6 +1437,7 @@
         dropZone.classList.remove("dragover");
       });
       dropZone.addEventListener("drop", (event) => {
+        if (state.selectMode) return;
         event.preventDefault();
         dropZone.classList.remove("dragover");
         const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
@@ -1165,6 +1460,36 @@
         });
       });
     }
+
+    if (els.closeFileInfoBtn) {
+      els.closeFileInfoBtn.addEventListener("click", closeFileInfoDrawer);
+    }
+    if (els.fileInfoBackdrop) {
+      els.fileInfoBackdrop.addEventListener("click", closeFileInfoDrawer);
+    }
+    if (els.fileInfoSaveBtn) {
+      els.fileInfoSaveBtn.addEventListener("click", () => {
+        saveCurrentFileInfo().catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke gemme fil-info", "error");
+        });
+      });
+    }
+    if (els.fileInfoOpen3DBtn) {
+      els.fileInfoOpen3DBtn.addEventListener("click", () => {
+        const id = Number((els.fileInfoOpen3DBtn && els.fileInfoOpen3DBtn.dataset.fileId) || state.currentInfoFileId || 0);
+        const file = fileById(id);
+        if (!file) return;
+        showStatus(els.uploadStatus, "");
+        open3DModal(file).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke åbne 3D", "error");
+        });
+      });
+    }
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && state.currentInfoFileId) {
+        closeFileInfoDrawer();
+      }
+    });
 
     if (els.metadataCancelBtn) {
       els.metadataCancelBtn.addEventListener("click", closeMetadataModal);
@@ -1260,6 +1585,7 @@
 
   async function init() {
     applyRoleVisibility();
+    updateSelectModeUi();
     bindEvents();
     await loadFolders();
     await loadFiles();
