@@ -23,16 +23,17 @@ RUN set -eux; \
     if [ -z "$appimage_url" ]; then \
         arch="$(dpkg --print-architecture)"; \
         release_json="$(curl -fsSL "${BAMBUSTUDIO_RELEASES_API}")"; \
-        asset_urls="$(printf '%s' "$release_json" | grep -oE 'https://[^\"]+\.AppImage' || true)"; \
+        asset_urls="$(printf '%s' "$release_json" | grep -oE 'https://[^\"]+\.AppImage' | tr -d '\r' || true)"; \
         if [ "$arch" = "amd64" ]; then \
-            appimage_url="$(printf '%s\\n' "$asset_urls" | grep -Ei '(amd64|x86_64|linux_ubuntu)' | head -n1 || true)"; \
+            appimage_url="$(printf '%s\n' "$asset_urls" | grep -Ei '(amd64|x86_64|linux_ubuntu|linux_fedora)' | head -n1 || true)"; \
         elif [ "$arch" = "arm64" ]; then \
-            appimage_url="$(printf '%s\\n' "$asset_urls" | grep -Ei '(arm64|aarch64)' | head -n1 || true)"; \
+            appimage_url="$(printf '%s\n' "$asset_urls" | grep -Ei '(arm64|aarch64)' | head -n1 || true)"; \
         fi; \
         if [ -z "$appimage_url" ]; then \
-            appimage_url="$(printf '%s\\n' "$asset_urls" | head -n1 || true)"; \
+            appimage_url="$(printf '%s\n' "$asset_urls" | head -n1 || true)"; \
         fi; \
     fi; \
+    appimage_url="$(printf '%s' "$appimage_url" | tr -d '\r\n')"; \
     if [ -z "$appimage_url" ]; then \
         echo "Kunne ikke finde BambuStudio AppImage URL. Sæt BAMBUSTUDIO_APPIMAGE_URL som build-arg." >&2; \
         exit 1; \
