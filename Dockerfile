@@ -26,6 +26,7 @@ RUN set -eux; \
         libgbm1 \
         libglib2.0-0 \
         libglu1-mesa \
+        libgtk-3-0 \
         libpangoft2-1.0-0 \
         libgl1 \
         libharfbuzz0b \
@@ -89,7 +90,7 @@ RUN set -eux; \
     cd /opt/bambu-studio; \
     ./BambuStudio.AppImage --appimage-extract >/dev/null; \
     mv squashfs-root appdir; \
-    missing_libs="$(find /opt/bambu-studio/appdir -type f -exec sh -c 'for f do ldd "$f" 2>/dev/null | awk "{if (\$2 == \"not\" && \$3 == \"found\") print \$1}"; done' sh {} + | sort -u)"; \
+    missing_libs="$(find /opt/bambu-studio/appdir -type f -exec sh -c 'for f do ldd "$f" 2>/dev/null | awk "/not found/{print \$1}"; done' sh {} + | sort -u)"; \
     if [ -n "$missing_libs" ]; then \
         echo "BambuStudio mangler delte biblioteker:" >&2; \
         echo "$missing_libs" >&2; \
