@@ -1,6 +1,8 @@
 ﻿(function () {
   "use strict";
 
+  document.body.classList.add("app-mode");
+
   const boot = document.getElementById("bootstrap");
   const state = {
     username: (boot && boot.dataset.username) || "",
