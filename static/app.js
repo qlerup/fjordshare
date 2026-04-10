@@ -14,6 +14,7 @@
     shares: [],
     users: [],
     pendingMetadata: [],
+    metadataIndex: 0,
     threeModules: null,
     three: null,
     thumbPollTimer: null,
@@ -100,8 +101,18 @@
     fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
     fileInfoOpen3DBtn: document.getElementById("fileInfoOpen3DBtn"),
     metadataModal: document.getElementById("metadataModal"),
-    metadataTableBody: document.getElementById("metadataTableBody"),
+    metadataStepCounter: document.getElementById("metadataStepCounter"),
+    metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
+    metadataNoteInput: document.getElementById("metadataNoteInput"),
+    metadataQtyInput: document.getElementById("metadataQtyInput"),
+    metadataAttachUploadBtn: document.getElementById("metadataAttachUploadBtn"),
+    metadataAttachInput: document.getElementById("metadataAttachInput"),
+    metadataAttachDropZone: document.getElementById("metadataAttachDropZone"),
+    metadataAttachStatus: document.getElementById("metadataAttachStatus"),
+    metadataAttachList: document.getElementById("metadataAttachList"),
     metadataCancelBtn: document.getElementById("metadataCancelBtn"),
+    metadataPrevBtn: document.getElementById("metadataPrevBtn"),
+    metadataNextBtn: document.getElementById("metadataNextBtn"),
     metadataSaveBtn: document.getElementById("metadataSaveBtn"),
     modelModal: document.getElementById("modelModal"),
     modelTitle: document.getElementById("modelTitle"),
@@ -1208,25 +1219,162 @@
     return resolved;
   }
 
+  function getMetadataCurrentItem() {
+    if (!Array.isArray(state.pendingMetadata) || !state.pendingMetadata.length) return null;
+    const lastIndex = state.pendingMetadata.length - 1;
+    const idx = Math.max(0, Math.min(lastIndex, Number(state.metadataIndex || 0)));
+    state.metadataIndex = idx;
+    return state.pendingMetadata[idx] || null;
+  }
+
+  function persistMetadataStepInputs() {
+    const item = getMetadataCurrentItem();
+    if (!item) return;
+    if (els.metadataNoteInput) {
+      item.note = String(els.metadataNoteInput.value || "");
+    }
+    if (els.metadataQtyInput) {
+      item.quantity = Math.max(1, Number(els.metadataQtyInput.value || 1) || 1);
+    }
+  }
+
+  function renderMetadataAttachments(items) {
+    if (!els.metadataAttachList) return;
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      els.metadataAttachList.innerHTML = `<div class="file-info-attach-empty">Ingen billeder tilknyttet denne fil endnu.</div>`;
+      return;
+    }
+    els.metadataAttachList.innerHTML = `
+      <div class="file-info-attach-grid">
+        ${list
+          .map((item) => {
+            const contentUrl = String(item.content_url || "#");
+            const name = String(item.original_name || "Billede");
+            return `
+              <a class="file-info-attach-card" href="${esc(contentUrl)}" target="_blank" rel="noopener">
+                <img src="${esc(contentUrl)}" alt="${esc(name)}" loading="lazy">
+                <div class="file-info-attach-meta">
+                  <div class="file-info-attach-name" title="${esc(name)}">${esc(name)}</div>
+                  <div class="file-info-attach-sub">${formatSize(item.file_size)} · ${formatDate(item.uploaded_at)}</div>
+                </div>
+              </a>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  async function loadMetadataAttachments(fileId) {
+    const id = Number(fileId || 0);
+    if (!id) return;
+    const data = await api(`/api/files/${id}/attachments`);
+    const current = getMetadataCurrentItem();
+    if (!current || Number(current.id || 0) !== id) return;
+    current.attachments = Array.isArray(data.items) ? data.items : [];
+    renderMetadataAttachments(current.attachments);
+  }
+
+  async function uploadMetadataAttachments(fileId, files) {
+    const id = Number(fileId || 0);
+    const uploadFiles = Array.from(files || []).filter(Boolean);
+    if (!id || !uploadFiles.length) return;
+
+    const form = new FormData();
+    uploadFiles.forEach((file) => form.append("images", file));
+    showStatus(els.metadataAttachStatus, `Uploader ${uploadFiles.length} billede(r)...`, "ok");
+    const data = await api(`/api/files/${id}/attachments`, { method: "POST", body: form });
+    const created = Number(data.created || 0);
+    const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+    let message = `${created} billede(r) uploadet.`;
+    if (skippedCount > 0) {
+      message += ` ${skippedCount} blev sprunget over.`;
+    }
+    showStatus(els.metadataAttachStatus, message, "ok");
+    await loadMetadataAttachments(id);
+  }
+
+  function renderMetadataStep() {
+    const item = getMetadataCurrentItem();
+    if (!item) {
+      closeMetadataModal();
+      return;
+    }
+
+    const total = state.pendingMetadata.length;
+    const current = Number(state.metadataIndex || 0) + 1;
+    if (els.metadataStepCounter) {
+      els.metadataStepCounter.textContent = `${current}/${total}`;
+    }
+    if (els.metadataCurrentFileName) {
+      els.metadataCurrentFileName.textContent = String(item.filename || `Fil ${current}`);
+    }
+    if (els.metadataNoteInput) {
+      els.metadataNoteInput.value = String(item.note || "");
+    }
+    if (els.metadataQtyInput) {
+      els.metadataQtyInput.value = String(Math.max(1, Number(item.quantity || 1) || 1));
+    }
+
+    if (els.metadataPrevBtn) {
+      const show = total > 1;
+      els.metadataPrevBtn.classList.toggle("hidden", !show);
+      els.metadataPrevBtn.disabled = current <= 1;
+    }
+    if (els.metadataNextBtn) {
+      const show = total > 1;
+      els.metadataNextBtn.classList.toggle("hidden", !show);
+      els.metadataNextBtn.disabled = current >= total;
+    }
+
+    renderMetadataAttachments(item.attachments || []);
+    showStatus(els.metadataAttachStatus, "");
+    loadMetadataAttachments(Number(item.id || 0)).catch((err) => {
+      showStatus(els.metadataAttachStatus, err.message || "Kunne ikke hente billeder", "error");
+    });
+  }
+
+  function moveMetadataStep(offset) {
+    if (!Array.isArray(state.pendingMetadata) || !state.pendingMetadata.length) return;
+    persistMetadataStepInputs();
+    const total = state.pendingMetadata.length;
+    const next = Math.max(0, Math.min(total - 1, Number(state.metadataIndex || 0) + Number(offset || 0)));
+    if (next === Number(state.metadataIndex || 0)) return;
+    state.metadataIndex = next;
+    renderMetadataStep();
+  }
+
   function openMetadataModal(files) {
-    state.pendingMetadata = Array.isArray(files) ? files : [];
-    if (!state.pendingMetadata.length || !els.metadataModal || !els.metadataTableBody) return;
-    els.metadataTableBody.innerHTML = state.pendingMetadata
-      .map((file, idx) => {
-        return `
-          <tr>
-            <td>${esc(file.filename)}</td>
-            <td><input class="input metadata-note" data-index="${idx}" type="text" value="${esc(file.note || "")}"></td>
-            <td><input class="input metadata-qty" data-index="${idx}" type="number" min="1" value="${Number(file.quantity || 1)}"></td>
-          </tr>
-        `;
+    const list = Array.isArray(files) ? files : [];
+    state.pendingMetadata = list
+      .map((file) => {
+        const id = Number(file && file.id ? file.id : 0);
+        if (!id) return null;
+        return {
+          ...file,
+          id,
+          note: String((file && file.note) || ""),
+          quantity: Math.max(1, Number((file && file.quantity) || 1) || 1),
+          attachments: [],
+        };
       })
-      .join("");
+      .filter(Boolean);
+    state.metadataIndex = 0;
+
+    if (!state.pendingMetadata.length || !els.metadataModal) return;
+    if (els.metadataAttachInput) els.metadataAttachInput.value = "";
+    showStatus(els.metadataAttachStatus, "");
     els.metadataModal.classList.remove("hidden");
+    renderMetadataStep();
   }
 
   function closeMetadataModal() {
     state.pendingMetadata = [];
+    state.metadataIndex = 0;
+    if (els.metadataAttachInput) els.metadataAttachInput.value = "";
+    showStatus(els.metadataAttachStatus, "");
+    renderMetadataAttachments([]);
     if (els.metadataModal) els.metadataModal.classList.add("hidden");
   }
 
@@ -1235,15 +1383,13 @@
       closeMetadataModal();
       return;
     }
-    const notes = Array.from(document.querySelectorAll(".metadata-note"));
-    const qtys = Array.from(document.querySelectorAll(".metadata-qty"));
-    const items = state.pendingMetadata.map((file, idx) => {
-      const noteInput = notes.find((n) => Number(n.dataset.index) === idx);
-      const qtyInput = qtys.find((q) => Number(q.dataset.index) === idx);
+
+    persistMetadataStepInputs();
+    const items = state.pendingMetadata.map((file) => {
       return {
         file_id: Number(file.id),
-        note: (noteInput && noteInput.value) || "",
-        quantity: Math.max(1, Number((qtyInput && qtyInput.value) || 1) || 1),
+        note: String(file.note || ""),
+        quantity: Math.max(1, Number(file.quantity || 1) || 1),
       };
     });
     await api("/api/files/metadata-batch", { method: "POST", body: { items } });
@@ -2148,8 +2294,14 @@
         dropZone.classList.remove("dragover");
       });
       dropZone.addEventListener("drop", (event) => {
-        if (state.selectMode) return;
+        if (state.selectMode) {
+          globalDropDepth = 0;
+          hideGlobalDropOverlay();
+          return;
+        }
         event.preventDefault();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
         dropZone.classList.remove("dragover");
         uploadDroppedDataTransfer(event.dataTransfer, currentFolder() || state.homeFolder).catch((err) => {
           showStatus(els.uploadStatus, err.message || "Upload via dropzone fejlede", "error");
@@ -2220,12 +2372,13 @@
         return;
       }
 
+      // Close overlay immediately when files are dropped; keep upload running in background UI.
+      hideGlobalDropOverlay();
+
       try {
         await uploadDroppedDataTransfer(event.dataTransfer, currentFolder() || state.homeFolder);
       } catch (err) {
         showStatus(els.uploadStatus, err.message || "Upload via drag og drop fejlede", "error");
-      } finally {
-        hideGlobalDropOverlay();
       }
     });
 
