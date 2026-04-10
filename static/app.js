@@ -1993,8 +1993,11 @@
     if (t.onKeyDown) window.removeEventListener("keydown", t.onKeyDown);
     if (t.onKeyUp) window.removeEventListener("keyup", t.onKeyUp);
     if (t.onBlur) window.removeEventListener("blur", t.onBlur);
+    if (t.onMouseDown && t.canvas) t.canvas.removeEventListener("mousedown", t.onMouseDown);
+    if (t.onMouseMove) window.removeEventListener("mousemove", t.onMouseMove);
     if (t.onMouseUp) window.removeEventListener("mouseup", t.onMouseUp);
     if (t.onMouseLeave && t.canvas) t.canvas.removeEventListener("mouseleave", t.onMouseLeave);
+    if (t.onContextMenu && t.canvas) t.canvas.removeEventListener("contextmenu", t.onContextMenu);
     state.three = null;
   }
 
@@ -2079,7 +2082,7 @@
       setModelHintMessage(`Kunne ikke indlæse 3D viewer: ${err.message || err}`);
       return;
     }
-    const { THREE, OrbitControls, FlyControls, STLLoader, OBJLoader } = modules;
+    const { THREE, OrbitControls, STLLoader, OBJLoader } = modules;
 
     cleanupThree();
 
@@ -2104,8 +2107,11 @@
     let onFlyKeyDown = null;
     let onFlyKeyUp = null;
     let onFlyBlur = null;
+    let onFlyMouseDown = null;
+    let onFlyMouseMove = null;
     let onFlyMouseUp = null;
     let onFlyMouseLeave = null;
+    let onFlyContextMenu = null;
     let baseMoveSpeed = 120;
 
     const isTouchPrimary = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
@@ -2129,131 +2135,210 @@
     } else {
       canvas.tabIndex = 0;
       canvas.style.outline = "none";
-      controls = new FlyControls(camera, canvas);
-      controls.dragToLook = true;
-      controls.autoForward = false;
-      controls.rollSpeed = Math.PI / 8;
-      controls.movementSpeed = baseMoveSpeed;
-
-      const clearLookDrift = () => {
-        if (!controls || !controls.moveState) return;
-        controls.moveState.pitchUp = 0;
-        controls.moveState.pitchDown = 0;
-        controls.moveState.yawLeft = 0;
-        controls.moveState.yawRight = 0;
-        if (typeof controls.updateRotationVector === "function") controls.updateRotationVector();
+      const flyState = {
+        dragging: false,
+        lastX: 0,
+        lastY: 0,
+        yaw: 0,
+        pitch: 0,
+        speedBoost: 1,
+        keys: {
+          forward: false,
+          back: false,
+          left: false,
+          right: false,
+          up: false,
+          down: false,
+        },
       };
 
-      const syncMovementVector = () => {
-        if (typeof controls.updateMovementVector === "function") controls.updateMovementVector();
+      controls = {
+        dispose() {},
       };
 
-      let speedBoost = 1;
+      const euler = new THREE.Euler(0, 0, 0, "YXZ");
+      const forwardVec = new THREE.Vector3();
+      const rightVec = new THREE.Vector3();
+      const worldUp = new THREE.Vector3(0, 1, 0);
+
+      const syncYawPitchFromCamera = () => {
+        euler.setFromQuaternion(camera.quaternion, "YXZ");
+        flyState.yaw = euler.y;
+        flyState.pitch = euler.x;
+      };
+
+      const applyYawPitch = () => {
+        const maxPitch = (Math.PI / 2) - 0.01;
+        flyState.pitch = Math.max(-maxPitch, Math.min(maxPitch, flyState.pitch));
+        euler.set(flyState.pitch, flyState.yaw, 0, "YXZ");
+        camera.quaternion.setFromEuler(euler);
+      };
+
+      const movementFromKeys = () => {
+        const dir = new THREE.Vector3(
+          (flyState.keys.right ? 1 : 0) - (flyState.keys.left ? 1 : 0),
+          (flyState.keys.up ? 1 : 0) - (flyState.keys.down ? 1 : 0),
+          (flyState.keys.forward ? 1 : 0) - (flyState.keys.back ? 1 : 0)
+        );
+        if (dir.lengthSq() > 1) dir.normalize();
+        return dir;
+      };
+
+      syncYawPitchFromCamera();
+
       onFlyKeyDown = (event) => {
         if (!event) return;
         const key = String(event.key || "");
         if (key === "Shift") {
-          speedBoost = 2.7;
+          flyState.speedBoost = 2.7;
           return;
         }
-        if (key === "ArrowUp") {
-          controls.moveState.forward = 1;
-          clearLookDrift();
-          syncMovementVector();
+        if (key === "w" || key === "W" || key === "ArrowUp") {
+          flyState.keys.forward = true;
           event.preventDefault();
           return;
         }
-        if (key === "ArrowDown") {
-          controls.moveState.back = 1;
-          clearLookDrift();
-          syncMovementVector();
+        if (key === "s" || key === "S" || key === "ArrowDown") {
+          flyState.keys.back = true;
           event.preventDefault();
           return;
         }
-        if (key === "ArrowLeft") {
-          controls.moveState.left = 1;
-          clearLookDrift();
-          syncMovementVector();
+        if (key === "a" || key === "A" || key === "ArrowLeft") {
+          flyState.keys.left = true;
           event.preventDefault();
           return;
         }
-        if (key === "ArrowRight") {
-          controls.moveState.right = 1;
-          clearLookDrift();
-          syncMovementVector();
+        if (key === "d" || key === "D" || key === "ArrowRight") {
+          flyState.keys.right = true;
+          event.preventDefault();
+          return;
+        }
+        if (key === "r" || key === "R") {
+          flyState.keys.up = true;
+          event.preventDefault();
+          return;
+        }
+        if (key === "f" || key === "F") {
+          flyState.keys.down = true;
           event.preventDefault();
         }
       };
+
       onFlyKeyUp = (event) => {
         if (!event) return;
         const key = String(event.key || "");
         if (key === "Shift") {
-          speedBoost = 1;
+          flyState.speedBoost = 1;
           return;
         }
-        if (key === "ArrowUp") {
-          controls.moveState.forward = 0;
-          clearLookDrift();
-          syncMovementVector();
+        if (key === "w" || key === "W" || key === "ArrowUp") {
+          flyState.keys.forward = false;
           event.preventDefault();
           return;
         }
-        if (key === "ArrowDown") {
-          controls.moveState.back = 0;
-          clearLookDrift();
-          syncMovementVector();
+        if (key === "s" || key === "S" || key === "ArrowDown") {
+          flyState.keys.back = false;
           event.preventDefault();
           return;
         }
-        if (key === "ArrowLeft") {
-          controls.moveState.left = 0;
-          clearLookDrift();
-          syncMovementVector();
+        if (key === "a" || key === "A" || key === "ArrowLeft") {
+          flyState.keys.left = false;
           event.preventDefault();
           return;
         }
-        if (key === "ArrowRight") {
-          controls.moveState.right = 0;
-          clearLookDrift();
-          syncMovementVector();
+        if (key === "d" || key === "D" || key === "ArrowRight") {
+          flyState.keys.right = false;
+          event.preventDefault();
+          return;
+        }
+        if (key === "r" || key === "R") {
+          flyState.keys.up = false;
+          event.preventDefault();
+          return;
+        }
+        if (key === "f" || key === "F") {
+          flyState.keys.down = false;
           event.preventDefault();
         }
       };
+
+      onFlyMouseDown = (event) => {
+        if (!event || event.button !== 0) return;
+        flyState.dragging = true;
+        flyState.lastX = Number(event.clientX || 0);
+        flyState.lastY = Number(event.clientY || 0);
+        canvas.focus({ preventScroll: true });
+        event.preventDefault();
+      };
+
+      onFlyMouseMove = (event) => {
+        if (!event || !flyState.dragging) return;
+        const currentX = Number(event.clientX || 0);
+        const currentY = Number(event.clientY || 0);
+        const dx = currentX - flyState.lastX;
+        const dy = currentY - flyState.lastY;
+        flyState.lastX = currentX;
+        flyState.lastY = currentY;
+
+        const lookSensitivity = 0.0024;
+        flyState.yaw -= dx * lookSensitivity;
+        flyState.pitch -= dy * lookSensitivity;
+        applyYawPitch();
+      };
+
       onFlyBlur = () => {
-        speedBoost = 1;
-        if (!controls || !controls.moveState) return;
-        controls.moveState.forward = 0;
-        controls.moveState.back = 0;
-        controls.moveState.left = 0;
-        controls.moveState.right = 0;
-        controls.moveState.up = 0;
-        controls.moveState.down = 0;
-        clearLookDrift();
-        syncMovementVector();
+        flyState.speedBoost = 1;
+        flyState.dragging = false;
+        flyState.keys.forward = false;
+        flyState.keys.back = false;
+        flyState.keys.left = false;
+        flyState.keys.right = false;
+        flyState.keys.up = false;
+        flyState.keys.down = false;
       };
+
       onFlyMouseUp = () => {
-        clearLookDrift();
+        flyState.dragging = false;
       };
+
       onFlyMouseLeave = () => {
-        clearLookDrift();
+        flyState.dragging = false;
       };
+
+      onFlyContextMenu = (event) => {
+        if (event) event.preventDefault();
+      };
+
       window.addEventListener("keydown", onFlyKeyDown);
       window.addEventListener("keyup", onFlyKeyUp);
       window.addEventListener("blur", onFlyBlur);
+      canvas.addEventListener("mousedown", onFlyMouseDown);
+      window.addEventListener("mousemove", onFlyMouseMove);
       window.addEventListener("mouseup", onFlyMouseUp);
       canvas.addEventListener("mouseleave", onFlyMouseLeave);
+      canvas.addEventListener("contextmenu", onFlyContextMenu);
 
       const clock = new THREE.Clock();
       updateControls = () => {
-        controls.movementSpeed = baseMoveSpeed * speedBoost;
-        controls.update(clock.getDelta());
-        clearLookDrift();
+        const delta = clock.getDelta();
+        const dir = movementFromKeys();
+        if (dir.lengthSq() <= 0) return;
+
+        const speed = baseMoveSpeed * flyState.speedBoost;
+        const step = speed * delta;
+        camera.getWorldDirection(forwardVec);
+        forwardVec.normalize();
+        rightVec.crossVectors(forwardVec, worldUp).normalize();
+
+        if (dir.z !== 0) camera.position.addScaledVector(forwardVec, dir.z * step);
+        if (dir.x !== 0) camera.position.addScaledVector(rightVec, dir.x * step);
+        if (dir.y !== 0) camera.position.y += dir.y * step;
       };
+
       applyControlTarget = (center, radius) => {
         camera.lookAt(center);
+        syncYawPitchFromCamera();
         baseMoveSpeed = Math.max(radius * 1.65, 40);
-        controls.movementSpeed = baseMoveSpeed;
-        clearLookDrift();
       };
       controlsHintText = modelControlsText("fly");
     }
@@ -2821,8 +2906,11 @@
       onKeyDown: onFlyKeyDown,
       onKeyUp: onFlyKeyUp,
       onBlur: onFlyBlur,
+      onMouseDown: onFlyMouseDown,
+      onMouseMove: onFlyMouseMove,
       onMouseUp: onFlyMouseUp,
       onMouseLeave: onFlyMouseLeave,
+      onContextMenu: onFlyContextMenu,
       canvas,
     };
     animate();
