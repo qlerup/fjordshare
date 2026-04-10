@@ -167,6 +167,10 @@ input[type="checkbox"] {
   background: rgba(255, 107, 107, 0.08);
 }
 
+#uploadStatus.ok {
+  display: none !important;
+}
+
 .app-shell {
   min-height: 100vh;
   min-height: 100dvh;

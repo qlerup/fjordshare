@@ -2099,6 +2099,20 @@
         showStatus(els.uploadStatus, "");
         await open3DModal(file);
       }
+      return;
+    }
+
+    const fileCard = event.target.closest("[data-file-id]");
+    if (fileCard) {
+      const id = Number(fileCard.dataset.fileId || 0);
+      const file = fileById(id);
+      if (!file) return;
+      if (file.is_3d) {
+        showStatus(els.uploadStatus, "");
+        await open3DModal(file);
+        return;
+      }
+      openFileInfoDrawer(id);
     }
   }
 
