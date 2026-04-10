@@ -792,9 +792,11 @@
     const folder = currentFolder() || state.homeFolder || "";
     const children = listDirectChildren(folder);
     if (!children.length) {
-      els.folderList.innerHTML = `<div class="panel"><p class="hint">Ingen undermapper i denne mappe endnu.</p></div>`;
+      els.folderList.innerHTML = "";
+      els.folderList.classList.add("hidden");
       return;
     }
+    els.folderList.classList.remove("hidden");
     els.folderList.innerHTML = children
       .map((child) => {
         const perm = child.permission ? ` · ${esc(child.permission)}` : "";
