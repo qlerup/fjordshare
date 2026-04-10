@@ -1986,8 +1986,12 @@
     const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 5000);
     camera.position.set(2, 2, 2);
 
+    canvas.style.touchAction = "none";
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = true;
+    controls.enablePan = false;
+    controls.touches.ONE = THREE.TOUCH.ROTATE;
+    controls.touches.TWO = THREE.TOUCH.DOLLY_ROTATE;
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x223344, 0.9);
     scene.add(hemi);
@@ -2064,7 +2068,7 @@
     state.three = { renderer, scene, camera, controls, frameId: 0, onResize };
     animate();
 
-    if (els.modelHint) els.modelHint.textContent = "Roter med musen og zoom med scroll.";
+    if (els.modelHint) els.modelHint.textContent = "Desktop: træk for at rotere, scroll for zoom. Mobil: 1 finger roter, 2 fingre zoom/roter.";
   }
 
   function close3DModal() {
