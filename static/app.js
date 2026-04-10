@@ -25,6 +25,10 @@
     selectMode: false,
     selectedFolderPaths: new Set(),
     selectedFileIds: new Set(),
+    folderPreviewCache: Object.create(null),
+    folderPreviewLoading: new Set(),
+    folderPreviewRequestToken: 0,
+    modelModalCloseGuardUntil: 0,
   };
 
   const els = {
@@ -546,7 +550,7 @@
 
   function modelControlsText(mode = "orbit") {
     if (mode === "fly") {
-      return "Venstre træk: kig rundt. Højre træk: roter omkring objekt. W/A/S/D + piletaster + R/F bevæger. Shift = hurtigere.";
+      return "Venstre træk: kig rundt. Højre træk: roter omkring objekt. Scroll: zoom. W/A/S/D + piletaster + R/F bevæger. Shift = hurtigere.";
     }
     return "Mobil: 1 finger roter, 2 fingre zoom.";
   }
@@ -1027,16 +1031,103 @@
       .map((child) => {
         const perm = child.permission ? ` · ${esc(child.permission)}` : "";
         const isSelected = state.selectedFolderPaths.has(String(child.path || ""));
+        const previewHtml = folderTilePreviewHtml(child.path);
         return `
           <button class="folder-tile ${isSelected ? "selected" : ""}" type="button" data-folder="${esc(child.path)}">
             <span class="select-mark ${isSelected ? "selected" : ""}"></span>
-            <div class="folder-tile-preview">&#128193;</div>
+            <div class="folder-tile-preview">${previewHtml}</div>
             <div class="folder-tile-name">${esc(child.name)}</div>
             <div class="folder-tile-meta">${esc(child.path)}${perm}</div>
           </button>
         `;
       })
       .join("");
+
+    ensureFolderTilePreviews(folder, children).catch(() => {});
+  }
+
+  function filePreviewUrlForFolderTile(file) {
+    if (!file || typeof file !== "object") return "";
+    const thumb = String(file.thumb_url || "").trim();
+    if (thumb) return thumb;
+    const mime = String(file.mime_type || "").toLowerCase();
+    if (mime.startsWith("image/")) {
+      return String(file.content_url || "").trim();
+    }
+    return "";
+  }
+
+  function buildFolderPreviewEntry(files) {
+    const items = Array.isArray(files) ? files : [];
+    const seen = new Set();
+    const urls = [];
+    items.forEach((file) => {
+      const url = filePreviewUrlForFolderTile(file);
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      urls.push(url);
+    });
+    return {
+      urls: urls.slice(0, 4),
+      itemCount: items.length,
+      loadedAt: Date.now(),
+    };
+  }
+
+  function folderTilePreviewHtml(folderPath) {
+    const key = String(folderPath || "").trim();
+    const entry = key ? state.folderPreviewCache[key] : null;
+    const urls = Array.isArray(entry && entry.urls) ? entry.urls.filter(Boolean) : [];
+    if (!urls.length) {
+      const loadingClass = key && state.folderPreviewLoading.has(key) ? " loading" : "";
+      return `<div class="folder-tile-preview-empty${loadingClass}">&#128193;</div>`;
+    }
+
+    const variant = urls.length === 1 ? "v1" : (urls.length <= 3 ? "v2" : "v4");
+    const maxCells = variant === "v1" ? 1 : (variant === "v2" ? 2 : 4);
+    const cells = urls
+      .slice(0, maxCells)
+      .map((url) => `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">`)
+      .join("");
+
+    return `<div class="folder-tile-preview-mosaic"><div class="folder-tile-grid ${variant}">${cells}</div></div>`;
+  }
+
+  async function ensureFolderTilePreviews(parentFolder, children) {
+    const expectedParent = String(parentFolder || "");
+    const activeFolder = currentFolder() || state.homeFolder || "";
+    if (activeFolder !== expectedParent) return;
+
+    const targetPaths = (Array.isArray(children) ? children : [])
+      .map((child) => String(child && child.path ? child.path : "").trim())
+      .filter(Boolean);
+
+    const missing = targetPaths.filter((path) => {
+      const inCache = Object.prototype.hasOwnProperty.call(state.folderPreviewCache, path);
+      return !inCache && !state.folderPreviewLoading.has(path);
+    });
+    if (!missing.length) return;
+
+    const requestToken = ++state.folderPreviewRequestToken;
+    const jobs = missing.map(async (path) => {
+      state.folderPreviewLoading.add(path);
+      try {
+        const data = await api(`/api/files?folder=${encodeURIComponent(path)}`);
+        const files = Array.isArray(data.items) ? data.items : [];
+        state.folderPreviewCache[path] = buildFolderPreviewEntry(files);
+      } catch (_err) {
+        state.folderPreviewCache[path] = { urls: [], itemCount: 0, failed: true, loadedAt: Date.now() };
+      } finally {
+        state.folderPreviewLoading.delete(path);
+      }
+    });
+
+    await Promise.allSettled(jobs);
+
+    const stillSameFolder = (currentFolder() || state.homeFolder || "") === expectedParent;
+    if (stillSameFolder && requestToken === state.folderPreviewRequestToken) {
+      renderFolderBrowser();
+    }
   }
 
   async function loadFolders() {
@@ -1378,6 +1469,7 @@
     }
     const data = await api(`/api/files?folder=${encodeURIComponent(folder)}`);
     state.files = Array.isArray(data.items) ? data.items : [];
+    state.folderPreviewCache[String(folder || "")] = buildFolderPreviewEntry(state.files);
     renderFiles();
     renderFolderBrowser();
     updateFolderUiState();
@@ -2169,12 +2261,14 @@
     if (t.onMouseMove) window.removeEventListener("mousemove", t.onMouseMove);
     if (t.onMouseUp) window.removeEventListener("mouseup", t.onMouseUp);
     if (t.onMouseLeave && t.canvas) t.canvas.removeEventListener("mouseleave", t.onMouseLeave);
+    if (t.onWheel && t.canvas) t.canvas.removeEventListener("wheel", t.onWheel);
     if (t.onContextMenu && t.canvas) t.canvas.removeEventListener("contextmenu", t.onContextMenu);
     state.three = null;
   }
 
   async function open3DModal(file) {
     if (!file || !els.modelModal) return;
+    state.modelModalCloseGuardUntil = 0;
     if (els.modelTitle) els.modelTitle.textContent = `3D: ${file.filename || ""}`;
     setModelHintMessage("");
     updateModelInfoBar({
@@ -2285,6 +2379,7 @@
     let onFlyMouseMove = null;
     let onFlyMouseUp = null;
     let onFlyMouseLeave = null;
+    let onFlyWheel = null;
     let onFlyContextMenu = null;
     let baseMoveSpeed = 120;
     let orbitPickObjects = [];
@@ -2314,6 +2409,7 @@
       const flyState = {
         dragging: false,
         dragMode: "",
+        dragMoved: false,
         lastX: 0,
         lastY: 0,
         yaw: 0,
@@ -2475,6 +2571,7 @@
         if (button !== 0 && button !== 2) return;
         flyState.dragging = true;
         flyState.dragMode = button === 2 ? "orbit" : "look";
+        flyState.dragMoved = false;
         flyState.lastX = Number(event.clientX || 0);
         flyState.lastY = Number(event.clientY || 0);
         if (flyState.dragMode === "orbit") {
@@ -2490,6 +2587,9 @@
         const currentY = Number(event.clientY || 0);
         const dx = currentX - flyState.lastX;
         const dy = currentY - flyState.lastY;
+        if (Math.abs(dx) + Math.abs(dy) >= 2) {
+          flyState.dragMoved = true;
+        }
         flyState.lastX = currentX;
         flyState.lastY = currentY;
 
@@ -2526,13 +2626,60 @@
       };
 
       onFlyMouseUp = () => {
+        if (flyState.dragging && flyState.dragMoved) {
+          state.modelModalCloseGuardUntil = Date.now() + 280;
+        }
         flyState.dragging = false;
         flyState.dragMode = "";
+        flyState.dragMoved = false;
       };
 
       onFlyMouseLeave = () => {
         flyState.dragging = false;
         flyState.dragMode = "";
+        flyState.dragMoved = false;
+      };
+
+      onFlyWheel = (event) => {
+        if (!event) return;
+        const delta = Number(event.deltaY || 0);
+        if (!Number.isFinite(delta) || delta === 0) return;
+
+        event.preventDefault();
+
+        const wheelFactor = Math.max(0.35, Math.min(2.4, Math.abs(delta) / 100));
+        const direction = delta < 0 ? 1 : -1;
+
+        const orbitAnchor = flyState.dragMode === "orbit"
+          ? flyState.orbitTarget
+          : orbitFallbackTarget;
+        const distanceToAnchor = Math.max(0.001, camera.position.distanceTo(orbitAnchor));
+        const baseStep = Math.max(distanceToAnchor * 0.12, 1.0);
+        const signedStep = direction * baseStep * wheelFactor;
+
+        if (flyState.dragMode === "orbit") {
+          orbitOffset.copy(camera.position).sub(flyState.orbitTarget);
+          let currentDistance = orbitOffset.length();
+          if (!Number.isFinite(currentDistance) || currentDistance <= 0) {
+            currentDistance = distanceToAnchor;
+          }
+          const minDistance = Math.max((camera.near || 0.01) * 4, 0.04);
+          const maxDistance = Math.max(minDistance * 2, (camera.far || 100) * 0.45);
+          const nextDistance = Math.max(minDistance, Math.min(maxDistance, currentDistance - signedStep));
+          if (orbitOffset.lengthSq() < 1e-8) {
+            orbitOffset.set(0, 0, nextDistance);
+          } else {
+            orbitOffset.setLength(nextDistance);
+          }
+          camera.position.copy(flyState.orbitTarget).add(orbitOffset);
+          camera.lookAt(flyState.orbitTarget);
+          syncYawPitchFromCamera();
+          return;
+        }
+
+        camera.getWorldDirection(forwardVec);
+        forwardVec.normalize();
+        camera.position.addScaledVector(forwardVec, signedStep);
       };
 
       onFlyContextMenu = (event) => {
@@ -2546,6 +2693,7 @@
       window.addEventListener("mousemove", onFlyMouseMove);
       window.addEventListener("mouseup", onFlyMouseUp);
       canvas.addEventListener("mouseleave", onFlyMouseLeave);
+      canvas.addEventListener("wheel", onFlyWheel, { passive: false });
       canvas.addEventListener("contextmenu", onFlyContextMenu);
 
       const clock = new THREE.Clock();
@@ -3179,6 +3327,7 @@
       onMouseMove: onFlyMouseMove,
       onMouseUp: onFlyMouseUp,
       onMouseLeave: onFlyMouseLeave,
+      onWheel: onFlyWheel,
       onContextMenu: onFlyContextMenu,
       canvas,
     };
@@ -3220,6 +3369,7 @@
   }
 
   function close3DModal() {
+    state.modelModalCloseGuardUntil = 0;
     cleanupThree();
     if (els.modelViewer) els.modelViewer.removeAttribute("src");
     setModelHintMessage("");
@@ -3828,6 +3978,12 @@
     if (els.modelModal) {
       els.modelModal.addEventListener("click", (event) => {
         if (event.target === els.modelModal || event.target.classList.contains("modal-backdrop")) {
+          const guardUntil = Number(state.modelModalCloseGuardUntil || 0);
+          if (Date.now() < guardUntil) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           close3DModal();
         }
       });
