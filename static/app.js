@@ -17,6 +17,7 @@
     thumbPollTimer: null,
     currentSettingsTab: "shares",
     currentInfoFileId: 0,
+    currentFileAttachments: [],
     infoDrawerHideTimer: null,
     selectMode: false,
     selectedFolderPaths: new Set(),
@@ -46,11 +47,20 @@
     newFolderInput: document.getElementById("newFolderInput"),
     createFolderBtn: document.getElementById("createFolderBtn"),
     uploadStatus: document.getElementById("uploadStatus"),
+    uploadMonitor: document.getElementById("uploadMonitor"),
+    uploadMonitorToggle: document.getElementById("uploadMonitorToggle"),
+    uploadMonitorStop: document.getElementById("uploadMonitorStop"),
+    uploadMonitorBar: document.getElementById("uploadMonitorBar"),
+    uploadMonitorSummary: document.getElementById("uploadMonitorSummary"),
+    uploadMonitorCurrent: document.getElementById("uploadMonitorCurrent"),
+    uploadMonitorList: document.getElementById("uploadMonitorList"),
     folderList: document.getElementById("folderList"),
     fileGrid: document.getElementById("fileGrid"),
-    currentFolderLabel: document.getElementById("currentFolderLabel"),
     folderUpBtn: document.getElementById("folderUpBtn"),
     mapperDropZone: document.getElementById("mapperDropZone"),
+    thumbTopStatus: document.getElementById("thumbTopStatus"),
+    thumbTopStatusLabel: document.getElementById("thumbTopStatusLabel"),
+    thumbTopStatusBar: document.getElementById("thumbTopStatusBar"),
     mapperSearchBtn: document.getElementById("mapperSearchBtn"),
     mapperMenuBtn: document.getElementById("mapperMenuBtn"),
     mapperMenu: document.getElementById("mapperMenu"),
@@ -61,6 +71,7 @@
     mapperMenuCreateFolder: document.getElementById("mapperMenuCreateFolder"),
     mapperMenuRenameFolder: document.getElementById("mapperMenuRenameFolder"),
     mapperSelectSummary: document.getElementById("mapperSelectSummary"),
+    mapperSelectDeleteBtn: document.getElementById("mapperSelectDeleteBtn"),
     mapperSelectExitBtn: document.getElementById("mapperSelectExitBtn"),
     fileInfoBackdrop: document.getElementById("fileInfoBackdrop"),
     fileInfoDrawer: document.getElementById("fileInfoDrawer"),
@@ -75,6 +86,11 @@
     fileInfoUploadedBy: document.getElementById("fileInfoUploadedBy"),
     fileInfoNote: document.getElementById("fileInfoNote"),
     fileInfoQty: document.getElementById("fileInfoQty"),
+    fileInfoAttachUploadBtn: document.getElementById("fileInfoAttachUploadBtn"),
+    fileInfoAttachInput: document.getElementById("fileInfoAttachInput"),
+    fileInfoAttachDropZone: document.getElementById("fileInfoAttachDropZone"),
+    fileInfoAttachStatus: document.getElementById("fileInfoAttachStatus"),
+    fileInfoAttachList: document.getElementById("fileInfoAttachList"),
     fileInfoSaveBtn: document.getElementById("fileInfoSaveBtn"),
     fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
     fileInfoOpen3DBtn: document.getElementById("fileInfoOpen3DBtn"),
@@ -150,6 +166,263 @@
     el.textContent = message;
   }
 
+  const uploadUiState = {
+    totalFiles: 0,
+    totalBytes: 0,
+    processedFiles: 0,
+    processedBytes: 0,
+    failedFiles: 0,
+    currentFileName: "",
+    currentPhaseLabel: "",
+    currentLoaded: 0,
+    currentTotal: 0,
+    collapsed: false,
+  };
+
+  const uploadMonitorItemsByKey = new Map();
+  let uploadTransferActive = false;
+  let uploadStopRequested = false;
+  let uploadWasStopped = false;
+  let activeTusUpload = null;
+  let uploadMonitorHideTimer = null;
+  let uploadMonitorDomEventsBound = false;
+
+  function ensureUploadMonitorRefs() {
+    if (!els.uploadMonitor) els.uploadMonitor = document.getElementById("uploadMonitor");
+    if (!els.uploadMonitorToggle) els.uploadMonitorToggle = document.getElementById("uploadMonitorToggle");
+    if (!els.uploadMonitorStop) els.uploadMonitorStop = document.getElementById("uploadMonitorStop");
+    if (!els.uploadMonitorBar) els.uploadMonitorBar = document.getElementById("uploadMonitorBar");
+    if (!els.uploadMonitorSummary) els.uploadMonitorSummary = document.getElementById("uploadMonitorSummary");
+    if (!els.uploadMonitorCurrent) els.uploadMonitorCurrent = document.getElementById("uploadMonitorCurrent");
+    if (!els.uploadMonitorList) els.uploadMonitorList = document.getElementById("uploadMonitorList");
+  }
+
+  function isUploadRunning() {
+    return !!uploadTransferActive;
+  }
+
+  function resetUploadUiState() {
+    uploadUiState.totalFiles = 0;
+    uploadUiState.totalBytes = 0;
+    uploadUiState.processedFiles = 0;
+    uploadUiState.processedBytes = 0;
+    uploadUiState.failedFiles = 0;
+    uploadUiState.currentFileName = "";
+    uploadUiState.currentPhaseLabel = "";
+    uploadUiState.currentLoaded = 0;
+    uploadUiState.currentTotal = 0;
+    uploadMonitorItemsByKey.clear();
+    if (els.uploadMonitorList) els.uploadMonitorList.innerHTML = "";
+  }
+
+  function setUploadStopButtonState() {
+    ensureUploadMonitorRefs();
+    if (!els.uploadMonitorStop) return;
+    const running = isUploadRunning();
+    els.uploadMonitorStop.disabled = !running || uploadStopRequested;
+    els.uploadMonitorStop.textContent = uploadStopRequested ? "Stopper..." : "Stop upload";
+  }
+
+  function _uploadItemKey(name, index = null) {
+    const safeName = String(name || "").trim() || "(ukendt fil)";
+    return index === null || index === undefined
+      ? safeName
+      : `${safeName}::${String(index)}`;
+  }
+
+  function _setUploadMonitorItemProgress(key, pct) {
+    const ref = uploadMonitorItemsByKey.get(String(key || ""));
+    if (!ref || !ref.progressBar) return;
+    const value = Math.max(0, Math.min(100, Number(pct || 0)));
+    ref.progressBar.style.width = `${value}%`;
+  }
+
+  function updateUploadMonitorItem(key, ok, detail = "", progressPct = null) {
+    const ref = uploadMonitorItemsByKey.get(String(key || ""));
+    if (!ref || !ref.statusEl) return;
+    ref.statusEl.classList.remove("ok", "error", "work");
+    ref.statusEl.classList.add(ok === null ? "work" : (ok ? "ok" : "error"));
+    ref.statusEl.textContent = String(detail || (ok === null ? "Arbejder..." : (ok ? "OK" : "Fejl")));
+    if (progressPct !== null && progressPct !== undefined) {
+      _setUploadMonitorItemProgress(key, progressPct);
+    }
+  }
+
+  function isUploadAbortError(error) {
+    const msg = String((error && error.message) || error || "").toLowerCase();
+    return msg.includes("abort") || msg.includes("aborted") || msg.includes("cancel");
+  }
+
+  function requestStopUpload() {
+    if (!isUploadRunning() || uploadStopRequested) return;
+    uploadStopRequested = true;
+    uploadWasStopped = true;
+    uploadUiState.currentFileName = "Stopper upload...";
+    try {
+      if (activeTusUpload && typeof activeTusUpload.abort === "function") {
+        activeTusUpload.abort();
+      }
+    } catch (_err) {
+      // ignore
+    }
+    setUploadStopButtonState();
+    renderUploadMonitor();
+  }
+
+  function renderUploadMonitor() {
+    ensureUploadMonitorRefs();
+
+    const transferLoaded = uploadTransferActive ? uploadUiState.currentLoaded : 0;
+    const processedVisualBytes = Math.min(uploadUiState.totalBytes, uploadUiState.processedBytes + transferLoaded);
+    const overallPct = uploadUiState.totalBytes > 0
+      ? Math.max(0, Math.min(100, Math.round((processedVisualBytes / uploadUiState.totalBytes) * 100)))
+      : 0;
+
+    if (!els.uploadMonitor) return;
+    setUploadStopButtonState();
+
+    if (els.uploadMonitorBar) {
+      els.uploadMonitorBar.style.width = `${overallPct}%`;
+    }
+
+    if (els.uploadMonitorSummary) {
+      const failedTxt = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : "";
+      els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${formatSize(processedVisualBytes)}/${formatSize(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}`;
+    }
+
+    if (els.uploadMonitorCurrent) {
+      if (uploadUiState.currentFileName) {
+        const filePct = uploadUiState.currentTotal > 0
+          ? Math.max(0, Math.min(100, Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100)))
+          : 0;
+        const phasePrefix = String(uploadUiState.currentPhaseLabel || "").trim() || "Uploader";
+        els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} (${filePct}%)`;
+      } else {
+        els.uploadMonitorCurrent.textContent = uploadUiState.totalFiles
+          ? "Upload fuldført"
+          : "Ingen aktiv upload";
+      }
+    }
+
+    try {
+      const transferDone = !isUploadRunning() && uploadUiState.totalFiles > 0;
+      if (transferDone) {
+        if (!uploadMonitorHideTimer) {
+          uploadMonitorHideTimer = window.setTimeout(() => {
+            if (!els.uploadMonitor) {
+              uploadMonitorHideTimer = null;
+              return;
+            }
+            try {
+              els.uploadMonitor.style.transition = "opacity .35s ease";
+              els.uploadMonitor.style.opacity = "0";
+              window.setTimeout(() => {
+                try {
+                  els.uploadMonitor.classList.add("hidden");
+                  els.uploadMonitor.style.opacity = "";
+                  els.uploadMonitor.style.transition = "";
+                } catch (_err) {
+                  // ignore
+                }
+              }, 380);
+            } catch (_err) {
+              // ignore
+            }
+            uploadMonitorHideTimer = null;
+          }, 10000);
+        }
+      } else if (uploadMonitorHideTimer) {
+        window.clearTimeout(uploadMonitorHideTimer);
+        uploadMonitorHideTimer = null;
+      }
+    } catch (_err) {
+      // ignore
+    }
+  }
+
+  function showUploadMonitor() {
+    ensureUploadMonitorRefs();
+    bindUploadMonitorDomEvents();
+    if (els.uploadMonitor) {
+      els.uploadMonitor.classList.remove("hidden");
+      try {
+        els.uploadMonitor.style.opacity = "1";
+        els.uploadMonitor.style.transition = "";
+      } catch (_err) {
+        // ignore
+      }
+    }
+    if (uploadMonitorHideTimer) {
+      window.clearTimeout(uploadMonitorHideTimer);
+      uploadMonitorHideTimer = null;
+    }
+    const collapsed = !!uploadUiState.collapsed;
+    if (els.uploadMonitor) els.uploadMonitor.classList.toggle("collapsed", collapsed);
+    if (els.uploadMonitorToggle) {
+      els.uploadMonitorToggle.textContent = collapsed ? "Vis detaljer" : "Minimer";
+    }
+    setUploadStopButtonState();
+  }
+
+  function addUploadMonitorItem(name, ok, detail = "", key = null, progressPct = null) {
+    ensureUploadMonitorRefs();
+    if (!els.uploadMonitorList) return;
+
+    const li = document.createElement("li");
+    li.className = "upload-monitor-item";
+    const safeName = String(name || "").trim() || "(ukendt fil)";
+    const itemKey = String(key || _uploadItemKey(safeName));
+    const statusClass = ok === null ? "work" : (ok ? "ok" : "error");
+    const statusText = ok === null ? "Arbejder..." : (ok ? "OK" : "Fejl");
+
+    li.innerHTML = `
+      <div class="upload-monitor-item-top">
+        <span class="upload-monitor-item-name" title="${esc(safeName)}">${esc(safeName)}</span>
+        <span class="upload-monitor-item-status ${statusClass}">${esc(detail || statusText)}</span>
+      </div>
+      <div class="upload-monitor-item-progress"><span class="upload-monitor-item-progress-bar" style="width:${Math.max(0, Math.min(100, Number(progressPct || 0)))}%"></span></div>
+    `;
+
+    els.uploadMonitorList.insertBefore(li, els.uploadMonitorList.firstChild || null);
+    uploadMonitorItemsByKey.set(itemKey, {
+      el: li,
+      statusEl: li.querySelector(".upload-monitor-item-status"),
+      progressBar: li.querySelector(".upload-monitor-item-progress-bar"),
+    });
+
+    while (els.uploadMonitorList.children.length > 8) {
+      const last = els.uploadMonitorList.lastChild;
+      if (!last) break;
+      uploadMonitorItemsByKey.forEach((value, k) => {
+        if (value && value.el === last) uploadMonitorItemsByKey.delete(k);
+      });
+      els.uploadMonitorList.removeChild(last);
+    }
+  }
+
+  function bindUploadMonitorDomEvents() {
+    if (uploadMonitorDomEventsBound) return;
+    document.addEventListener("click", (event) => {
+      const toggleBtn = event && event.target && event.target.closest
+        ? event.target.closest("#uploadMonitorToggle")
+        : null;
+      if (toggleBtn) {
+        uploadUiState.collapsed = !uploadUiState.collapsed;
+        showUploadMonitor();
+        return;
+      }
+
+      const stopBtn = event && event.target && event.target.closest
+        ? event.target.closest("#uploadMonitorStop")
+        : null;
+      if (stopBtn) {
+        if (stopBtn.disabled) return;
+        requestStopUpload();
+      }
+    });
+    uploadMonitorDomEventsBound = true;
+  }
+
   async function api(path, options = {}) {
     const init = Object.assign({ credentials: "same-origin" }, options);
     if (init.body && typeof init.body === "object" && !(init.body instanceof FormData)) {
@@ -215,6 +488,10 @@
     }
     if (target !== "files" && state.currentInfoFileId) {
       closeFileInfoDrawer();
+    }
+    if (els.thumbTopStatus) {
+      if (target !== "files") els.thumbTopStatus.classList.add("hidden");
+      else updateThumbTopStatus();
     }
   }
 
@@ -282,6 +559,38 @@
     state.selectedFileIds.clear();
   }
 
+  async function deleteSelectedInSelectMode() {
+    const fileIds = Array.from(state.selectedFileIds).map((v) => Number(v || 0)).filter((v) => v > 0);
+    const folderPaths = Array.from(state.selectedFolderPaths).map((v) => String(v || "").trim()).filter(Boolean);
+    const total = fileIds.length + folderPaths.length;
+    if (!total) {
+      showStatus(els.uploadStatus, "Vælg mindst én fil eller mappe at slette.", "error");
+      return;
+    }
+
+    const confirmText = `Slet ${total} valgt(e) element(er)? Dette kan ikke fortrydes.`;
+    if (!window.confirm(confirmText)) return;
+
+    const data = await api("/api/files/batch-delete", {
+      method: "POST",
+      body: {
+        file_ids: fileIds,
+        folder_paths: folderPaths,
+      },
+    });
+
+    const removedFiles = Number(data.removed_files || 0);
+    const removedFolders = Number(data.removed_folders || 0);
+    showStatus(
+      els.uploadStatus,
+      `Slettet: ${removedFiles} fil(er) og ${removedFolders} mappe(r).`,
+      "ok"
+    );
+    toggleSelectMode(false);
+    await loadFolders();
+    await loadFiles();
+  }
+
   function toggleSelectMode(forceValue = null) {
     const next = forceValue == null ? !state.selectMode : !!forceValue;
     if (state.selectMode === next) return;
@@ -335,9 +644,14 @@
     if (els.mapperSelectExitBtn) {
       els.mapperSelectExitBtn.classList.toggle("hidden", !on);
     }
+    if (els.mapperSelectDeleteBtn) {
+      els.mapperSelectDeleteBtn.classList.toggle("hidden", !on);
+      els.mapperSelectDeleteBtn.disabled = count <= 0;
+      els.mapperSelectDeleteBtn.textContent = count > 0 ? `Slet (${count})` : "Slet";
+    }
 
     if (els.mapperMenuSelect) {
-      els.mapperMenuSelect.textContent = on ? "Afslut vælg" : "Vælg";
+      els.mapperMenuSelect.textContent = on ? "Afslut vælg mode" : "Vælg mode";
     }
     if (els.mapperMenuUpload) {
       els.mapperMenuUpload.disabled = on;
@@ -398,9 +712,6 @@
     const folder = currentFolder() || state.homeFolder || "";
     const isRoot = !!folder && !!state.homeFolder && folder === state.homeFolder;
     const folderLabel = isRoot ? `${folder} (rodmappe)` : (folder || "-");
-    if (els.currentFolderLabel) {
-      els.currentFolderLabel.textContent = folderLabel;
-    }
     if (els.mapperDropZone) {
       els.mapperDropZone.textContent = `Slip filer eller mapper her for at uploade til: ${folderLabel}`;
     }
@@ -498,6 +809,62 @@
     return state.files.find((f) => Number(f.id || 0) === id) || null;
   }
 
+  function renderFileAttachments(items) {
+    if (!els.fileInfoAttachList) return;
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      els.fileInfoAttachList.innerHTML = `<div class="file-info-attach-empty">Ingen billeder tilknyttet denne fil endnu.</div>`;
+      return;
+    }
+    els.fileInfoAttachList.innerHTML = `
+      <div class="file-info-attach-grid">
+        ${list
+          .map((item) => {
+            const contentUrl = String(item.content_url || "#");
+            const name = String(item.original_name || "Billede");
+            return `
+              <a class="file-info-attach-card" href="${esc(contentUrl)}" target="_blank" rel="noopener">
+                <img src="${esc(contentUrl)}" alt="${esc(name)}" loading="lazy">
+                <div class="file-info-attach-meta">
+                  <div class="file-info-attach-name" title="${esc(name)}">${esc(name)}</div>
+                  <div class="file-info-attach-sub">${formatSize(item.file_size)} · ${formatDate(item.uploaded_at)}</div>
+                </div>
+              </a>
+            `;
+          })
+          .join("")}
+      </div>
+    `;
+  }
+
+  async function loadFileAttachments(fileId) {
+    const id = Number(fileId || 0);
+    if (!id) return;
+    const data = await api(`/api/files/${id}/attachments`);
+    if (Number(state.currentInfoFileId || 0) !== id) return;
+    state.currentFileAttachments = Array.isArray(data.items) ? data.items : [];
+    renderFileAttachments(state.currentFileAttachments);
+  }
+
+  async function uploadFileAttachments(fileId, files) {
+    const id = Number(fileId || 0);
+    const uploadFiles = Array.from(files || []).filter(Boolean);
+    if (!id || !uploadFiles.length) return;
+
+    const form = new FormData();
+    uploadFiles.forEach((file) => form.append("images", file));
+    showStatus(els.fileInfoAttachStatus, `Uploader ${uploadFiles.length} billede(r)...`, "ok");
+    const data = await api(`/api/files/${id}/attachments`, { method: "POST", body: form });
+    const created = Number(data.created || 0);
+    const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
+    let message = `${created} billede(r) uploadet.`;
+    if (skippedCount > 0) {
+      message += ` ${skippedCount} blev sprunget over.`;
+    }
+    showStatus(els.fileInfoAttachStatus, message, "ok");
+    await loadFileAttachments(id);
+  }
+
   function renderFileInfoDrawer(file) {
     if (!file || !els.fileInfoDrawer) return;
     const id = Number(file.id || 0);
@@ -526,11 +893,14 @@
     }
   }
 
-  function openFileInfoDrawer(fileId) {
+  async function openFileInfoDrawer(fileId) {
     const file = fileById(fileId);
     if (!file) return;
     state.currentInfoFileId = Number(file.id || 0);
     renderFileInfoDrawer(file);
+    state.currentFileAttachments = [];
+    renderFileAttachments([]);
+    showStatus(els.fileInfoAttachStatus, "");
 
     if (state.infoDrawerHideTimer) {
       clearTimeout(state.infoDrawerHideTimer);
@@ -546,10 +916,19 @@
       els.fileInfoDrawer.setAttribute("aria-hidden", "false");
       requestAnimationFrame(() => els.fileInfoDrawer.classList.add("open"));
     }
+
+    try {
+      await loadFileAttachments(state.currentInfoFileId);
+    } catch (err) {
+      showStatus(els.fileInfoAttachStatus, err.message || "Kunne ikke hente billeder", "error");
+    }
   }
 
   function closeFileInfoDrawer() {
     state.currentInfoFileId = 0;
+    state.currentFileAttachments = [];
+    renderFileAttachments([]);
+    showStatus(els.fileInfoAttachStatus, "");
     if (els.fileInfoDrawer) {
       els.fileInfoDrawer.classList.remove("open");
       els.fileInfoDrawer.setAttribute("aria-hidden", "true");
@@ -584,6 +963,7 @@
       if (state.currentInfoFileId) {
         closeFileInfoDrawer();
       }
+      updateThumbTopStatus();
       updateStats();
       return;
     }
@@ -616,16 +996,71 @@
 
     updateSelectModeUi();
     syncThumbPoller();
+    updateThumbTopStatus();
     updateStats();
   }
 
-  function hasPendingThumbs() {
-    return state.files.some((f) => {
-      if (!f || !f.is_3d) return false;
-      if (f.thumb_url) return false;
+  function thumbQueueStats() {
+    let total = 0;
+    let ready = 0;
+    let queued = 0;
+    let processing = 0;
+    let error = 0;
+
+    for (const f of state.files) {
+      if (!f || !f.thumb_supported) continue;
+      total += 1;
       const status = String(f.thumb_status || "").toLowerCase();
-      return status === "queued" || status === "processing" || status === "" || status === "none";
-    });
+      if (f.thumb_url || status === "ready") {
+        ready += 1;
+      } else if (status === "processing") {
+        processing += 1;
+      } else if (status === "queued") {
+        queued += 1;
+      } else if (status === "error") {
+        error += 1;
+      } else {
+        queued += 1;
+      }
+    }
+
+    const pending = queued + processing;
+    const done = ready + error;
+    const progress = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
+    return { total, ready, queued, processing, error, pending, done, progress };
+  }
+
+  function updateThumbTopStatus() {
+    if (!els.thumbTopStatus || !els.thumbTopStatusLabel || !els.thumbTopStatusBar) return;
+    const stats = thumbQueueStats();
+    const shouldShow = stats.pending > 0 || stats.error > 0;
+    els.thumbTopStatus.classList.toggle("hidden", !shouldShow);
+    if (!shouldShow) {
+      els.thumbTopStatusLabel.textContent = "Thumbnails: Klar";
+      els.thumbTopStatusBar.classList.remove("indeterminate");
+      els.thumbTopStatusBar.style.width = "0%";
+      return;
+    }
+
+    if (stats.pending > 0) {
+      let label = `Thumbnails: ${stats.ready}/${stats.total} klar`;
+      if (stats.processing > 0) label += ` · ${stats.processing} behandler`;
+      if (stats.queued > 0) label += ` · ${stats.queued} i kø`;
+      if (stats.error > 0) label += ` · fejl: ${stats.error}`;
+      els.thumbTopStatusLabel.textContent = label;
+    } else {
+      els.thumbTopStatusLabel.textContent = `Thumbnails færdig · fejl: ${stats.error}`;
+    }
+
+    const useIndeterminate = stats.pending > 0 && stats.progress <= 0;
+    els.thumbTopStatusBar.classList.toggle("indeterminate", useIndeterminate);
+    if (!useIndeterminate) {
+      els.thumbTopStatusBar.style.width = `${stats.progress}%`;
+    }
+  }
+
+  function hasPendingThumbs() {
+    return thumbQueueStats().pending > 0;
   }
 
   function syncThumbPoller() {
@@ -668,6 +1103,19 @@
         reject(new Error("tus-js-client er ikke tilgængelig"));
         return;
       }
+      let settled = false;
+      const finishResolve = (value) => {
+        if (settled) return;
+        settled = true;
+        activeTusUpload = null;
+        resolve(value);
+      };
+      const finishReject = (error) => {
+        if (settled) return;
+        settled = true;
+        activeTusUpload = null;
+        reject(error);
+      };
       const upload = new window.tus.Upload(file, {
         endpoint: "/api/upload/tus",
         chunkSize: 8 * 1024 * 1024,
@@ -679,12 +1127,13 @@
           lastModified: String(file.lastModified || 0),
           clientUploadId: clientUploadId,
         },
-        onError: (error) => reject(error),
+        onError: (error) => finishReject(error),
         onProgress: (uploadedBytes, totalBytes) => {
           if (typeof onProgress === "function") onProgress(uploadedBytes, totalBytes);
         },
-        onSuccess: () => resolve({ file, clientUploadId }),
+        onSuccess: () => finishResolve({ file, clientUploadId }),
       });
+      activeTusUpload = upload;
       upload.findPreviousUploads().then((previousUploads) => {
         if (previousUploads && previousUploads.length) {
           upload.resumeFromPreviousUpload(previousUploads[0]);
@@ -763,28 +1212,80 @@
       return;
     }
 
+    resetUploadUiState();
+    uploadUiState.totalFiles = list.length;
+    uploadUiState.totalBytes = list.reduce((sum, file) => sum + Number(file && file.size ? file.size : 0), 0);
+    uploadUiState.collapsed = false;
+    uploadStopRequested = false;
+    uploadWasStopped = false;
+    uploadTransferActive = true;
+    showUploadMonitor();
+    renderUploadMonitor();
+
     showStatus(els.uploadStatus, `Starter upload af ${list.length} filer...`, "ok");
     const uploaded = [];
-    for (let i = 0; i < list.length; i += 1) {
-      const file = list[i];
-      const cid = makeClientUploadId();
-      try {
-        await uploadSingleTus(file, folder, cid, (uploadedBytes, totalBytes) => {
-          const pct = totalBytes > 0 ? Math.round((uploadedBytes / totalBytes) * 100) : 0;
-          showStatus(
-            els.uploadStatus,
-            `Uploader ${i + 1}/${list.length}: ${file.name} (${pct}%)`,
-            "ok"
-          );
-        });
-        uploaded.push({ clientUploadId: cid, filename: file.name });
-      } catch (err) {
-        showStatus(els.uploadStatus, `Upload fejlede for ${file.name}: ${err.message || err}`, "error");
+    try {
+      for (let i = 0; i < list.length; i += 1) {
+        if (uploadStopRequested) break;
+
+        const file = list[i];
+        const cid = makeClientUploadId();
+        const itemKey = _uploadItemKey(file.name, i);
+        uploadUiState.currentPhaseLabel = "Uploader";
+        uploadUiState.currentFileName = file.name || "fil";
+        uploadUiState.currentLoaded = 0;
+        uploadUiState.currentTotal = Number(file.size || 0);
+        addUploadMonitorItem(file.name, null, "Uploader... 0%", itemKey, 0);
+        renderUploadMonitor();
+
+        try {
+          await uploadSingleTus(file, folder, cid, (uploadedBytes, totalBytes) => {
+            const pct = totalBytes > 0 ? Math.round((uploadedBytes / totalBytes) * 100) : 0;
+            uploadUiState.currentLoaded = Number(uploadedBytes || 0);
+            uploadUiState.currentTotal = Number(totalBytes || file.size || 0);
+            updateUploadMonitorItem(itemKey, null, `Uploader... ${pct}%`, pct);
+            renderUploadMonitor();
+            showStatus(
+              els.uploadStatus,
+              `Uploader ${i + 1}/${list.length}: ${file.name} (${pct}%)`,
+              "ok"
+            );
+          });
+          uploaded.push({ clientUploadId: cid, filename: file.name });
+          updateUploadMonitorItem(itemKey, true, `Uploadet · ${formatSize(file.size || 0)}`, 100);
+        } catch (err) {
+          const aborted = uploadStopRequested || isUploadAbortError(err);
+          if (aborted) {
+            updateUploadMonitorItem(itemKey, false, "Stoppet", 0);
+          } else {
+            uploadUiState.failedFiles += 1;
+            const message = (err && err.message) ? err.message : String(err || "Ukendt fejl");
+            updateUploadMonitorItem(itemKey, false, `Fejl: ${message}`, 0);
+            showStatus(els.uploadStatus, `Upload fejlede for ${file.name}: ${message}`, "error");
+          }
+          if (aborted) break;
+        } finally {
+          uploadUiState.processedFiles += 1;
+          uploadUiState.processedBytes += Number(file.size || uploadUiState.currentTotal || 0);
+          uploadUiState.currentLoaded = 0;
+          uploadUiState.currentTotal = 0;
+          renderUploadMonitor();
+        }
       }
+    } finally {
+      uploadTransferActive = false;
+      activeTusUpload = null;
+      uploadUiState.currentFileName = "";
+      uploadUiState.currentPhaseLabel = "";
+      uploadUiState.currentLoaded = 0;
+      uploadUiState.currentTotal = 0;
+      renderUploadMonitor();
     }
 
     if (uploaded.length) {
-      showStatus(els.uploadStatus, `Upload færdig: ${uploaded.length}/${list.length} filer.`, "ok");
+      const failedPart = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : "";
+      const doneLabel = uploadWasStopped ? "Upload stoppet" : "Upload færdig";
+      showStatus(els.uploadStatus, `${doneLabel}: ${uploaded.length}/${list.length} filer${failedPart}.`, uploadUiState.failedFiles ? "error" : "ok");
       const resolved = await resolveUploadedItems(uploaded);
       const firstFolder = resolved.length ? String(resolved[0].folder_path || "").trim() : "";
       await loadFolders();
@@ -795,7 +1296,7 @@
       await loadFiles();
       if (resolved.length) openMetadataModal(resolved);
     } else {
-      showStatus(els.uploadStatus, "Ingen filer blev uploadet.", "error");
+      showStatus(els.uploadStatus, uploadWasStopped ? "Upload stoppet." : "Ingen filer blev uploadet.", uploadWasStopped ? "ok" : "error");
       await loadFiles();
     }
   }
@@ -1338,6 +1839,13 @@
     if (els.mapperSelectExitBtn) {
       els.mapperSelectExitBtn.addEventListener("click", () => toggleSelectMode(false));
     }
+    if (els.mapperSelectDeleteBtn) {
+      els.mapperSelectDeleteBtn.addEventListener("click", () => {
+        deleteSelectedInSelectMode().catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke slette valgte elementer", "error");
+        });
+      });
+    }
 
     if (els.folderUpBtn) {
       els.folderUpBtn.addEventListener("click", async () => {
@@ -1394,6 +1902,12 @@
       const withinMenu = event.target.closest("#mapperMenu");
       const withinBtn = event.target.closest("#mapperMenuBtn");
       if (!withinMenu && !withinBtn) setMapperMenuOpen(false);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (!state.selectMode) return;
+      toggleSelectMode(false);
     });
 
     if (els.folderSelect) {
@@ -1472,6 +1986,58 @@
         saveCurrentFileInfo().catch((err) => {
           showStatus(els.uploadStatus, err.message || "Kunne ikke gemme fil-info", "error");
         });
+      });
+    }
+    const queueInfoAttachmentUpload = (files) => {
+      const id = Number(state.currentInfoFileId || 0);
+      const list = Array.from(files || []);
+      if (!id || !list.length) {
+        if (els.fileInfoAttachInput) els.fileInfoAttachInput.value = "";
+        return;
+      }
+      uploadFileAttachments(id, list)
+        .catch((err) => {
+          showStatus(els.fileInfoAttachStatus, err.message || "Kunne ikke uploade billeder", "error");
+        })
+        .finally(() => {
+          if (els.fileInfoAttachInput) els.fileInfoAttachInput.value = "";
+        });
+    };
+
+    if (els.fileInfoAttachUploadBtn && els.fileInfoAttachInput) {
+      els.fileInfoAttachUploadBtn.addEventListener("click", () => {
+        const id = Number(state.currentInfoFileId || 0);
+        if (!id) return;
+        els.fileInfoAttachInput.click();
+      });
+      els.fileInfoAttachInput.addEventListener("change", () => {
+        queueInfoAttachmentUpload((els.fileInfoAttachInput && els.fileInfoAttachInput.files) || []);
+      });
+    }
+
+    if (els.fileInfoAttachDropZone) {
+      const zone = els.fileInfoAttachDropZone;
+      zone.addEventListener("click", () => {
+        const id = Number(state.currentInfoFileId || 0);
+        if (!id || !els.fileInfoAttachInput) return;
+        els.fileInfoAttachInput.click();
+      });
+      zone.addEventListener("dragenter", (event) => {
+        event.preventDefault();
+        zone.classList.add("dragover");
+      });
+      zone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        zone.classList.add("dragover");
+      });
+      zone.addEventListener("dragleave", () => {
+        zone.classList.remove("dragover");
+      });
+      zone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        zone.classList.remove("dragover");
+        const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+        queueInfoAttachmentUpload(files);
       });
     }
     if (els.fileInfoOpen3DBtn) {
@@ -1587,6 +2153,8 @@
     applyRoleVisibility();
     updateSelectModeUi();
     bindEvents();
+    bindUploadMonitorDomEvents();
+    renderUploadMonitor();
     await loadFolders();
     await loadFiles();
     if (state.role === "admin") {

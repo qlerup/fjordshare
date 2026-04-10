@@ -36,11 +36,15 @@
         <div class="mapper-topbar">
           <h3>Mapper</h3>
           <div class="mapper-tools">
+            <div id="thumbTopStatus" class="upload-top-status hidden" aria-live="polite">
+              <div id="thumbTopStatusLabel" class="upload-top-status-label">Thumbnails: Klar</div>
+              <div class="upload-top-status-progress"><span id="thumbTopStatusBar" class="upload-top-status-bar" style="width:0%"></span></div>
+            </div>
             <button id="mapperSearchBtn" class="icon-btn" type="button" title="Søg mappe" aria-label="Søg mappe">&#128269;</button>
             <div class="menu-wrap">
               <button id="mapperMenuBtn" class="icon-btn" type="button" title="Mapper menu" aria-haspopup="true" aria-expanded="false" aria-controls="mapperMenu">&#8942;</button>
               <div id="mapperMenu" class="mapper-menu hidden" role="menu">
-                <button id="mapperMenuSelect" class="menu-item" type="button" data-mapper-action="select" role="menuitem">Vælg</button>
+                <button id="mapperMenuSelect" class="menu-item" type="button" data-mapper-action="select" role="menuitem">Vælg mode</button>
                 <button id="mapperMenuShare" class="menu-item admin-only" type="button" data-mapper-action="share" role="menuitem">Del</button>
                 <button id="mapperMenuUpload" class="menu-item" type="button" data-mapper-action="upload" role="menuitem">Upload</button>
                 <button id="mapperMenuCreateFolder" class="menu-item" type="button" data-mapper-action="create-folder" role="menuitem">Opret mappe</button>
@@ -51,9 +55,9 @@
         </div>
 
         <div class="mapper-current-row">
-          <div class="mapper-current">Aktuel mappe: <strong id="currentFolderLabel">-</strong></div>
           <div class="mapper-current-actions">
             <span id="mapperSelectSummary" class="mapper-select-summary hidden" aria-live="polite"></span>
+            <button id="mapperSelectDeleteBtn" class="btn danger hidden" type="button">Slet</button>
             <button id="mapperSelectExitBtn" class="btn hidden" type="button">Afslut vælg</button>
             <button id="folderUpBtn" class="btn" type="button">Tilbage</button>
           </div>
@@ -105,6 +109,17 @@
           <input id="fileInfoNote" class="input" type="text" placeholder="Bemærkning">
           <label for="fileInfoQty">Antal</label>
           <input id="fileInfoQty" class="input" type="number" min="1" value="1">
+        </div>
+
+        <div class="file-info-attachments">
+          <div class="file-info-attachments-head">
+            <div class="file-info-attachments-title">Billeder til filen</div>
+            <button id="fileInfoAttachUploadBtn" class="btn" type="button">Upload billede</button>
+          </div>
+          <input id="fileInfoAttachInput" type="file" accept="image/*" multiple style="display:none;">
+          <div id="fileInfoAttachDropZone" class="file-info-attach-dropzone">Slip billeder her for at uploade</div>
+          <div id="fileInfoAttachStatus" class="status hidden"></div>
+          <div id="fileInfoAttachList" class="file-info-attach-list"></div>
         </div>
       </div>
       <div class="file-info-actions">
@@ -301,6 +316,20 @@
     <div id="modelHint" class="hint"></div>
   </div>
 </div>
+
+<section id="uploadMonitor" class="upload-monitor hidden" aria-live="polite">
+  <header class="upload-monitor-head">
+    <strong>Uploads</strong>
+    <div class="upload-monitor-actions">
+      <button id="uploadMonitorStop" class="btn small" type="button">Stop upload</button>
+      <button id="uploadMonitorToggle" class="btn small" type="button">Minimer</button>
+    </div>
+  </header>
+  <div class="upload-progress"><div id="uploadMonitorBar" class="bar"></div></div>
+  <div id="uploadMonitorSummary" class="upload-monitor-summary">Klar</div>
+  <div id="uploadMonitorCurrent" class="upload-monitor-current">Ingen aktiv upload</div>
+  <ul id="uploadMonitorList" class="upload-monitor-list"></ul>
+</section>
 {% endblock %}
 
 {% block scripts %}

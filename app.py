@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import tempfile
 import threading
+import zipfile
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -45,6 +46,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data")).resolve()
 UPLOAD_ROOT = DATA_DIR / "uploads"
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 THUMBS_DIR = DATA_DIR / "thumbs"
+FILE_ATTACHMENTS_DIR = DATA_DIR / "file_attachments"
 DB_PATH = DATA_DIR / "fjordshare.db"
 
 PERMISSION_RANK = {"view": 1, "upload": 2, "manage": 3}
@@ -57,6 +59,18 @@ THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
 THUMB_RENDER_FACE_LIMIT = 120_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
 THUMB_RENDER_STYLE_VERSION = "2"
+FILE_ATTACHMENT_MAX_BYTES = int(str(os.getenv("FILE_ATTACHMENT_MAX_BYTES", str(20 * 1024 * 1024))) or str(20 * 1024 * 1024))
+FILE_ATTACHMENT_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
+FILE_ATTACHMENT_MIME_TO_EXT = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/bmp": ".bmp",
+    "image/avif": ".avif",
+}
+ZIP_UPLOAD_MAX_FILES = int(str(os.getenv("ZIP_UPLOAD_MAX_FILES", "10000")) or "10000")
+ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES = int(str(os.getenv("ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES", str(2 * 1024 * 1024 * 1024))) or str(2 * 1024 * 1024 * 1024))
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
 
@@ -82,6 +96,7 @@ def _ensure_storage_dirs() -> None:
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    FILE_ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_or_create_secret() -> str:
@@ -280,6 +295,24 @@ def _folder_clauses(prefixes: Iterable[str]) -> Tuple[str, list[str]]:
     return " OR ".join(parts), params
 
 
+def _collapse_folder_prefixes(paths: Iterable[str]) -> list[str]:
+    normalized: list[str] = []
+    for raw in paths:
+        try:
+            p = normalize_folder_path(str(raw or ""))
+        except Exception:
+            continue
+        if p:
+            normalized.append(p)
+    unique_sorted = sorted(set(normalized), key=lambda x: (len(x), x.lower()))
+    out: list[str] = []
+    for p in unique_sorted:
+        if any(p == kept or p.startswith(kept + "/") for kept in out):
+            continue
+        out.append(p)
+    return out
+
+
 def _thumbnail_rel_name(file_id: int) -> str:
     return f"{int(file_id)}.png"
 
@@ -305,6 +338,192 @@ def _safe_remove_thumbnail(rel_name: str) -> None:
             thumb_path.unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def _attachment_abs_path_from_rel(rel_name: str) -> Path:
+    rel = str(rel_name or "").replace("\\", "/").strip().strip("/")
+    if not rel:
+        raise ValueError("Missing attachment path")
+    out = (FILE_ATTACHMENTS_DIR / rel).resolve()
+    if not _is_relative_to(FILE_ATTACHMENTS_DIR, out):
+        raise ValueError("Invalid attachment path")
+    return out
+
+
+def _safe_remove_attachment(rel_name: str) -> None:
+    rel = str(rel_name or "").strip()
+    if not rel:
+        return
+    try:
+        path = _attachment_abs_path_from_rel(rel)
+        if path.exists() and path.is_file():
+            path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _attachment_ext_from_upload(filename: str, mime_type: str) -> str:
+    ext = str(Path(filename or "").suffix or "").lower()
+    if ext in FILE_ATTACHMENT_ALLOWED_EXTS:
+        return ext
+    mapped = FILE_ATTACHMENT_MIME_TO_EXT.get(str(mime_type or "").strip().lower(), "")
+    return mapped if mapped in FILE_ATTACHMENT_ALLOWED_EXTS else ""
+
+
+def _attachment_size_from_filestorage(file_storage: Any) -> int:
+    stream = getattr(file_storage, "stream", None)
+    if stream is None:
+        return -1
+    try:
+        pos = stream.tell()
+        stream.seek(0, os.SEEK_END)
+        size = int(stream.tell())
+        stream.seek(pos, os.SEEK_SET)
+        return max(0, size)
+    except Exception:
+        return -1
+
+
+def _cleanup_file_attachments_for_file(file_id: int) -> None:
+    file_id_i = int(file_id)
+    rels: list[str] = []
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            "SELECT rel_name FROM file_attachments WHERE file_id=?",
+            (file_id_i,),
+        ).fetchall()
+    for row in rows:
+        rel = str(row["rel_name"] or "").strip()
+        if rel:
+            rels.append(rel)
+    for rel in rels:
+        _safe_remove_attachment(rel)
+
+
+def _zip_member_parts(member_name: str) -> list[str]:
+    raw = str(member_name or "").replace("\\", "/").strip()
+    raw = raw.lstrip("/")
+    if not raw:
+        return []
+    parts = [p for p in raw.split("/") if p not in {"", "."}]
+    if any(p == ".." for p in parts):
+        return []
+    return parts
+
+
+def _zip_info_is_symlink(info: zipfile.ZipInfo) -> bool:
+    try:
+        mode = (int(info.external_attr) >> 16) & 0o170000
+        return mode == 0o120000
+    except Exception:
+        return False
+
+
+def _extract_zip_upload(
+    zip_path: Path,
+    base_folder: str,
+    uploaded_by: str,
+    upload_client_id: Optional[str],
+    last_modified_ms: int = 0,
+) -> Tuple[int, Optional[sqlite3.Row], list[str]]:
+    _ = upload_client_id
+    base = normalize_folder_path(base_folder)
+    if not base:
+        raise ValueError("ZIP kræver en målmappe")
+
+    _, base_abs = folder_abs_path(base)
+    base_abs.mkdir(parents=True, exist_ok=True)
+    ensure_folder_record(base)
+
+    extracted = 0
+    first_row: Optional[sqlite3.Row] = None
+    created_folders: set[str] = set()
+
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        infos = archive.infolist()
+        if len(infos) > ZIP_UPLOAD_MAX_FILES:
+            raise ValueError(f"ZIP indeholder for mange elementer (maks {ZIP_UPLOAD_MAX_FILES})")
+
+        total_uncompressed = 0
+        for info in infos:
+            if _zip_info_is_symlink(info):
+                continue
+            try:
+                total_uncompressed += int(info.file_size or 0)
+            except Exception:
+                pass
+            if total_uncompressed > ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES:
+                raise ValueError("ZIP er for stor efter udpakning")
+
+            parts = _zip_member_parts(info.filename)
+            if not parts:
+                continue
+
+            # Ignore common OS metadata folders/files in ZIP archives.
+            joined = "/".join(parts)
+            if joined.startswith("__MACOSX/"):
+                continue
+            if parts[-1] in {".DS_Store", "Thumbs.db"}:
+                continue
+
+            if info.is_dir():
+                try:
+                    inner_dir = normalize_folder_path("/".join(parts))
+                    target_folder = normalize_folder_path(f"{base}/{inner_dir}") if inner_dir else base
+                except ValueError:
+                    continue
+                if target_folder and target_folder not in created_folders:
+                    _, target_abs = folder_abs_path(target_folder)
+                    target_abs.mkdir(parents=True, exist_ok=True)
+                    ensure_folder_record(target_folder)
+                    created_folders.add(target_folder)
+                continue
+
+            file_name = sanitize_filename(parts[-1])
+            if not file_name:
+                continue
+
+            try:
+                inner_dir = normalize_folder_path("/".join(parts[:-1])) if len(parts) > 1 else ""
+                target_folder = normalize_folder_path(f"{base}/{inner_dir}") if inner_dir else base
+            except ValueError:
+                continue
+            _, target_abs = folder_abs_path(target_folder)
+            target_abs.mkdir(parents=True, exist_ok=True)
+            if target_folder and target_folder not in created_folders:
+                ensure_folder_record(target_folder)
+                created_folders.add(target_folder)
+
+            target_path = allocate_unique_target(target_abs, file_name)
+            with archive.open(info, "r") as src, target_path.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+            if last_modified_ms > 0:
+                try:
+                    ts = float(last_modified_ms) / 1000.0
+                    os.utime(target_path, (ts, ts))
+                except Exception:
+                    pass
+
+            row = upsert_file_record(
+                folder_path=target_folder,
+                filename=target_path.name,
+                disk_path=target_path,
+                uploaded_by=uploaded_by,
+                upload_client_id=None,
+            )
+            try:
+                ext = str(row["ext"] or "").lower()
+                if _supports_thumbnail_for_ext(ext):
+                    enqueue_thumbnail(int(row["id"]))
+            except Exception:
+                pass
+
+            if first_row is None:
+                first_row = row
+            extracted += 1
+
+    return extracted, first_row, sorted(created_folders)
 
 
 def _set_file_thumbnail_state(
@@ -634,6 +853,19 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_path);
             CREATE INDEX IF NOT EXISTS idx_files_uploaded_at ON files(uploaded_at DESC);
             CREATE INDEX IF NOT EXISTS idx_files_upload_client_id ON files(upload_client_id);
+
+            CREATE TABLE IF NOT EXISTS file_attachments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                rel_name TEXT UNIQUE NOT NULL,
+                original_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                uploaded_by TEXT,
+                uploaded_at TEXT NOT NULL,
+                FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_file_attachments_file ON file_attachments(file_id, uploaded_at DESC, id DESC);
 
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -1110,6 +1342,7 @@ def serialize_file_row(row: sqlite3.Row, share_token: Optional[str] = None) -> d
     is_3d = ext in THREE_D_EXTENSIONS
     is_3d_openable = ext in THREE_D_VIEWER_EXTENSIONS
     preview_3d_thumbnail = ext in THREE_D_THUMBNAIL_EXTENSIONS
+    thumb_supported = _supports_thumbnail_for_ext(ext)
     thumb_status = str(row["thumb_status"] or "none").strip().lower() or "none"
     thumb_rel = str(row["thumb_rel"] or "").strip()
     has_thumb = bool(thumb_rel)
@@ -1142,8 +1375,25 @@ def serialize_file_row(row: sqlite3.Row, share_token: Optional[str] = None) -> d
         "is_3d": is_3d,
         "is_3d_openable": is_3d_openable,
         "preview_3d_thumbnail": preview_3d_thumbnail,
+        "thumb_supported": bool(thumb_supported),
         "content_url": content_url,
         "download_url": download_url,
+    }
+
+
+def serialize_file_attachment_row(row: sqlite3.Row) -> dict:
+    file_id = int(row["file_id"])
+    attachment_id = int(row["id"])
+    content_url = url_for("api_file_attachment_content", file_id=file_id, attachment_id=attachment_id)
+    return {
+        "id": attachment_id,
+        "file_id": file_id,
+        "original_name": str(row["original_name"] or ""),
+        "mime_type": str(row["mime_type"] or "image/jpeg"),
+        "file_size": int(row["file_size"] or 0),
+        "uploaded_by": str(row["uploaded_by"] or ""),
+        "uploaded_at": str(row["uploaded_at"] or ""),
+        "content_url": content_url,
     }
 
 
@@ -1702,6 +1952,281 @@ def api_file_by_upload_client(client_id: str):
     return jsonify({"ok": True, "item": serialize_file_row(row)})
 
 
+@app.route("/api/files/batch-delete", methods=["POST"])
+@login_required
+def api_files_batch_delete():
+    body = request.get_json(silent=True) or {}
+    raw_file_ids = body.get("file_ids")
+    raw_folder_paths = body.get("folder_paths")
+
+    file_ids: list[int] = []
+    if isinstance(raw_file_ids, list):
+        seen_file_ids: set[int] = set()
+        for value in raw_file_ids:
+            try:
+                fid = int(value)
+            except Exception:
+                continue
+            if fid <= 0 or fid in seen_file_ids:
+                continue
+            seen_file_ids.add(fid)
+            file_ids.append(fid)
+
+    folder_paths = _collapse_folder_prefixes(raw_folder_paths if isinstance(raw_folder_paths, list) else [])
+
+    if not file_ids and not folder_paths:
+        return jsonify({"ok": False, "error": "Ingen filer eller mapper valgt"}), 400
+
+    for folder in folder_paths:
+        if not permission_allows(permission_for_user_folder(current_user, folder), "manage"):
+            return jsonify({"ok": False, "error": f"Ingen rettighed til mappe: {folder}"}), 403
+
+    selected_rows: list[sqlite3.Row] = []
+    with closing(get_conn()) as conn:
+        if file_ids:
+            placeholders = ",".join("?" for _ in file_ids)
+            selected_rows.extend(
+                conn.execute(
+                    f"SELECT * FROM files WHERE id IN ({placeholders})",
+                    tuple(file_ids),
+                ).fetchall()
+            )
+        if folder_paths:
+            folder_where, folder_params = _folder_clauses(folder_paths)
+            selected_rows.extend(
+                conn.execute(
+                    f"SELECT * FROM files WHERE {folder_where}",
+                    tuple(folder_params),
+                ).fetchall()
+            )
+
+    rows_by_id: dict[int, sqlite3.Row] = {}
+    for row in selected_rows:
+        fid = int(row["id"])
+        if fid in rows_by_id:
+            continue
+        if not user_can_access_file(current_user, row, "manage"):
+            return jsonify({"ok": False, "error": "Ingen rettighed til at slette en eller flere filer"}), 403
+        rows_by_id[fid] = row
+
+    rows_to_delete = list(rows_by_id.values())
+    file_ids_to_delete = sorted(rows_by_id.keys())
+
+    removed_file_count = 0
+    for row in rows_to_delete:
+        try:
+            path = file_disk_path(row)
+            if path.exists() and path.is_file():
+                path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            _safe_remove_thumbnail(str(row["thumb_rel"] or ""))
+        except Exception:
+            pass
+        removed_file_count += 1
+
+    removed_folder_count = 0
+    for folder in folder_paths:
+        try:
+            _, abs_folder = folder_abs_path(folder)
+            if abs_folder.exists() and abs_folder.is_dir():
+                shutil.rmtree(abs_folder, ignore_errors=True)
+        except Exception:
+            pass
+        removed_folder_count += 1
+
+    with closing(get_conn()) as conn:
+        if file_ids_to_delete:
+            placeholders = ",".join("?" for _ in file_ids_to_delete)
+            attachment_rows = conn.execute(
+                f"SELECT rel_name FROM file_attachments WHERE file_id IN ({placeholders})",
+                tuple(file_ids_to_delete),
+            ).fetchall()
+            for arow in attachment_rows:
+                _safe_remove_attachment(str(arow["rel_name"] or ""))
+
+            conn.execute(
+                f"DELETE FROM files WHERE id IN ({placeholders})",
+                tuple(file_ids_to_delete),
+            )
+
+        for folder in folder_paths:
+            conn.execute(
+                "DELETE FROM folders WHERE folder_path=? OR folder_path LIKE ?",
+                (folder, f"{folder}/%"),
+            )
+
+        conn.commit()
+
+    return jsonify(
+        {
+            "ok": True,
+            "removed_files": int(removed_file_count),
+            "removed_folders": int(removed_folder_count),
+        }
+    )
+
+
+@app.route("/api/files/<int:file_id>/attachments", methods=["GET", "POST"])
+@login_required
+def api_file_attachments(file_id: int):
+    file_id_i = int(file_id)
+    with closing(get_conn()) as conn:
+        file_row = conn.execute("SELECT * FROM files WHERE id=?", (file_id_i,)).fetchone()
+    if file_row is None:
+        return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
+
+    if request.method == "GET":
+        if not user_can_access_file(current_user, file_row, "view"):
+            return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+        with closing(get_conn()) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+                FROM file_attachments
+                WHERE file_id=?
+                ORDER BY uploaded_at DESC, id DESC
+                """,
+                (file_id_i,),
+            ).fetchall()
+        items = [serialize_file_attachment_row(r) for r in rows]
+        return jsonify({"ok": True, "items": items})
+
+    if not user_can_access_file(current_user, file_row, "upload"):
+        return jsonify({"ok": False, "error": "Ingen rettighed til at uploade billeder"}), 403
+
+    uploads = request.files.getlist("images")
+    if not uploads:
+        uploads = [v for v in request.files.values() if v is not None]
+
+    valid_uploads = [u for u in uploads if u and str(getattr(u, "filename", "") or "").strip()]
+    if not valid_uploads:
+        return jsonify({"ok": False, "error": "Ingen billeder modtaget"}), 400
+
+    created_items: list[dict] = []
+    skipped: list[str] = []
+    with closing(get_conn()) as conn:
+        for upload in valid_uploads:
+            original_name = sanitize_filename(str(upload.filename or "billede"))
+            mime_type = str(getattr(upload, "mimetype", "") or "").strip().lower()
+            if not mime_type.startswith("image/"):
+                skipped.append(f"{original_name}: ikke et billede")
+                continue
+
+            ext = _attachment_ext_from_upload(original_name, mime_type)
+            if not ext:
+                skipped.append(f"{original_name}: filtype ikke understøttet")
+                continue
+
+            size_guess = _attachment_size_from_filestorage(upload)
+            if size_guess > FILE_ATTACHMENT_MAX_BYTES:
+                skipped.append(f"{original_name}: for stor fil")
+                continue
+
+            rel_name = f"{file_id_i}/{secrets.token_hex(16)}{ext}"
+            try:
+                abs_path = _attachment_abs_path_from_rel(rel_name)
+            except Exception:
+                skipped.append(f"{original_name}: ugyldig filsti")
+                continue
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                upload.stream.seek(0)
+            except Exception:
+                pass
+            upload.save(abs_path)
+            try:
+                file_size = int(abs_path.stat().st_size)
+            except Exception:
+                file_size = max(0, size_guess)
+
+            if file_size > FILE_ATTACHMENT_MAX_BYTES:
+                try:
+                    abs_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                skipped.append(f"{original_name}: for stor fil")
+                continue
+
+            uploaded_at = now_iso()
+            uploaded_by = str(current_user.username or "")
+            cur = conn.execute(
+                """
+                INSERT INTO file_attachments(file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                (file_id_i, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at),
+            )
+            row = conn.execute(
+                """
+                SELECT id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+                FROM file_attachments WHERE id=?
+                """,
+                (int(cur.lastrowid),),
+            ).fetchone()
+            if row is not None:
+                created_items.append(serialize_file_attachment_row(row))
+        conn.commit()
+
+    if not created_items:
+        err = skipped[0] if skipped else "Ingen billeder blev uploadet"
+        return jsonify({"ok": False, "error": err, "skipped": skipped}), 400
+
+    return jsonify(
+        {
+            "ok": True,
+            "created": len(created_items),
+            "items": created_items,
+            "skipped": skipped,
+        }
+    )
+
+
+@app.route("/api/files/<int:file_id>/attachments/<int:attachment_id>/content", methods=["GET"])
+@login_required
+def api_file_attachment_content(file_id: int, attachment_id: int):
+    file_id_i = int(file_id)
+    attachment_id_i = int(attachment_id)
+    with closing(get_conn()) as conn:
+        file_row = conn.execute("SELECT * FROM files WHERE id=?", (file_id_i,)).fetchone()
+        if file_row is None:
+            return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
+        if not user_can_access_file(current_user, file_row, "view"):
+            return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+
+        row = conn.execute(
+            """
+            SELECT id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+            FROM file_attachments
+            WHERE id=? AND file_id=?
+            """,
+            (attachment_id_i, file_id_i),
+        ).fetchone()
+
+    if row is None:
+        return jsonify({"ok": False, "error": "Billedet findes ikke"}), 404
+
+    rel_name = str(row["rel_name"] or "").strip()
+    if not rel_name:
+        return jsonify({"ok": False, "error": "Billedet mangler sti"}), 404
+    try:
+        path = _attachment_abs_path_from_rel(rel_name)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig billedsti"}), 400
+    if not path.exists() or not path.is_file():
+        return jsonify({"ok": False, "error": "Billedet findes ikke på disk"}), 404
+
+    as_download = parse_bool(request.args.get("download"))
+    return send_file(
+        path,
+        mimetype=str(row["mime_type"] or "image/jpeg"),
+        as_attachment=as_download,
+        download_name=str(row["original_name"] or path.name),
+    )
+
+
 @app.route("/api/settings/dns", methods=["GET", "POST"])
 @login_required
 def api_settings_dns():
@@ -2179,6 +2704,10 @@ def api_share_file_delete(token: str, file_id: int):
         _safe_remove_thumbnail(str(file_row["thumb_rel"] or ""))
     except Exception:
         pass
+    try:
+        _cleanup_file_attachments_for_file(int(file_row["id"]))
+    except Exception:
+        pass
 
     with closing(get_conn()) as conn:
         conn.execute("DELETE FROM files WHERE id=?", (int(file_id),))
@@ -2211,14 +2740,32 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
         last_modified_ms = 0
 
     try:
-        row = commit_uploaded_file(
-            source_path=data_path,
-            folder_path=folder,
-            original_name=filename,
-            uploaded_by=uploaded_by,
-            upload_client_id=upload_client_id,
-            last_modified_ms=last_modified_ms,
-        )
+        ext = str(Path(filename).suffix or "").lower()
+        if ext == ".zip":
+            try:
+                extracted_count, row, _ = _extract_zip_upload(
+                    zip_path=data_path,
+                    base_folder=folder,
+                    uploaded_by=uploaded_by,
+                    upload_client_id=upload_client_id,
+                    last_modified_ms=last_modified_ms,
+                )
+            finally:
+                try:
+                    data_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if extracted_count <= 0:
+                return False, None, "ZIP indeholdt ingen gyldige filer."
+        else:
+            row = commit_uploaded_file(
+                source_path=data_path,
+                folder_path=folder,
+                original_name=filename,
+                uploaded_by=uploaded_by,
+                upload_client_id=upload_client_id,
+                last_modified_ms=last_modified_ms,
+            )
     except Exception as exc:
         return False, None, f"Upload finalize fejlede: {exc}"
 
