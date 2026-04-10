@@ -812,13 +812,18 @@ def _process_thumbnail_for_file_id(file_id: int) -> None:
 def _thumbnail_worker_loop() -> None:
     while True:
         file_id = THUMB_QUEUE.get()
+        fid = int(file_id)
         try:
-            _process_thumbnail_for_file_id(int(file_id))
-        except Exception:
-            pass
+            _process_thumbnail_for_file_id(fid)
+        except Exception as exc:
+            # Keep queue/state consistent even if unexpected worker errors happen.
+            try:
+                _set_file_thumbnail_state(fid, "error", error=f"thumbnail worker error: {exc}")
+            except Exception:
+                pass
         finally:
             with THUMB_QUEUE_LOCK:
-                THUMB_QUEUED_IDS.discard(int(file_id))
+                THUMB_QUEUED_IDS.discard(fid)
             THUMB_QUEUE.task_done()
 
 
@@ -1861,6 +1866,14 @@ def api_files_list():
     items: list[dict] = []
     for row in rows:
         if user_can_access_file(current_user, row, "view"):
+            ext = str(row["ext"] or "").lower()
+            thumb_status = str(row["thumb_status"] or "none").strip().lower()
+            thumb_rel = str(row["thumb_rel"] or "").strip()
+            if _supports_thumbnail_for_ext(ext) and (not thumb_rel or thumb_status in {"queued", "error"}):
+                try:
+                    enqueue_thumbnail(int(row["id"]))
+                except Exception:
+                    pass
             items.append(serialize_file_row(row))
 
     return jsonify({"ok": True, "folder": folder, "items": items})

@@ -1321,15 +1321,20 @@
       els.metadataQtyInput.value = String(Math.max(1, Number(item.quantity || 1) || 1));
     }
 
+    const hasMultiple = total > 1;
+    const isFirst = current <= 1;
+    const isLast = current >= total;
+
     if (els.metadataPrevBtn) {
-      const show = total > 1;
-      els.metadataPrevBtn.classList.toggle("hidden", !show);
-      els.metadataPrevBtn.disabled = current <= 1;
+      els.metadataPrevBtn.classList.toggle("hidden", !hasMultiple);
+      els.metadataPrevBtn.disabled = isFirst;
     }
     if (els.metadataNextBtn) {
-      const show = total > 1;
-      els.metadataNextBtn.classList.toggle("hidden", !show);
-      els.metadataNextBtn.disabled = current >= total;
+      els.metadataNextBtn.classList.toggle("hidden", !hasMultiple || isLast);
+      els.metadataNextBtn.disabled = isLast;
+    }
+    if (els.metadataSaveBtn) {
+      els.metadataSaveBtn.classList.toggle("hidden", !isLast);
     }
 
     renderMetadataAttachments(item.attachments || []);
