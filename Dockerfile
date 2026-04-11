@@ -22,13 +22,18 @@ RUN set -eux; \
         libdbus-1-3 \
         libdrm2 \
         libegl1 \
+        libavcodec61 \
+        libavutil59 \
         libfontconfig1 \
         libfreetype6 \
         libgbm1 \
         libglib2.0-0 \
+        libgstreamer-plugins-base1.0-0 \
         libgstreamer1.0-0 \
         libglu1-mesa \
         libgtk-3-0 \
+        libjavascriptcoregtk-4.0-18 \
+        libosmesa6 \
         libpangoft2-1.0-0 \
         libgl1 \
         libharfbuzz0b \
@@ -36,10 +41,13 @@ RUN set -eux; \
         libnss3 \
         libopengl0 \
         libpulse0 \
+        libsoup2.4-1 \
         libsm6 \
+        libswscale8 \
         libwayland-client0 \
         libwayland-cursor0 \
         libwayland-egl1 \
+        libwebkit2gtk-4.0-37 \
         libx11-6 \
         libx11-xcb1 \
         libxcb-cursor0 \
