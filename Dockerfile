@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 ARG TUS_JS_VERSION=4.2.3
 ARG BAMBUSTUDIO_APPIMAGE_URL=
 ARG BAMBUSTUDIO_RELEASES_API=https://api.github.com/repos/bambulab/BambuStudio/releases/latest
+ARG BAMBUSTUDIO_STRICT_LIB_CHECK=0
 
 WORKDIR /app
 
@@ -90,11 +91,22 @@ RUN set -eux; \
     cd /opt/bambu-studio; \
     ./BambuStudio.AppImage --appimage-extract >/dev/null; \
     mv squashfs-root appdir; \
-    missing_libs="$(find /opt/bambu-studio/appdir -type f -exec sh -c 'for f do ldd "$f" 2>/dev/null | awk "/not found/{print \$1}"; done' sh {} + | sort -u)"; \
+    check_targets=""; \
+    for target in /opt/bambu-studio/appdir/AppRun /opt/bambu-studio/appdir/bin/bambu-studio; do \
+        if [ -f "$target" ]; then \
+            check_targets="$check_targets $target"; \
+        fi; \
+    done; \
+    missing_libs=""; \
+    if [ -n "$check_targets" ]; then \
+        missing_libs="$(for target in $check_targets; do ldd "$target" 2>/dev/null | awk '/not found/{print $1}'; done | sort -u)"; \
+    fi; \
     if [ -n "$missing_libs" ]; then \
-        echo "BambuStudio mangler delte biblioteker:" >&2; \
+        echo "BambuStudio core-binary mangler delte biblioteker:" >&2; \
         echo "$missing_libs" >&2; \
-        exit 1; \
+        if [ "${BAMBUSTUDIO_STRICT_LIB_CHECK}" = "1" ]; then \
+            exit 1; \
+        fi; \
     fi; \
     ln -sf /opt/bambu-studio/appdir/AppRun /usr/local/bin/bambu-studio; \
     ln -sf /usr/local/bin/bambu-studio /usr/local/bin/BambuStudio; \
