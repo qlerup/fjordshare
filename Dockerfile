@@ -26,6 +26,7 @@ RUN set -eux; \
         libfreetype6 \
         libgbm1 \
         libglib2.0-0 \
+        libgstreamer1.0-0 \
         libglu1-mesa \
         libgtk-3-0 \
         libpangoft2-1.0-0 \
