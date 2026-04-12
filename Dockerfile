@@ -71,7 +71,8 @@ RUN set -eux; \
         assimp-utils; \
     pick_first_available() { \
         for pkg in "$@"; do \
-            if apt-cache show "$pkg" >/dev/null 2>&1; then \
+            candidate="$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"; \
+            if [ -n "$candidate" ] && [ "$candidate" != "(none)" ] && apt-cache show "$pkg" >/dev/null 2>&1; then \
                 printf '%s' "$pkg"; \
                 return 0; \
             fi; \
