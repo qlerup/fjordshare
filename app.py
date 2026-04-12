@@ -870,15 +870,30 @@ def _read_bambustudio_profiles() -> dict:
 def _resolve_bambustudio_executable() -> str:
     def _prefer_apprun(path_str: str) -> str:
         p = Path(path_str)
+        candidates: list[Path] = [p]
         try:
-            parts_lower = [part.lower() for part in p.parts]
+            resolved = p.resolve(strict=True)
+            if resolved not in candidates:
+                candidates.insert(0, resolved)
         except Exception:
-            return path_str
-        if len(parts_lower) >= 3 and parts_lower[-3:] == ["appdir", "bin", "bambu-studio"]:
-            app_run = p.parent.parent / "AppRun"
-            if app_run.is_file():
-                return str(app_run)
-        return path_str
+            pass
+
+        for cand in candidates:
+            try:
+                parts_lower = [part.lower() for part in cand.parts]
+            except Exception:
+                continue
+            if (
+                len(parts_lower) >= 3
+                and parts_lower[-3] == "appdir"
+                and parts_lower[-2] == "bin"
+                and parts_lower[-1] in {"bambu-studio", "bambustudio"}
+            ):
+                app_run = cand.parent.parent / "AppRun"
+                if app_run.is_file():
+                    return str(app_run)
+
+        return str(candidates[0]) if candidates else path_str
 
     configured = str(BAMBUSTUDIO_BIN or "").strip()
     if not configured:
