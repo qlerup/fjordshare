@@ -196,6 +196,35 @@ def _slicer_profile_name_keys(kind: str) -> tuple[str, ...]:
     return ("name", "inherits", "setting_id")
 
 
+def _slicer_profile_name_from_value(value: Any) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            parsed = _slicer_profile_name_from_value(item)
+            if parsed:
+                return parsed
+        return ""
+
+    if isinstance(value, dict):
+        for key in (
+            "name",
+            "id",
+            "value",
+            "setting_id",
+            "printer_settings_id",
+            "print_settings_id",
+            "filament_settings_id",
+            "inherits",
+        ):
+            parsed = _slicer_profile_name_from_value(value.get(key))
+            if parsed:
+                return parsed
+
+    return ""
+
+
 def _extract_slicer_profile_name_from_upload_json(upload: Any, kind: str) -> str:
     stream = getattr(upload, "stream", None)
     if stream is None:
@@ -236,8 +265,9 @@ def _extract_slicer_profile_name_from_upload_json(upload: Any, kind: str) -> str
 
     for field in _slicer_profile_name_keys(kind):
         value = payload.get(field)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        parsed = _slicer_profile_name_from_value(value)
+        if parsed:
+            return parsed
     return ""
 
 
