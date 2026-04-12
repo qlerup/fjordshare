@@ -144,10 +144,18 @@
     slicePreviewCanvas: document.getElementById("slicePreviewCanvas"),
     slicePreviewBed: document.getElementById("slicePreviewBed"),
     slicePreviewFootprint: document.getElementById("slicePreviewFootprint"),
-    sliceRotateRange: document.getElementById("sliceRotateRange"),
-    sliceRotateValue: document.getElementById("sliceRotateValue"),
-    sliceRotateLeftBtn: document.getElementById("sliceRotateLeftBtn"),
-    sliceRotateRightBtn: document.getElementById("sliceRotateRightBtn"),
+    sliceRotateXRange: document.getElementById("sliceRotateXRange"),
+    sliceRotateXValue: document.getElementById("sliceRotateXValue"),
+    sliceRotateXMinusBtn: document.getElementById("sliceRotateXMinusBtn"),
+    sliceRotateXPlusBtn: document.getElementById("sliceRotateXPlusBtn"),
+    sliceRotateYRange: document.getElementById("sliceRotateYRange"),
+    sliceRotateYValue: document.getElementById("sliceRotateYValue"),
+    sliceRotateYMinusBtn: document.getElementById("sliceRotateYMinusBtn"),
+    sliceRotateYPlusBtn: document.getElementById("sliceRotateYPlusBtn"),
+    sliceRotateZRange: document.getElementById("sliceRotateZRange"),
+    sliceRotateZValue: document.getElementById("sliceRotateZValue"),
+    sliceRotateZMinusBtn: document.getElementById("sliceRotateZMinusBtn"),
+    sliceRotateZPlusBtn: document.getElementById("sliceRotateZPlusBtn"),
     metadataModal: document.getElementById("metadataModal"),
     metadataStepCounter: document.getElementById("metadataStepCounter"),
     metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
@@ -1474,20 +1482,38 @@
     return parsedDefault;
   }
 
-  function normalizeSliceRotationDeg(value) {
+  function clampSliceRotationDeg(value) {
     const numeric = Number(value || 0);
     if (!Number.isFinite(numeric)) return 0;
-    const rounded = Math.round(numeric);
-    return ((rounded % 360) + 360) % 360;
+    return Math.max(-180, Math.min(180, Math.round(numeric)));
   }
 
-  function currentSliceRotationDeg() {
-    return normalizeSliceRotationDeg((els.sliceRotateRange && els.sliceRotateRange.value) || 0);
+  function rotationRangeElementForAxis(axis) {
+    const key = String(axis || "").toLowerCase();
+    if (key === "x") return els.sliceRotateXRange;
+    if (key === "y") return els.sliceRotateYRange;
+    return els.sliceRotateZRange;
   }
 
-  function setSliceRotateValueText(rotationDeg) {
-    if (!els.sliceRotateValue) return;
-    els.sliceRotateValue.textContent = `${normalizeSliceRotationDeg(rotationDeg)} deg`;
+  function rotationValueElementForAxis(axis) {
+    const key = String(axis || "").toLowerCase();
+    if (key === "x") return els.sliceRotateXValue;
+    if (key === "y") return els.sliceRotateYValue;
+    return els.sliceRotateZValue;
+  }
+
+  function currentSliceRotation() {
+    return {
+      x: clampSliceRotationDeg((els.sliceRotateXRange && els.sliceRotateXRange.value) || 0),
+      y: clampSliceRotationDeg((els.sliceRotateYRange && els.sliceRotateYRange.value) || 0),
+      z: clampSliceRotationDeg((els.sliceRotateZRange && els.sliceRotateZRange.value) || 0),
+    };
+  }
+
+  function setSliceRotateAxisValueText(axis, rotationDeg) {
+    const valueEl = rotationValueElementForAxis(axis);
+    if (!valueEl) return;
+    valueEl.textContent = `${clampSliceRotationDeg(rotationDeg)} deg`;
   }
 
   function setSlicePreviewFootprint(text, kind = "") {
@@ -1730,19 +1756,35 @@
     return preview;
   }
 
-  function setSliceModalRotation(rotationDeg) {
-    const normalized = normalizeSliceRotationDeg(rotationDeg);
-    if (els.sliceRotateRange) {
-      els.sliceRotateRange.value = String(normalized);
-    }
-    setSliceRotateValueText(normalized);
-
+  function applySlicePreviewRotation() {
     const preview = state.slicePreview;
-    if (preview && preview.modelGroup) {
-      preview.modelGroup.rotation.z = (normalized * Math.PI) / 180;
-      updateSlicePreviewFootprint();
-      renderSlicePreview();
+    if (!preview || !preview.modelGroup) return;
+    const rotation = currentSliceRotation();
+    preview.modelGroup.rotation.set(
+      (rotation.x * Math.PI) / 180,
+      (rotation.y * Math.PI) / 180,
+      (rotation.z * Math.PI) / 180,
+      "XYZ"
+    );
+    updateSlicePreviewFootprint();
+    renderSlicePreview();
+  }
+
+  function setSliceModalRotationAxis(axis, rotationDeg) {
+    const normalized = clampSliceRotationDeg(rotationDeg);
+    const rangeEl = rotationRangeElementForAxis(axis);
+    if (rangeEl) {
+      rangeEl.value = String(normalized);
     }
+    setSliceRotateAxisValueText(axis, normalized);
+    applySlicePreviewRotation();
+  }
+
+  function setSliceModalRotation(rotation = null) {
+    const next = rotation && typeof rotation === "object" ? rotation : {};
+    setSliceModalRotationAxis("x", next.x || 0);
+    setSliceModalRotationAxis("y", next.y || 0);
+    setSliceModalRotationAxis("z", next.z || 0);
   }
 
   async function loadSlicePreviewModel(file) {
@@ -1816,8 +1858,7 @@
     preview.scene.add(modelGroup);
     preview.modelGroup = modelGroup;
 
-    setSliceModalRotation(currentSliceRotationDeg());
-    renderSlicePreview();
+    setSliceModalRotation(currentSliceRotation());
   }
 
   async function setupSliceModalPreview(file) {
@@ -1849,8 +1890,7 @@
     state.slicePreviewLoadToken += 1;
     clearSlicePreview();
     state.currentSliceFileId = 0;
-    if (els.sliceRotateRange) els.sliceRotateRange.value = "0";
-    setSliceRotateValueText(0);
+    setSliceModalRotation({ x: 0, y: 0, z: 0 });
     if (els.slicePreviewBed) {
       els.slicePreviewBed.textContent = `Plade: ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.width_mm)} x ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.depth_mm)} mm`;
     }
@@ -1866,8 +1906,7 @@
     state.currentSliceFileId = Number(file.id || 0);
     if (els.sliceModalFileName) els.sliceModalFileName.textContent = String(file.filename || "-");
     if (els.sliceModal) els.sliceModal.classList.remove("hidden");
-    if (els.sliceRotateRange) els.sliceRotateRange.value = "0";
-    setSliceModalRotation(0);
+    setSliceModalRotation({ x: 0, y: 0, z: 0 });
     setSlicePreviewFootprint("Model footprint: Klargor preview...");
     if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = true;
     showStatus(els.sliceModalStatus, "Henter slice-profiler...", "ok");
@@ -1912,12 +1951,14 @@
     const printer_profile = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
     const print_profile = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim();
     const filament_profile = String((els.sliceFilamentProfileSelect && els.sliceFilamentProfileSelect.value) || "").trim();
-    const rotation_z_degrees = currentSliceRotationDeg();
+    const rotation = currentSliceRotation();
     return {
       printer_profile,
       print_profile,
       filament_profile,
-      rotation_z_degrees,
+      rotation_x_degrees: rotation.x,
+      rotation_y_degrees: rotation.y,
+      rotation_z_degrees: rotation.z,
     };
   }
 
@@ -2145,10 +2186,14 @@
     const printerProfile = String(profiles.printer_profile || "").trim();
     const printProfile = String(profiles.print_profile || "").trim();
     const filamentProfile = String(profiles.filament_profile || "").trim();
-    const rotationZ = normalizeSliceRotationDeg(profiles.rotation_z_degrees);
+    const rotationX = clampSliceRotationDeg(profiles.rotation_x_degrees);
+    const rotationY = clampSliceRotationDeg(profiles.rotation_y_degrees);
+    const rotationZ = clampSliceRotationDeg(profiles.rotation_z_degrees);
     if (printerProfile) body.printer_profile = printerProfile;
     if (printProfile) body.print_profile = printProfile;
     if (filamentProfile) body.filament_profile = filamentProfile;
+    body.rotation_x_degrees = rotationX;
+    body.rotation_y_degrees = rotationY;
     body.rotation_z_degrees = rotationZ;
     const options = { method: "POST" };
     if (Object.keys(body).length) options.body = body;
@@ -5247,24 +5292,33 @@
         refreshSlicePreviewBedFromSelection();
       });
     }
-    if (els.sliceRotateRange) {
-      els.sliceRotateRange.addEventListener("input", () => {
-        setSliceModalRotation((els.sliceRotateRange && els.sliceRotateRange.value) || 0);
-      });
-      els.sliceRotateRange.addEventListener("change", () => {
-        setSliceModalRotation((els.sliceRotateRange && els.sliceRotateRange.value) || 0);
-      });
-    }
-    if (els.sliceRotateLeftBtn) {
-      els.sliceRotateLeftBtn.addEventListener("click", () => {
-        setSliceModalRotation(currentSliceRotationDeg() - 45);
-      });
-    }
-    if (els.sliceRotateRightBtn) {
-      els.sliceRotateRightBtn.addEventListener("click", () => {
-        setSliceModalRotation(currentSliceRotationDeg() + 45);
-      });
-    }
+    const bindSliceAxisControls = (axis, rangeEl, minusBtn, plusBtn) => {
+      if (rangeEl) {
+        rangeEl.addEventListener("input", () => {
+          setSliceModalRotationAxis(axis, rangeEl.value || 0);
+        });
+        rangeEl.addEventListener("change", () => {
+          setSliceModalRotationAxis(axis, rangeEl.value || 0);
+        });
+      }
+      if (minusBtn) {
+        minusBtn.addEventListener("click", () => {
+          const current = currentSliceRotation();
+          const value = axis === "x" ? current.x : (axis === "y" ? current.y : current.z);
+          setSliceModalRotationAxis(axis, value - 15);
+        });
+      }
+      if (plusBtn) {
+        plusBtn.addEventListener("click", () => {
+          const current = currentSliceRotation();
+          const value = axis === "x" ? current.x : (axis === "y" ? current.y : current.z);
+          setSliceModalRotationAxis(axis, value + 15);
+        });
+      }
+    };
+    bindSliceAxisControls("x", els.sliceRotateXRange, els.sliceRotateXMinusBtn, els.sliceRotateXPlusBtn);
+    bindSliceAxisControls("y", els.sliceRotateYRange, els.sliceRotateYMinusBtn, els.sliceRotateYPlusBtn);
+    bindSliceAxisControls("z", els.sliceRotateZRange, els.sliceRotateZMinusBtn, els.sliceRotateZPlusBtn);
     if (els.sliceModalStartBtn) {
       els.sliceModalStartBtn.addEventListener("click", () => {
         const id = Number(state.currentSliceFileId || state.currentInfoFileId || 0);

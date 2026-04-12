@@ -2159,7 +2159,26 @@ def _validate_selected_slice_profiles(
     return ""
 
 
-def _write_centered_stl_for_slicing(input_stl: Path, output_stl: Path, rotation_z_degrees: float = 0.0) -> bool:
+def _normalize_rotation_degrees(value: Any) -> float:
+    try:
+        parsed = float(value or 0.0)
+    except Exception:
+        parsed = 0.0
+
+    if not math.isfinite(parsed):
+        return 0.0
+
+    normalized = ((parsed + 180.0) % 360.0) - 180.0
+    return round(normalized, 3)
+
+
+def _write_centered_stl_for_slicing(
+    input_stl: Path,
+    output_stl: Path,
+    rotation_x_degrees: float = 0.0,
+    rotation_y_degrees: float = 0.0,
+    rotation_z_degrees: float = 0.0,
+) -> bool:
     if str(input_stl.suffix or "").lower() != ".stl":
         return False
 
@@ -2171,21 +2190,40 @@ def _write_centered_stl_for_slicing(input_stl: Path, output_stl: Path, rotation_
     try:
         centered = mesh.copy()
 
-        rotation_value = float(rotation_z_degrees or 0.0)
-        if not math.isfinite(rotation_value):
-            rotation_value = 0.0
-        rotation_value = rotation_value % 360.0
+        rotation_x = _normalize_rotation_degrees(rotation_x_degrees)
+        rotation_y = _normalize_rotation_degrees(rotation_y_degrees)
+        rotation_z = _normalize_rotation_degrees(rotation_z_degrees)
 
-        if abs(rotation_value) >= 1e-6:
-            angle = math.radians(rotation_value)
+        for axis, angle_deg in (("x", rotation_x), ("y", rotation_y), ("z", rotation_z)):
+            if abs(angle_deg) < 1e-6:
+                continue
+
+            angle = math.radians(angle_deg)
             cos_v = math.cos(angle)
             sin_v = math.sin(angle)
-            rotation_matrix = [
-                [cos_v, -sin_v, 0.0, 0.0],
-                [sin_v, cos_v, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ]
+
+            if axis == "x":
+                rotation_matrix = [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, cos_v, -sin_v, 0.0],
+                    [0.0, sin_v, cos_v, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]
+            elif axis == "y":
+                rotation_matrix = [
+                    [cos_v, 0.0, sin_v, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [-sin_v, 0.0, cos_v, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]
+            else:
+                rotation_matrix = [
+                    [cos_v, -sin_v, 0.0, 0.0],
+                    [sin_v, cos_v, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]
+
             centered.apply_transform(rotation_matrix)
 
         bounds = centered.bounds
@@ -2201,7 +2239,14 @@ def _write_centered_stl_for_slicing(input_stl: Path, output_stl: Path, rotation_
         ty = -((mins[1] + maxs[1]) / 2.0)
         tz = -mins[2]
 
-        if abs(tx) < 1e-6 and abs(ty) < 1e-6 and abs(tz) < 1e-6 and abs(rotation_value) < 1e-6:
+        if (
+            abs(tx) < 1e-6
+            and abs(ty) < 1e-6
+            and abs(tz) < 1e-6
+            and abs(rotation_x) < 1e-6
+            and abs(rotation_y) < 1e-6
+            and abs(rotation_z) < 1e-6
+        ):
             return False
 
         centered.apply_translation([tx, ty, tz])
@@ -2223,6 +2268,8 @@ def _slice_stl_to_gcode(
     printer_profile: str = "",
     print_profile: str = "",
     filament_profile: str = "",
+    rotation_x_degrees: float = 0.0,
+    rotation_y_degrees: float = 0.0,
     rotation_z_degrees: float = 0.0,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
@@ -2254,7 +2301,13 @@ def _slice_stl_to_gcode(
     slice_input_for_cli = input_stl
     temp_slice_input = output_gcode.with_suffix(".slice_input.stl")
     try:
-        if _write_centered_stl_for_slicing(input_stl, temp_slice_input, rotation_z_degrees=rotation_z_degrees):
+        if _write_centered_stl_for_slicing(
+            input_stl,
+            temp_slice_input,
+            rotation_x_degrees=rotation_x_degrees,
+            rotation_y_degrees=rotation_y_degrees,
+            rotation_z_degrees=rotation_z_degrees,
+        ):
             slice_input_for_cli = temp_slice_input
     except Exception:
         slice_input_for_cli = input_stl
@@ -2422,13 +2475,9 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     printer_profile = str(payload.get("printer_profile") or "").strip()
     print_profile = str(payload.get("print_profile") or "").strip()
     filament_profile = str(payload.get("filament_profile") or "").strip()
-    try:
-        rotation_z_degrees = float(payload.get("rotation_z_degrees") or 0.0)
-    except Exception:
-        rotation_z_degrees = 0.0
-    if not math.isfinite(rotation_z_degrees):
-        rotation_z_degrees = 0.0
-    rotation_z_degrees = round(rotation_z_degrees % 360.0, 3)
+    rotation_x_degrees = _normalize_rotation_degrees(payload.get("rotation_x_degrees"))
+    rotation_y_degrees = _normalize_rotation_degrees(payload.get("rotation_y_degrees"))
+    rotation_z_degrees = _normalize_rotation_degrees(payload.get("rotation_z_degrees"))
     if file_id <= 0:
         return
 
@@ -2460,6 +2509,8 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             printer_profile=printer_profile,
             print_profile=print_profile,
             filament_profile=filament_profile,
+            rotation_x_degrees=rotation_x_degrees,
+            rotation_y_degrees=rotation_y_degrees,
             rotation_z_degrees=rotation_z_degrees,
         )
 
@@ -2536,6 +2587,8 @@ def enqueue_slice_job(
     printer_profile: str = "",
     print_profile: str = "",
     filament_profile: str = "",
+    rotation_x_degrees: float = 0.0,
+    rotation_y_degrees: float = 0.0,
     rotation_z_degrees: float = 0.0,
 ) -> bool:
     fid = int(file_id)
@@ -2544,6 +2597,9 @@ def enqueue_slice_job(
             return False
         SLICE_QUEUED_IDS.add(fid)
     _start_slice_worker_if_needed()
+    normalized_rotation_x = _normalize_rotation_degrees(rotation_x_degrees)
+    normalized_rotation_y = _normalize_rotation_degrees(rotation_y_degrees)
+    normalized_rotation_z = _normalize_rotation_degrees(rotation_z_degrees)
     SLICE_QUEUE.put(
         {
             "file_id": fid,
@@ -2551,7 +2607,9 @@ def enqueue_slice_job(
             "printer_profile": str(printer_profile or "").strip(),
             "print_profile": str(print_profile or "").strip(),
             "filament_profile": str(filament_profile or "").strip(),
-            "rotation_z_degrees": float(rotation_z_degrees or 0.0),
+            "rotation_x_degrees": normalized_rotation_x,
+            "rotation_y_degrees": normalized_rotation_y,
+            "rotation_z_degrees": normalized_rotation_z,
         }
     )
     return True
@@ -4604,13 +4662,9 @@ def api_file_slice(file_id: int):
     printer_profile = str(body.get("printer_profile") or "").strip()[:200]
     print_profile = str(body.get("print_profile") or "").strip()[:200]
     filament_profile = str(body.get("filament_profile") or "").strip()[:200]
-    try:
-        rotation_z_degrees = float(body.get("rotation_z_degrees") or 0.0)
-    except Exception:
-        rotation_z_degrees = 0.0
-    if not math.isfinite(rotation_z_degrees):
-        rotation_z_degrees = 0.0
-    rotation_z_degrees = round(rotation_z_degrees % 360.0, 3)
+    rotation_x_degrees = _normalize_rotation_degrees(body.get("rotation_x_degrees"))
+    rotation_y_degrees = _normalize_rotation_degrees(body.get("rotation_y_degrees"))
+    rotation_z_degrees = _normalize_rotation_degrees(body.get("rotation_z_degrees"))
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -4649,8 +4703,10 @@ def api_file_slice(file_id: int):
         profile_details.append(f"print={print_profile}")
     if filament_profile:
         profile_details.append(f"filament={filament_profile}")
-    if abs(rotation_z_degrees) >= 1e-6:
-        profile_details.append(f"rotation_z={rotation_z_degrees}deg")
+    if abs(rotation_x_degrees) >= 1e-6 or abs(rotation_y_degrees) >= 1e-6 or abs(rotation_z_degrees) >= 1e-6:
+        profile_details.append(
+            f"rotation=({rotation_x_degrees},{rotation_y_degrees},{rotation_z_degrees})deg"
+        )
     profile_txt = ", ".join(profile_details) if profile_details else "default profiler"
     log_activity(
         kind="slice",
@@ -4670,6 +4726,8 @@ def api_file_slice(file_id: int):
         printer_profile=printer_profile,
         print_profile=print_profile,
         filament_profile=filament_profile,
+        rotation_x_degrees=rotation_x_degrees,
+        rotation_y_degrees=rotation_y_degrees,
         rotation_z_degrees=rotation_z_degrees,
     )
     return jsonify(
@@ -4680,6 +4738,8 @@ def api_file_slice(file_id: int):
                 "printer_profile": printer_profile,
                 "print_profile": print_profile,
                 "filament_profile": filament_profile,
+                "rotation_x_degrees": rotation_x_degrees,
+                "rotation_y_degrees": rotation_y_degrees,
                 "rotation_z_degrees": rotation_z_degrees,
             },
         }

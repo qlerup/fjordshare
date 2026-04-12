@@ -404,13 +404,34 @@
         <div id="slicePreviewFootprint" class="slice-preview-row">Model footprint: -</div>
       </div>
       <div class="slice-rotate-controls">
-        <label for="sliceRotateRange">Rotation</label>
-        <div class="slice-rotate-buttons">
-          <button id="sliceRotateLeftBtn" class="btn" type="button">-45 deg</button>
-          <input id="sliceRotateRange" type="range" min="0" max="359" step="1" value="0">
-          <button id="sliceRotateRightBtn" class="btn" type="button">+45 deg</button>
+        <label>Rotation (X/Y/Z)</label>
+        <div class="slice-rotate-axis">
+          <span class="slice-rotate-axis-label">X</span>
+          <div class="slice-rotate-buttons">
+            <button id="sliceRotateXMinusBtn" class="btn" type="button">-15 deg</button>
+            <input id="sliceRotateXRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation X">
+            <button id="sliceRotateXPlusBtn" class="btn" type="button">+15 deg</button>
+          </div>
+          <div id="sliceRotateXValue" class="hint">0 deg</div>
         </div>
-        <div id="sliceRotateValue" class="hint">0 deg</div>
+        <div class="slice-rotate-axis">
+          <span class="slice-rotate-axis-label">Y</span>
+          <div class="slice-rotate-buttons">
+            <button id="sliceRotateYMinusBtn" class="btn" type="button">-15 deg</button>
+            <input id="sliceRotateYRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation Y">
+            <button id="sliceRotateYPlusBtn" class="btn" type="button">+15 deg</button>
+          </div>
+          <div id="sliceRotateYValue" class="hint">0 deg</div>
+        </div>
+        <div class="slice-rotate-axis">
+          <span class="slice-rotate-axis-label">Z</span>
+          <div class="slice-rotate-buttons">
+            <button id="sliceRotateZMinusBtn" class="btn" type="button">-15 deg</button>
+            <input id="sliceRotateZRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation Z">
+            <button id="sliceRotateZPlusBtn" class="btn" type="button">+15 deg</button>
+          </div>
+          <div id="sliceRotateZValue" class="hint">0 deg</div>
+        </div>
       </div>
     </div>
 

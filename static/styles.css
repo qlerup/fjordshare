@@ -1740,6 +1740,17 @@ input[type="checkbox"] {
   gap: 6px;
 }
 
+.slice-rotate-axis {
+  display: grid;
+  gap: 4px;
+}
+
+.slice-rotate-axis-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
 .slice-rotate-controls label {
   font-size: 0.82rem;
   color: var(--muted);
