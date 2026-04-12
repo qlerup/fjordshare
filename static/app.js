@@ -1488,6 +1488,12 @@
     return Math.max(-180, Math.min(180, Math.round(numeric)));
   }
 
+  function clampSliceBedSizeMm(value, fallback = 0) {
+    const numeric = Number(value || fallback || 0);
+    if (!Number.isFinite(numeric)) return Number(fallback || 0);
+    return Math.max(40, Math.min(2000, numeric));
+  }
+
   function rotationRangeElementForAxis(axis) {
     const key = String(axis || "").toLowerCase();
     if (key === "x") return els.sliceRotateXRange;
@@ -1952,6 +1958,7 @@
     const print_profile = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim();
     const filament_profile = String((els.sliceFilamentProfileSelect && els.sliceFilamentProfileSelect.value) || "").trim();
     const rotation = currentSliceRotation();
+    const bed = resolveSelectedSliceBedSize();
     return {
       printer_profile,
       print_profile,
@@ -1959,6 +1966,8 @@
       rotation_x_degrees: rotation.x,
       rotation_y_degrees: rotation.y,
       rotation_z_degrees: rotation.z,
+      bed_width_mm: clampSliceBedSizeMm(bed && bed.width_mm, DEFAULT_SLICE_BED_SIZE_MM.width_mm),
+      bed_depth_mm: clampSliceBedSizeMm(bed && bed.depth_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
     };
   }
 
@@ -2189,12 +2198,16 @@
     const rotationX = clampSliceRotationDeg(profiles.rotation_x_degrees);
     const rotationY = clampSliceRotationDeg(profiles.rotation_y_degrees);
     const rotationZ = clampSliceRotationDeg(profiles.rotation_z_degrees);
+    const bedWidth = clampSliceBedSizeMm(profiles.bed_width_mm, 0);
+    const bedDepth = clampSliceBedSizeMm(profiles.bed_depth_mm, 0);
     if (printerProfile) body.printer_profile = printerProfile;
     if (printProfile) body.print_profile = printProfile;
     if (filamentProfile) body.filament_profile = filamentProfile;
     body.rotation_x_degrees = rotationX;
     body.rotation_y_degrees = rotationY;
     body.rotation_z_degrees = rotationZ;
+    if (bedWidth > 0) body.bed_width_mm = bedWidth;
+    if (bedDepth > 0) body.bed_depth_mm = bedDepth;
     const options = { method: "POST" };
     if (Object.keys(body).length) options.body = body;
     const data = await api(`/api/files/${id}/slice`, options);

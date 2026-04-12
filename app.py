@@ -2172,12 +2172,30 @@ def _normalize_rotation_degrees(value: Any) -> float:
     return round(normalized, 3)
 
 
+def _normalize_bed_size_mm(value: Any) -> float:
+    try:
+        parsed = float(value or 0.0)
+    except Exception:
+        parsed = 0.0
+
+    if not math.isfinite(parsed):
+        return 0.0
+
+    parsed = abs(parsed)
+    if parsed < 40.0 or parsed > 2000.0:
+        return 0.0
+
+    return round(parsed, 3)
+
+
 def _write_centered_stl_for_slicing(
     input_stl: Path,
     output_stl: Path,
     rotation_x_degrees: float = 0.0,
     rotation_y_degrees: float = 0.0,
     rotation_z_degrees: float = 0.0,
+    placement_x_mm: float = 0.0,
+    placement_y_mm: float = 0.0,
 ) -> bool:
     if str(input_stl.suffix or "").lower() != ".stl":
         return False
@@ -2239,6 +2257,16 @@ def _write_centered_stl_for_slicing(
         ty = -((mins[1] + maxs[1]) / 2.0)
         tz = -mins[2]
 
+        offset_x = float(placement_x_mm or 0.0)
+        offset_y = float(placement_y_mm or 0.0)
+        if not math.isfinite(offset_x):
+            offset_x = 0.0
+        if not math.isfinite(offset_y):
+            offset_y = 0.0
+
+        tx += offset_x
+        ty += offset_y
+
         if (
             abs(tx) < 1e-6
             and abs(ty) < 1e-6
@@ -2246,6 +2274,8 @@ def _write_centered_stl_for_slicing(
             and abs(rotation_x) < 1e-6
             and abs(rotation_y) < 1e-6
             and abs(rotation_z) < 1e-6
+            and abs(offset_x) < 1e-6
+            and abs(offset_y) < 1e-6
         ):
             return False
 
@@ -2271,6 +2301,8 @@ def _slice_stl_to_gcode(
     rotation_x_degrees: float = 0.0,
     rotation_y_degrees: float = 0.0,
     rotation_z_degrees: float = 0.0,
+    bed_width_mm: float = 0.0,
+    bed_depth_mm: float = 0.0,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
@@ -2298,19 +2330,63 @@ def _slice_stl_to_gcode(
     if filament_profile_value:
         legacy_cmd.extend(["--filament-profile", filament_profile_value])
 
-    slice_input_for_cli = input_stl
-    temp_slice_input = output_gcode.with_suffix(".slice_input.stl")
+    normalized_bed_width = _normalize_bed_size_mm(bed_width_mm)
+    normalized_bed_depth = _normalize_bed_size_mm(bed_depth_mm)
+    if normalized_bed_width <= 0.0 or normalized_bed_depth <= 0.0:
+        try:
+            machine_json, _process_json, _filament_json = _resolve_selected_profile_jsons(
+                executable,
+                printer_profile_value,
+                print_profile_value,
+                filament_profile_value,
+                prefer_uploaded=True,
+            )
+            if machine_json:
+                payload = _read_profile_json_payload(Path(machine_json))
+                detected_bed = _extract_printer_bed_size_mm(payload)
+                if detected_bed:
+                    if normalized_bed_width <= 0.0:
+                        normalized_bed_width = _normalize_bed_size_mm(detected_bed[0])
+                    if normalized_bed_depth <= 0.0:
+                        normalized_bed_depth = _normalize_bed_size_mm(detected_bed[1])
+        except Exception:
+            pass
+
+    slice_input_candidates: list[tuple[str, Path]] = []
+    temp_slice_inputs: list[Path] = []
+
+    centered_input = output_gcode.with_suffix(".slice_input.centered.stl")
     try:
         if _write_centered_stl_for_slicing(
             input_stl,
-            temp_slice_input,
+            centered_input,
             rotation_x_degrees=rotation_x_degrees,
             rotation_y_degrees=rotation_y_degrees,
             rotation_z_degrees=rotation_z_degrees,
         ):
-            slice_input_for_cli = temp_slice_input
+            slice_input_candidates.append(("center-origin", centered_input))
+            temp_slice_inputs.append(centered_input)
     except Exception:
-        slice_input_for_cli = input_stl
+        pass
+
+    if normalized_bed_width > 0.0 and normalized_bed_depth > 0.0:
+        corner_input = output_gcode.with_suffix(".slice_input.corner.stl")
+        try:
+            if _write_centered_stl_for_slicing(
+                input_stl,
+                corner_input,
+                rotation_x_degrees=rotation_x_degrees,
+                rotation_y_degrees=rotation_y_degrees,
+                rotation_z_degrees=rotation_z_degrees,
+                placement_x_mm=normalized_bed_width / 2.0,
+                placement_y_mm=normalized_bed_depth / 2.0,
+            ):
+                slice_input_candidates.append(("corner-origin", corner_input))
+                temp_slice_inputs.append(corner_input)
+        except Exception:
+            pass
+
+    slice_input_candidates.append(("original", input_stl))
 
     try:
         modern_profile_args = _build_modern_profile_args(
@@ -2332,104 +2408,116 @@ def _slice_stl_to_gcode(
         fallback_base = [executable, "--slice", "0", *fallback_profile_args]
 
         temp_3mf = output_gcode.with_suffix(".gcode.3mf")
-        attempts: list[tuple[str, list[str], str]] = [
-            (
-                "legacy-hyphen",
-                [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(slice_input_for_cli)],
-                "gcode",
-            ),
-            (
-                "legacy-underscore",
-                [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(slice_input_for_cli)],
-                "gcode",
-            ),
-            (
-                "modern-3mf-hyphen",
-                [*modern_base, "--export-3mf", str(temp_3mf), str(slice_input_for_cli)],
-                "3mf",
-            ),
-            (
-                "modern-3mf-outputdir-hyphen",
-                [
-                    *modern_base,
-                    "--outputdir",
-                    str(temp_3mf.parent),
-                    "--export-3mf",
-                    temp_3mf.name,
-                    str(slice_input_for_cli),
-                ],
-                "3mf",
-            ),
-            (
-                "modern-3mf-underscore",
-                [*modern_base, "--export_3mf", str(temp_3mf), str(slice_input_for_cli)],
-                "3mf",
-            ),
-        ]
+        def _build_attempts(slice_input_path: Path) -> list[tuple[str, list[str], str]]:
+            attempts: list[tuple[str, list[str], str]] = [
+                (
+                    "legacy-hyphen",
+                    [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(slice_input_path)],
+                    "gcode",
+                ),
+                (
+                    "legacy-underscore",
+                    [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(slice_input_path)],
+                    "gcode",
+                ),
+                (
+                    "modern-3mf-hyphen",
+                    [*modern_base, "--export-3mf", str(temp_3mf), str(slice_input_path)],
+                    "3mf",
+                ),
+                (
+                    "modern-3mf-outputdir-hyphen",
+                    [
+                        *modern_base,
+                        "--outputdir",
+                        str(temp_3mf.parent),
+                        "--export-3mf",
+                        temp_3mf.name,
+                        str(slice_input_path),
+                    ],
+                    "3mf",
+                ),
+                (
+                    "modern-3mf-underscore",
+                    [*modern_base, "--export_3mf", str(temp_3mf), str(slice_input_path)],
+                    "3mf",
+                ),
+            ]
 
-        if BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK and fallback_profile_args != modern_profile_args:
-            attempts.extend(
-                [
-                    (
-                        "modern-fallback-3mf-hyphen",
-                        [*fallback_base, "--export-3mf", str(temp_3mf), str(slice_input_for_cli)],
-                        "3mf",
-                    ),
-                    (
-                        "modern-fallback-3mf-outputdir-hyphen",
-                        [
-                            *fallback_base,
-                            "--outputdir",
-                            str(temp_3mf.parent),
-                            "--export-3mf",
-                            temp_3mf.name,
-                            str(slice_input_for_cli),
-                        ],
-                        "3mf",
-                    ),
-                ]
-            )
+            if BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK and fallback_profile_args != modern_profile_args:
+                attempts.extend(
+                    [
+                        (
+                            "modern-fallback-3mf-hyphen",
+                            [*fallback_base, "--export-3mf", str(temp_3mf), str(slice_input_path)],
+                            "3mf",
+                        ),
+                        (
+                            "modern-fallback-3mf-outputdir-hyphen",
+                            [
+                                *fallback_base,
+                                "--outputdir",
+                                str(temp_3mf.parent),
+                                "--export-3mf",
+                                temp_3mf.name,
+                                str(slice_input_path),
+                            ],
+                            "3mf",
+                        ),
+                    ]
+                )
+
+            return attempts
 
         errors: list[str] = []
-        for label, cmd, mode in attempts:
-            try:
-                output_gcode.unlink(missing_ok=True)
-                temp_3mf.unlink(missing_ok=True)
-            except Exception:
-                pass
+        has_shared_lib_error = False
+        attempted_corner_origin = any(label == "corner-origin" for label, _path in slice_input_candidates)
 
-            proc, details = _run_bambu_with_runtime_fallback(cmd, executable)
-            details = details.strip()
-
-            if proc.returncode != 0:
-                details_lower = details.lower()
-                if "libsoup2 symbols detected" in details_lower and "libsoup3" in details_lower:
-                    raise RuntimeError(
-                        "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
-                        "Genbyg image med seneste Dockerfile (matcher WebKit/JSC + libsoup automatisk)."
-                    )
-                errors.append(f"{label}: {details[:350]}")
-                if "error while loading shared libraries" in details_lower:
-                    break
-                continue
-
-            if mode == "gcode":
-                if output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0:
-                    return
-                errors.append(f"{label}: kommandoen kørte men lavede ingen G-code output")
-                continue
-
-            if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
+        for candidate_label, candidate_input in slice_input_candidates:
+            attempts = _build_attempts(candidate_input)
+            for label, cmd, mode in attempts:
                 try:
+                    output_gcode.unlink(missing_ok=True)
                     temp_3mf.unlink(missing_ok=True)
                 except Exception:
                     pass
-                return
 
-            if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
-                errors.append(f"{label}: 3MF blev lavet men indeholdt ingen G-code")
-            else:
-                errors.append(f"{label}: kommandoen kørte men lavede ingen 3MF output")
+                proc, details = _run_bambu_with_runtime_fallback(cmd, executable)
+                details = details.strip()
+
+                if proc.returncode != 0:
+                    details_lower = details.lower()
+                    if "libsoup2 symbols detected" in details_lower and "libsoup3" in details_lower:
+                        raise RuntimeError(
+                            "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
+                            "Genbyg image med seneste Dockerfile (matcher WebKit/JSC + libsoup automatisk)."
+                        )
+                    errors.append(f"{candidate_label}/{label}: {details[:350]}")
+                    if "error while loading shared libraries" in details_lower:
+                        has_shared_lib_error = True
+                        break
+                    continue
+
+                if mode == "gcode":
+                    if output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0:
+                        return
+                    errors.append(f"{candidate_label}/{label}: kommandoen kørte men lavede ingen G-code output")
+                    continue
+
+                if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
+                    try:
+                        temp_3mf.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    return
+
+                if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
+                    errors.append(f"{candidate_label}/{label}: 3MF blev lavet men indeholdt ingen G-code")
+                else:
+                    errors.append(f"{candidate_label}/{label}: kommandoen kørte men lavede ingen 3MF output")
+
+            if has_shared_lib_error:
+                break
 
         if errors:
             guidance = ""
@@ -2441,14 +2529,17 @@ def _slice_stl_to_gcode(
                 )
             if any(("nothing to be sliced" in err) or ("no object is fully in" in err) for err in errors_lower):
                 guidance += " | STL blev auto-centreret, men objektet er stadig udenfor pladen eller inkompatibelt med valgt profil."
+                if attempted_corner_origin:
+                    guidance += " Forsøgte både center-origin og corner-origin placering."
             raise RuntimeError(f"BambuStudio fejl: {(' | '.join(errors) + guidance)[:1000]}")
 
         if not output_gcode.exists() or not output_gcode.is_file() or output_gcode.stat().st_size <= 0:
             raise RuntimeError("BambuStudio lavede ingen output-fil")
     finally:
-        if slice_input_for_cli != input_stl:
+        for temp_input in temp_slice_inputs:
             try:
-                temp_slice_input.unlink(missing_ok=True)
+                if temp_input != input_stl:
+                    temp_input.unlink(missing_ok=True)
             except Exception:
                 pass
 
@@ -2478,6 +2569,8 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     rotation_x_degrees = _normalize_rotation_degrees(payload.get("rotation_x_degrees"))
     rotation_y_degrees = _normalize_rotation_degrees(payload.get("rotation_y_degrees"))
     rotation_z_degrees = _normalize_rotation_degrees(payload.get("rotation_z_degrees"))
+    bed_width_mm = _normalize_bed_size_mm(payload.get("bed_width_mm"))
+    bed_depth_mm = _normalize_bed_size_mm(payload.get("bed_depth_mm"))
     if file_id <= 0:
         return
 
@@ -2512,6 +2605,8 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             rotation_x_degrees=rotation_x_degrees,
             rotation_y_degrees=rotation_y_degrees,
             rotation_z_degrees=rotation_z_degrees,
+            bed_width_mm=bed_width_mm,
+            bed_depth_mm=bed_depth_mm,
         )
 
         creator = requested_by or str(row["uploaded_by"] or "slicer")
@@ -2590,6 +2685,8 @@ def enqueue_slice_job(
     rotation_x_degrees: float = 0.0,
     rotation_y_degrees: float = 0.0,
     rotation_z_degrees: float = 0.0,
+    bed_width_mm: float = 0.0,
+    bed_depth_mm: float = 0.0,
 ) -> bool:
     fid = int(file_id)
     with SLICE_QUEUE_LOCK:
@@ -2600,6 +2697,8 @@ def enqueue_slice_job(
     normalized_rotation_x = _normalize_rotation_degrees(rotation_x_degrees)
     normalized_rotation_y = _normalize_rotation_degrees(rotation_y_degrees)
     normalized_rotation_z = _normalize_rotation_degrees(rotation_z_degrees)
+    normalized_bed_width = _normalize_bed_size_mm(bed_width_mm)
+    normalized_bed_depth = _normalize_bed_size_mm(bed_depth_mm)
     SLICE_QUEUE.put(
         {
             "file_id": fid,
@@ -2610,6 +2709,8 @@ def enqueue_slice_job(
             "rotation_x_degrees": normalized_rotation_x,
             "rotation_y_degrees": normalized_rotation_y,
             "rotation_z_degrees": normalized_rotation_z,
+            "bed_width_mm": normalized_bed_width,
+            "bed_depth_mm": normalized_bed_depth,
         }
     )
     return True
@@ -4665,6 +4766,8 @@ def api_file_slice(file_id: int):
     rotation_x_degrees = _normalize_rotation_degrees(body.get("rotation_x_degrees"))
     rotation_y_degrees = _normalize_rotation_degrees(body.get("rotation_y_degrees"))
     rotation_z_degrees = _normalize_rotation_degrees(body.get("rotation_z_degrees"))
+    bed_width_mm = _normalize_bed_size_mm(body.get("bed_width_mm"))
+    bed_depth_mm = _normalize_bed_size_mm(body.get("bed_depth_mm"))
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -4707,6 +4810,8 @@ def api_file_slice(file_id: int):
         profile_details.append(
             f"rotation=({rotation_x_degrees},{rotation_y_degrees},{rotation_z_degrees})deg"
         )
+    if bed_width_mm > 0.0 and bed_depth_mm > 0.0:
+        profile_details.append(f"bed={bed_width_mm}x{bed_depth_mm}mm")
     profile_txt = ", ".join(profile_details) if profile_details else "default profiler"
     log_activity(
         kind="slice",
@@ -4729,6 +4834,8 @@ def api_file_slice(file_id: int):
         rotation_x_degrees=rotation_x_degrees,
         rotation_y_degrees=rotation_y_degrees,
         rotation_z_degrees=rotation_z_degrees,
+        bed_width_mm=bed_width_mm,
+        bed_depth_mm=bed_depth_mm,
     )
     return jsonify(
         {
@@ -4741,6 +4848,8 @@ def api_file_slice(file_id: int):
                 "rotation_x_degrees": rotation_x_degrees,
                 "rotation_y_degrees": rotation_y_degrees,
                 "rotation_z_degrees": rotation_z_degrees,
+                "bed_width_mm": bed_width_mm,
+                "bed_depth_mm": bed_depth_mm,
             },
         }
     )
