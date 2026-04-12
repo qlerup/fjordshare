@@ -97,6 +97,7 @@ BAMBUSTUDIO_PRINT_PROFILES = str(os.getenv("BAMBUSTUDIO_PRINT_PROFILES", "")).st
 BAMBUSTUDIO_FILAMENT_PROFILES = str(os.getenv("BAMBUSTUDIO_FILAMENT_PROFILES", "")).strip()
 BAMBUSTUDIO_LOAD_SETTINGS = str(os.getenv("BAMBUSTUDIO_LOAD_SETTINGS", "")).strip()
 BAMBUSTUDIO_LOAD_FILAMENTS = str(os.getenv("BAMBUSTUDIO_LOAD_FILAMENTS", "")).strip()
+BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK = str(os.getenv("BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK", "0")).strip().lower() in {"1", "true", "yes", "on"}
 try:
     BAMBUSTUDIO_TIMEOUT_SEC = max(60, int(str(os.getenv("BAMBUSTUDIO_TIMEOUT_SEC", "1800")) or "1800"))
 except Exception:
@@ -303,6 +304,14 @@ def _normalize_uploaded_profile_json_bytes(payload: dict[str, Any], kind: str) -
         normalized["from"] = from_value.strip().lower()
     elif expected_type:
         normalized["from"] = "user"
+
+    if expected_type == "process":
+        process_compatible = _string_values_from_any(normalized.get("compatible_printers"))
+        uploaded_machine_names = _uploaded_machine_profile_names()
+        if uploaded_machine_names:
+            merged = _dedupe_preserve_order([*process_compatible, *uploaded_machine_names])
+            if merged:
+                normalized["compatible_printers"] = merged
 
     return (json.dumps(normalized, ensure_ascii=False, indent=4) + "\n").encode("utf-8")
 
@@ -1246,6 +1255,23 @@ def _profile_tokens_overlap(tokens_a: Iterable[str], tokens_b: Iterable[str]) ->
     return False
 
 
+def _uploaded_machine_profile_names() -> list[str]:
+    names: list[str] = []
+    for profile_path in _list_slicer_profile_files(SLICER_PROFILE_PRINTER_DIR, {".json"}):
+        payload = _read_profile_json_payload(profile_path)
+        if not _profile_payload_is_usable(payload, "machine"):
+            continue
+
+        if payload is not None:
+            names.extend(_profile_json_name_candidates(payload))
+
+        stem_name = str(profile_path.stem or "").strip()
+        if stem_name:
+            names.append(stem_name)
+
+    return _dedupe_preserve_order(names)
+
+
 def _profile_payload_is_usable(payload: Optional[dict[str, Any]], expected_type: str) -> bool:
     if payload is None:
         return not bool(expected_type)
@@ -1869,7 +1895,7 @@ def _slice_stl_to_gcode(
         ),
     ]
 
-    if fallback_profile_args != modern_profile_args:
+    if BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK and fallback_profile_args != modern_profile_args:
         attempts.extend(
             [
                 (
