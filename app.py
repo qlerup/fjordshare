@@ -933,14 +933,26 @@ def _slice_stl_to_gcode(
 
     cmd.extend(["--export-gcode", "--output", str(output_gcode), str(input_stl)])
 
-    try:
-        proc = subprocess.run(
-            cmd,
+    def _run_slice_cmd(command: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=BAMBUSTUDIO_TIMEOUT_SEC,
         )
+
+    def _resolve_exec_candidate(raw: str) -> str:
+        value = str(raw or "").strip()
+        if not value:
+            return ""
+        path = Path(value)
+        if path.is_file():
+            return str(path)
+        return str(shutil.which(value) or "")
+
+    try:
+        proc = _run_slice_cmd(cmd)
     except subprocess.TimeoutExpired:
         raise RuntimeError("BambuStudio timeout")
     except FileNotFoundError:
@@ -950,7 +962,39 @@ def _slice_stl_to_gcode(
 
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "Ukendt fejl").strip()
-        raise RuntimeError(f"BambuStudio fejl: {details[:1000]}")
+        details_lower = details.lower()
+        if "error while loading shared libraries" in details_lower:
+            seen_execs: set[str] = {str(executable)}
+            fallback_execs = [
+                "/opt/bambu-studio/appdir/AppRun",
+                "/opt/bambu-studio/appdir/bin/bambu-studio-console",
+                "bambu-studio-console",
+                "BambuStudio-console",
+                "bambu-studio",
+                "BambuStudio",
+            ]
+            for raw_exec in fallback_execs:
+                candidate = _resolve_exec_candidate(raw_exec)
+                if not candidate or candidate in seen_execs:
+                    continue
+                seen_execs.add(candidate)
+
+                alt_cmd = [candidate, *cmd[1:]]
+                try:
+                    alt_proc = _run_slice_cmd(alt_cmd)
+                except Exception:
+                    continue
+                if alt_proc.returncode == 0:
+                    proc = alt_proc
+                    details = ""
+                    break
+
+                alt_details = (alt_proc.stderr or alt_proc.stdout or "").strip()
+                if alt_details:
+                    details = f"{details}\nFallback {candidate} -> {alt_details}".strip()
+
+        if proc.returncode != 0:
+            raise RuntimeError(f"BambuStudio fejl: {details[:1000]}")
 
     if not output_gcode.exists() or not output_gcode.is_file() or output_gcode.stat().st_size <= 0:
         raise RuntimeError("BambuStudio lavede ingen output-fil")
