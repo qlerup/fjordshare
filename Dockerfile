@@ -134,6 +134,10 @@ RUN set -eux; \
     fi; \
     ln -sf /opt/bambu-studio/appdir/AppRun /usr/local/bin/bambu-studio; \
     ln -sf /usr/local/bin/bambu-studio /usr/local/bin/BambuStudio; \
+    if [ -f /opt/bambu-studio/appdir/bin/bambu-studio-console ]; then \
+        ln -sf /opt/bambu-studio/appdir/bin/bambu-studio-console /usr/local/bin/bambu-studio-console; \
+        ln -sf /usr/local/bin/bambu-studio-console /usr/local/bin/BambuStudio-console; \
+    fi; \
     rm -f /opt/bambu-studio/BambuStudio.AppImage; \
     rm -rf /var/lib/apt/lists/*
 

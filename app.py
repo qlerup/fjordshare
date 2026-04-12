@@ -815,15 +815,15 @@ def _resolve_bambustudio_executable() -> str:
     if candidate_path.is_file():
         return _prefer_apprun(str(candidate_path))
 
-    resolved = shutil.which(configured)
-    if resolved:
-        return _prefer_apprun(resolved)
-
     if configured.lower() in {"bambu-studio", "bambustudio"}:
-        for alt in ("BambuStudio", "bambu-studio", "BambuStudio-console", "bambu-studio-console"):
+        for alt in ("bambu-studio-console", "BambuStudio-console", "bambu-studio", "BambuStudio"):
             resolved_alt = shutil.which(alt)
             if resolved_alt:
                 return _prefer_apprun(resolved_alt)
+
+    resolved = shutil.which(configured)
+    if resolved:
+        return _prefer_apprun(resolved)
 
     raise RuntimeError(f"BambuStudio blev ikke fundet: {configured}")
 
