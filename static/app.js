@@ -186,6 +186,7 @@
     userStatus: document.getElementById("userStatus"),
     usersTableBody: document.getElementById("usersTableBody"),
     logsRefreshBtn: document.getElementById("logsRefreshBtn"),
+    logsClearBtn: document.getElementById("logsClearBtn"),
     logsStatus: document.getElementById("logsStatus"),
     logsTableBody: document.getElementById("logsTableBody"),
   };
@@ -2695,6 +2696,16 @@
     renderAdminLogs();
   }
 
+  async function clearAdminLogs() {
+    if (state.role !== "admin") return;
+    if (!window.confirm("Ryd alle loglinjer? Dette kan ikke fortrydes.")) return;
+    const data = await api("/api/admin/logs", { method: "DELETE" });
+    const deleted = Math.max(0, Number(data.deleted || 0));
+    state.adminLogs = [];
+    renderAdminLogs();
+    showStatus(els.logsStatus, `Logs ryddet (${deleted}).`, "ok");
+  }
+
   function renderAdminLogs() {
     if (!els.logsTableBody) return;
     const list = Array.isArray(state.adminLogs) ? state.adminLogs : [];
@@ -4731,6 +4742,13 @@
       els.logsRefreshBtn.addEventListener("click", () => {
         loadAdminLogs().catch((err) => {
           showStatus(els.logsStatus, err.message || "Kunne ikke hente logs", "error");
+        });
+      });
+    }
+    if (els.logsClearBtn) {
+      els.logsClearBtn.addEventListener("click", () => {
+        clearAdminLogs().catch((err) => {
+          showStatus(els.logsStatus, err.message || "Kunne ikke rydde logs", "error");
         });
       });
     }

@@ -3517,11 +3517,19 @@ def api_admin_users_delete(user_id: int):
     return jsonify({"ok": True})
 
 
-@app.route("/api/admin/logs", methods=["GET"])
+@app.route("/api/admin/logs", methods=["GET", "DELETE"])
 @login_required
 def api_admin_logs():
     if not current_user.is_admin:
         return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    if request.method == "DELETE":
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM activity_logs").fetchone()
+            deleted = int(row["c"] or 0) if row else 0
+            conn.execute("DELETE FROM activity_logs")
+            conn.commit()
+        return jsonify({"ok": True, "deleted": deleted})
 
     try:
         limit = int(str(request.args.get("limit") or str(ACTIVITY_LOG_LIMIT_DEFAULT)))
