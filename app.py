@@ -1533,6 +1533,7 @@ def _build_modern_profile_args(
     printer_profile: str,
     print_profile: str,
     filament_profile: str,
+    prefer_uploaded: bool = True,
 ) -> list[str]:
     args: list[str] = []
 
@@ -1549,8 +1550,12 @@ def _build_modern_profile_args(
     discovered_profile_root: Optional[Path] = None
 
     if not effective_load_settings:
-        machine_json = _pick_profile_json(SLICER_PROFILE_PRINTER_DIR, printer_profile, fallback_first=False)
-        process_json = _pick_profile_json(SLICER_PROFILE_PRINT_SETTINGS_DIR, print_profile, fallback_first=False)
+        machine_json = ""
+        process_json = ""
+
+        if prefer_uploaded:
+            machine_json = _pick_profile_json(SLICER_PROFILE_PRINTER_DIR, printer_profile, fallback_first=False)
+            process_json = _pick_profile_json(SLICER_PROFILE_PRINT_SETTINGS_DIR, print_profile, fallback_first=False)
 
         if (not machine_json) or (not process_json):
             discovered_profile_root = _find_bambu_profile_root(executable)
@@ -1564,7 +1569,9 @@ def _build_modern_profile_args(
             args.extend(["--load-settings", f"{machine_json};{process_json}"])
 
     if not effective_load_filaments:
-        filament_json = _pick_profile_json(SLICER_PROFILE_FILAMENT_DIR, filament_profile, fallback_first=False)
+        filament_json = ""
+        if prefer_uploaded:
+            filament_json = _pick_profile_json(SLICER_PROFILE_FILAMENT_DIR, filament_profile, fallback_first=False)
         if not filament_json:
             if discovered_profile_root is None:
                 discovered_profile_root = _find_bambu_profile_root(executable)
@@ -1615,8 +1622,18 @@ def _slice_stl_to_gcode(
         printer_profile_value,
         print_profile_value,
         filament_profile_value,
+        prefer_uploaded=True,
     )
     modern_base = [executable, "--slice", "0", *modern_profile_args]
+
+    fallback_profile_args = _build_modern_profile_args(
+        executable,
+        printer_profile_value,
+        print_profile_value,
+        filament_profile_value,
+        prefer_uploaded=False,
+    )
+    fallback_base = [executable, "--slice", "0", *fallback_profile_args]
 
     temp_3mf = output_gcode.with_suffix(".gcode.3mf")
     attempts: list[tuple[str, list[str], str]] = [
@@ -1653,6 +1670,29 @@ def _slice_stl_to_gcode(
             "3mf",
         ),
     ]
+
+    if fallback_profile_args != modern_profile_args:
+        attempts.extend(
+            [
+                (
+                    "modern-fallback-3mf-hyphen",
+                    [*fallback_base, "--export-3mf", str(temp_3mf), str(input_stl)],
+                    "3mf",
+                ),
+                (
+                    "modern-fallback-3mf-outputdir-hyphen",
+                    [
+                        *fallback_base,
+                        "--outputdir",
+                        str(temp_3mf.parent),
+                        "--export-3mf",
+                        temp_3mf.name,
+                        str(input_stl),
+                    ],
+                    "3mf",
+                ),
+            ]
+        )
 
     errors: list[str] = []
     for label, cmd, mode in attempts:
