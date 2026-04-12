@@ -1442,17 +1442,27 @@
   function renderKnownPrinterSelect(selectEl, selectedKey = "") {
     if (!selectEl) return;
     const models = KNOWN_PRINTER_MODELS; // built-ins first
-    const html = models.map((m) => `<option value="${esc(m.key)}">${esc(m.name)}</option>`).join("");
+    const html = models
+      .map((m) => {
+        const width = Number(m.width_mm || 0);
+        const depth = Number(m.depth_mm || 0);
+        return `<option value="${esc(m.key)}" data-width-mm="${esc(width)}" data-depth-mm="${esc(depth)}">${esc(m.name)}</option>`;
+      })
+      .join("");
     selectEl.innerHTML = html;
     const match = models.find((m) => m.key === String(selectedKey || ""));
     selectEl.value = match ? match.key : "";
   }
 
   function applyKnownPrinterBedSize(key) {
-    const model = KNOWN_PRINTER_MODELS.find((m) => m.key === String(key || ""));
-    if (!model || !(Number(model.width_mm) > 0 && Number(model.depth_mm) > 0)) return;
-    if (els.sliceBedWidthInput) els.sliceBedWidthInput.value = String(model.width_mm);
-    if (els.sliceBedDepthInput) els.sliceBedDepthInput.value = String(model.depth_mm);
+    const wanted = String(key || "").trim();
+    if (!wanted || !els.sliceKnownPrinterSelect) return;
+    const selectedOption = Array.from(els.sliceKnownPrinterSelect.options || []).find((opt) => String(opt.value || "") === wanted) || null;
+    const optionWidth = Number(selectedOption && selectedOption.dataset ? selectedOption.dataset.widthMm : 0);
+    const optionDepth = Number(selectedOption && selectedOption.dataset ? selectedOption.dataset.depthMm : 0);
+    if (!(optionWidth > 0 && optionDepth > 0)) return;
+    if (els.sliceBedWidthInput) els.sliceBedWidthInput.value = String(clampSliceBedSizeMm(optionWidth, DEFAULT_SLICE_BED_SIZE_MM.width_mm));
+    if (els.sliceBedDepthInput) els.sliceBedDepthInput.value = String(clampSliceBedSizeMm(optionDepth, DEFAULT_SLICE_BED_SIZE_MM.depth_mm));
     refreshSlicePreviewBedFromSelection();
   }
 
@@ -1519,6 +1529,14 @@
     // 0) Known-printer selection is an explicit bed preset.
     const knownKey = String((els.sliceKnownPrinterSelect && els.sliceKnownPrinterSelect.value) || "").trim();
     if (knownKey) {
+      const knownOption = (els.sliceKnownPrinterSelect && els.sliceKnownPrinterSelect.selectedOptions)
+        ? (els.sliceKnownPrinterSelect.selectedOptions[0] || null)
+        : null;
+      const optWidth = Number(knownOption && knownOption.dataset ? knownOption.dataset.widthMm : 0);
+      const optDepth = Number(knownOption && knownOption.dataset ? knownOption.dataset.depthMm : 0);
+      const fromOption = normalizeSliceBedSize({ width_mm: optWidth, depth_mm: optDepth });
+      if (fromOption) return fromOption;
+
       const knownModel = KNOWN_PRINTER_MODELS.find((m) => m.key === knownKey) || null;
       const knownBed = normalizeSliceBedSize(knownModel);
       if (knownBed) return knownBed;
@@ -1618,7 +1636,7 @@
   }
 
   function currentSliceLiftMm() {
-    return clampSliceLiftMm((els.sliceLiftZRange && els.sliceLiftZRange.value) || 0);
+    return 0;
   }
 
   function setSliceRotateAxisValueText(axis, rotationDeg) {
@@ -1629,7 +1647,7 @@
 
   function setSliceLiftValueText(valueMm) {
     if (!els.sliceLiftZValue) return;
-    els.sliceLiftZValue.textContent = `${formatNumberCompact(clampSliceLiftMm(valueMm))} mm`;
+    els.sliceLiftZValue.textContent = `${formatNumberCompact(clampSliceLiftMm(valueMm))} mm (auto-snap til plade)`;
   }
 
   function setSlicePreviewHeight(text, kind = "") {
@@ -2028,7 +2046,7 @@
   }
 
   function setSliceModalLiftMm(valueMm) {
-    const normalized = clampSliceLiftMm(valueMm);
+    const normalized = 0;
     if (els.sliceLiftZRange) {
       els.sliceLiftZRange.value = String(normalized);
     }
@@ -2245,7 +2263,7 @@
       rotation_x_degrees: rotation.x,
       rotation_y_degrees: rotation.y,
       rotation_z_degrees: rotation.z,
-      lift_z_mm: currentSliceLiftMm(),
+      lift_z_mm: 0,
       bed_width_mm: clampSliceBedSizeMm(bed && bed.width_mm, DEFAULT_SLICE_BED_SIZE_MM.width_mm),
       bed_depth_mm: clampSliceBedSizeMm(bed && bed.depth_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
     };
@@ -5623,7 +5641,9 @@
         // Build a transient list: prepend the custom one then built-ins (simple approach without persistence for now)
         const custom = { key, name: `${label} (${w}×${d})`, width_mm: w, depth_mm: d };
         const models = [KNOWN_PRINTER_MODELS[0], custom, ...KNOWN_PRINTER_MODELS.slice(1)];
-        const html = models.map((m) => `<option value="${esc(m.key)}">${esc(m.name)}</option>`).join("");
+        const html = models
+          .map((m) => `<option value="${esc(m.key)}" data-width-mm="${esc(m.width_mm || 0)}" data-depth-mm="${esc(m.depth_mm || 0)}">${esc(m.name)}</option>`)
+          .join("");
         if (els.sliceKnownPrinterSelect) {
           els.sliceKnownPrinterSelect.innerHTML = html;
           els.sliceKnownPrinterSelect.value = key;
@@ -5685,23 +5705,28 @@
 
     const bindSliceLiftControls = () => {
       if (els.sliceLiftZRange) {
+        els.sliceLiftZRange.disabled = true;
+        els.sliceLiftZRange.value = "0";
         els.sliceLiftZRange.addEventListener("input", () => {
-          setSliceModalLiftMm(els.sliceLiftZRange.value || 0);
+          setSliceModalLiftMm(0);
         });
         els.sliceLiftZRange.addEventListener("change", () => {
-          setSliceModalLiftMm(els.sliceLiftZRange.value || 0);
+          setSliceModalLiftMm(0);
         });
       }
       if (els.sliceLiftZMinusBtn) {
+        els.sliceLiftZMinusBtn.disabled = true;
         els.sliceLiftZMinusBtn.addEventListener("click", () => {
-          setSliceModalLiftMm(currentSliceLiftMm() - 1);
+          setSliceModalLiftMm(0);
         });
       }
       if (els.sliceLiftZPlusBtn) {
+        els.sliceLiftZPlusBtn.disabled = true;
         els.sliceLiftZPlusBtn.addEventListener("click", () => {
-          setSliceModalLiftMm(currentSliceLiftMm() + 1);
+          setSliceModalLiftMm(0);
         });
       }
+      setSliceModalLiftMm(0);
     };
     bindSliceLiftControls();
 

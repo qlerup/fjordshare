@@ -2483,7 +2483,9 @@ def _slice_stl_to_gcode(
     printer_profile_value = str(printer_profile or "").strip()
     print_profile_value = str(print_profile or "").strip()
     filament_profile_value = str(filament_profile or "").strip()
-    normalized_lift_z = _normalize_lift_mm(lift_z_mm)
+    # Always keep transformed meshes snapped to the plate (Z=0 contact).
+    # Lifting in Z makes Bambu CLI reject some rotated models as "nothing to be sliced".
+    normalized_lift_z = 0.0
     normalized_support_mode = _normalize_slice_support_mode(support_mode)
     normalized_support_type = _normalize_slice_support_type(support_type)
     normalized_support_style = _normalize_slice_support_style(support_style)
@@ -2805,7 +2807,8 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     rotation_x_degrees = _normalize_rotation_degrees(payload.get("rotation_x_degrees"))
     rotation_y_degrees = _normalize_rotation_degrees(payload.get("rotation_y_degrees"))
     rotation_z_degrees = _normalize_rotation_degrees(payload.get("rotation_z_degrees"))
-    lift_z_mm = _normalize_lift_mm(payload.get("lift_z_mm"))
+    # Ignore queued/API lift and always snap to plate during slicing.
+    lift_z_mm = 0.0
     bed_width_mm = _normalize_bed_size_mm(payload.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(payload.get("bed_depth_mm"))
     if file_id <= 0:
@@ -2942,7 +2945,8 @@ def enqueue_slice_job(
     normalized_rotation_x = _normalize_rotation_degrees(rotation_x_degrees)
     normalized_rotation_y = _normalize_rotation_degrees(rotation_y_degrees)
     normalized_rotation_z = _normalize_rotation_degrees(rotation_z_degrees)
-    normalized_lift_z = _normalize_lift_mm(lift_z_mm)
+    # Lift is intentionally disabled; slicer always snaps to plate.
+    normalized_lift_z = 0.0
     normalized_support_mode = _normalize_slice_support_mode(support_mode)
     normalized_support_type = _normalize_slice_support_type(support_type)
     normalized_support_style = _normalize_slice_support_style(support_style)
@@ -5028,7 +5032,8 @@ def api_file_slice(file_id: int):
     rotation_x_degrees = _normalize_rotation_degrees(body.get("rotation_x_degrees"))
     rotation_y_degrees = _normalize_rotation_degrees(body.get("rotation_y_degrees"))
     rotation_z_degrees = _normalize_rotation_degrees(body.get("rotation_z_degrees"))
-    lift_z_mm = _normalize_lift_mm(body.get("lift_z_mm"))
+    # Lift in Z is disabled to ensure rotated models stay valid for slicing.
+    lift_z_mm = 0.0
     bed_width_mm = _normalize_bed_size_mm(body.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(body.get("bed_depth_mm"))
 
@@ -5073,8 +5078,7 @@ def api_file_slice(file_id: int):
         profile_details.append(
             f"rotation=({rotation_x_degrees},{rotation_y_degrees},{rotation_z_degrees})deg"
         )
-    if lift_z_mm > 0.0:
-        profile_details.append(f"lift_z={lift_z_mm}mm")
+    profile_details.append("snap_to_plate=on")
     if support_mode != "auto" or support_type or support_style:
         support_txt = [f"support={support_mode}"]
         if support_type:
@@ -6840,4 +6844,3 @@ _bootstrap_thumbnail_queue()
 if __name__ == "__main__":
     port = int(str(os.getenv("APP_PORT", "8080")) or "8080")
     app.run(host="0.0.0.0", port=port, debug=False)
-
