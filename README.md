@@ -59,10 +59,14 @@ Miljøvariabler i `.env`:
 - `BAMBUSTUDIO_APPIMAGE_URL` (valgfri build override, bruges hvis du vil pinne en bestemt AppImage)
 - `BAMBUSTUDIO_BIN` (default: `bambu-studio`)
 - `BAMBUSTUDIO_CONFIG_PATH` (valgfri sti til preset/config-fil)
+- `BAMBUSTUDIO_PROFILE_ROOT` (valgfri sti til Bambu profil-root med `machine/`, `process/`, `filament/`)
 - `BAMBUSTUDIO_TIMEOUT_SEC` (default: `1800`)
 - `BAMBUSTUDIO_PRINTER_PROFILES` (valgfri komma-separeret fallback-liste)
 - `BAMBUSTUDIO_PRINT_PROFILES` (valgfri komma-separeret fallback-liste)
 - `BAMBUSTUDIO_FILAMENT_PROFILES` (valgfri komma-separeret fallback-liste)
+- `BAMBUSTUDIO_LOAD_SETTINGS` (valgfri direkte `--load-settings`, fx `machine.json;process.json`)
+- `BAMBUSTUDIO_LOAD_FILAMENTS` (valgfri direkte `--load-filaments`, fx `filament.json`)
+- `BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK` (`1`/`0`, tillader fallback fra uploadede profiler til AppImage-profiler)
 
 Hvis auto-detektion af release-asset fejler i build, så sæt `BAMBUSTUDIO_APPIMAGE_URL` i `.env` til en konkret AppImage URL og byg igen.
 
@@ -93,6 +97,14 @@ Sådan får du dine egne profiler ind:
 
 Hvis du vil have flere valg direkte i appen, kan du lave flere config-filer (én pr. setup), og vi kan udvide UI'et til at vælge mellem dem i en modal.
 
+### Fejl: "Unable to create plate triangles" / "Nothing to be sliced"
+
+Hvis du får disse fejl i logs:
+
+1. Tjek at `docker-compose.yml` sender `BAMBUSTUDIO_LOAD_SETTINGS` og `BAMBUSTUDIO_LOAD_FILAMENTS` ind i containeren.
+2. Sæt variablerne i `.env` til gyldige profil-JSON filer hvis auto-valg ikke virker.
+3. Prøv slicing med `lift_z=0` og uden rotation for at udelukke at modellen ligger uden for build-pladen.
+
 ## Data
 
 Data gemmes i volumen mappet til `DATA_DIR`:
@@ -106,6 +118,5 @@ Data gemmes i volumen mappet til `DATA_DIR`:
 
 - Dette er en stærk første version af kerneflowet.
 - Næste naturlige trin er finere rettighedsstyring pr. bruger/mappe i UI samt flere preview-formater.
-
 
 
