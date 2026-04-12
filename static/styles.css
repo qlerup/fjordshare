@@ -278,6 +278,17 @@ input[type="checkbox"] {
   font-size: 0.82rem;
 }
 
+.sidebar-version {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.sidebar-version strong {
+  color: var(--text);
+}
+
 .sidebar-user strong {
   color: var(--text);
   font-weight: 600;

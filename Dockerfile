@@ -74,13 +74,19 @@ RUN set -eux; \
         libxrender1 \
         assimp-utils; \
     optional_pkgs=""; \
-    for candidate in libjavascriptcoregtk-4.0-18t64 libjavascriptcoregtk-4.0-18; do \
+    for candidate in \
+        libjavascriptcoregtk-4.0-18t64 libjavascriptcoregtk-4.0-18 \
+        libjavascriptcoregtk-4.1-0t64 libjavascriptcoregtk-4.1-0 \
+        libjavascriptcoregtk-6.0-1t64 libjavascriptcoregtk-6.0-1; do \
         if apt-cache show "$candidate" >/dev/null 2>&1; then \
             optional_pkgs="$optional_pkgs $candidate"; \
             break; \
         fi; \
     done; \
-    for candidate in libwebkit2gtk-4.0-37t64 libwebkit2gtk-4.0-37; do \
+    for candidate in \
+        libwebkit2gtk-4.0-37t64 libwebkit2gtk-4.0-37 \
+        libwebkit2gtk-4.1-0t64 libwebkit2gtk-4.1-0 \
+        libwebkitgtk-6.0-4t64 libwebkitgtk-6.0-4; do \
         if apt-cache show "$candidate" >/dev/null 2>&1; then \
             optional_pkgs="$optional_pkgs $candidate"; \
             break; \
@@ -92,6 +98,23 @@ RUN set -eux; \
     else \
         echo "Advarsel: Ingen libwebkit2gtk/libjavascriptcoregtk runtime-pakker fundet i apt repo." >&2; \
     fi; \
+    if ! ldconfig -p | grep -q 'libjavascriptcoregtk-4.0.so.18'; then \
+        for src in /usr/lib/*/libjavascriptcoregtk-4.1.so.0 /usr/lib/*/libjavascriptcoregtk-6.0.so.1; do \
+            if [ -f "$src" ]; then \
+                ln -sf "$(basename "$src")" "$(dirname "$src")/libjavascriptcoregtk-4.0.so.18"; \
+                break; \
+            fi; \
+        done; \
+    fi; \
+    if ! ldconfig -p | grep -q 'libwebkit2gtk-4.0.so.37'; then \
+        for src in /usr/lib/*/libwebkit2gtk-4.1.so.0 /usr/lib/*/libwebkitgtk-6.0.so.4; do \
+            if [ -f "$src" ]; then \
+                ln -sf "$(basename "$src")" "$(dirname "$src")/libwebkit2gtk-4.0.so.37"; \
+                break; \
+            fi; \
+        done; \
+    fi; \
+    ldconfig; \
     mkdir -p /opt/bambu-studio; \
     appimage_url="${BAMBUSTUDIO_APPIMAGE_URL}"; \
     if [ -z "$appimage_url" ]; then \
