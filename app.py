@@ -917,41 +917,48 @@ def _resolve_bambustudio_executable() -> str:
     raise RuntimeError(f"BambuStudio blev ikke fundet: {configured}")
 
 
-def _slice_stl_to_gcode(
-    input_stl: Path,
-    output_gcode: Path,
-    printer_profile: str = "",
-    print_profile: str = "",
-    filament_profile: str = "",
-) -> None:
-    if not input_stl.exists() or not input_stl.is_file():
-        raise RuntimeError("STL filen findes ikke på disk")
+def _extract_gcode_from_3mf_archive(archive_path: Path, output_gcode: Path) -> bool:
+    if not archive_path.exists() or not archive_path.is_file():
+        return False
 
-    executable = _resolve_bambustudio_executable()
-    cmd = [executable]
+    try:
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            infos = [info for info in zf.infolist() if not info.is_dir()]
+            if not infos:
+                return False
 
-    if BAMBUSTUDIO_CONFIG_PATH:
-        config_path = Path(BAMBUSTUDIO_CONFIG_PATH)
-        if not config_path.exists() or not config_path.is_file():
-            raise RuntimeError(f"BAMBUSTUDIO_CONFIG_PATH findes ikke: {config_path}")
-        cmd.extend(["--load", str(config_path)])
+            gcode_candidates = [
+                info
+                for info in infos
+                if ".gcode" in Path(info.filename.lower()).name or info.filename.lower().endswith(".gcode")
+            ]
+            if not gcode_candidates:
+                return False
 
-    printer_profile_value = str(printer_profile or "").strip()
-    print_profile_value = str(print_profile or "").strip()
-    filament_profile_value = str(filament_profile or "").strip()
+            # Prefer explicit .gcode files and then larger candidates.
+            best = max(
+                gcode_candidates,
+                key=lambda info: (
+                    1 if info.filename.lower().endswith(".gcode") else 0,
+                    info.file_size,
+                ),
+            )
 
-    if printer_profile_value:
-        cmd.extend(["--printer-profile", printer_profile_value])
-    if print_profile_value:
-        cmd.extend(["--print-profile", print_profile_value])
-    if filament_profile_value:
-        cmd.extend(["--filament-profile", filament_profile_value])
+            with zf.open(best, "r") as src, output_gcode.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+    except Exception:
+        return False
 
-    cmd.extend(["--export-gcode", "--output", str(output_gcode), str(input_stl)])
+    try:
+        return output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0
+    except Exception:
+        return False
 
-    def _run_slice_cmd(command: list[str]) -> subprocess.CompletedProcess[str]:
+
+def _run_bambu_with_runtime_fallback(command: list[str], executable: str) -> tuple[subprocess.CompletedProcess[str], str]:
+    def _run_slice_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            command,
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -968,7 +975,7 @@ def _slice_stl_to_gcode(
         return str(shutil.which(value) or "")
 
     try:
-        proc = _run_slice_cmd(cmd)
+        proc = _run_slice_cmd(command)
     except subprocess.TimeoutExpired:
         raise RuntimeError("BambuStudio timeout")
     except FileNotFoundError:
@@ -976,46 +983,137 @@ def _slice_stl_to_gcode(
     except Exception as exc:
         raise RuntimeError(f"Kunne ikke starte BambuStudio: {exc}")
 
-    if proc.returncode != 0:
-        details = (proc.stderr or proc.stdout or "Ukendt fejl").strip()
-        details_lower = details.lower()
-        if "libsoup2 symbols detected" in details_lower and "libsoup3" in details_lower:
-            raise RuntimeError(
-                "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
-                "Genbyg image med seneste Dockerfile (matcher WebKit/JSC + libsoup automatisk)."
-            )
-        if "error while loading shared libraries" in details_lower:
-            seen_execs: set[str] = {str(executable)}
-            fallback_execs = [
-                "/opt/bambu-studio/appdir/AppRun",
-                "/opt/bambu-studio/appdir/bin/bambu-studio-console",
-                "bambu-studio-console",
-                "BambuStudio-console",
-                "bambu-studio",
-                "BambuStudio",
-            ]
-            for raw_exec in fallback_execs:
-                candidate = _resolve_exec_candidate(raw_exec)
-                if not candidate or candidate in seen_execs:
-                    continue
-                seen_execs.add(candidate)
+    details = (proc.stderr or proc.stdout or "Ukendt fejl").strip()
 
-                alt_cmd = [candidate, *cmd[1:]]
-                try:
-                    alt_proc = _run_slice_cmd(alt_cmd)
-                except Exception:
-                    continue
-                if alt_proc.returncode == 0:
-                    proc = alt_proc
-                    details = ""
-                    break
+    if proc.returncode != 0 and "error while loading shared libraries" in details.lower():
+        seen_execs: set[str] = {str(executable)}
+        fallback_execs = [
+            "/opt/bambu-studio/appdir/AppRun",
+            "/opt/bambu-studio/appdir/bin/bambu-studio-console",
+            "bambu-studio-console",
+            "BambuStudio-console",
+            "bambu-studio",
+            "BambuStudio",
+        ]
+        for raw_exec in fallback_execs:
+            candidate = _resolve_exec_candidate(raw_exec)
+            if not candidate or candidate in seen_execs:
+                continue
+            seen_execs.add(candidate)
 
-                alt_details = (alt_proc.stderr or alt_proc.stdout or "").strip()
-                if alt_details:
-                    details = f"{details}\nFallback {candidate} -> {alt_details}".strip()
+            alt_cmd = [candidate, *command[1:]]
+            try:
+                alt_proc = _run_slice_cmd(alt_cmd)
+            except Exception:
+                continue
+
+            if alt_proc.returncode == 0:
+                return alt_proc, ""
+
+            alt_details = (alt_proc.stderr or alt_proc.stdout or "").strip()
+            if alt_details:
+                details = f"{details}\nFallback {candidate} -> {alt_details}".strip()
+
+    return proc, details
+
+
+def _slice_stl_to_gcode(
+    input_stl: Path,
+    output_gcode: Path,
+    printer_profile: str = "",
+    print_profile: str = "",
+    filament_profile: str = "",
+) -> None:
+    if not input_stl.exists() or not input_stl.is_file():
+        raise RuntimeError("STL filen findes ikke på disk")
+
+    executable = _resolve_bambustudio_executable()
+    legacy_cmd = [executable]
+
+    if BAMBUSTUDIO_CONFIG_PATH:
+        config_path = Path(BAMBUSTUDIO_CONFIG_PATH)
+        if not config_path.exists() or not config_path.is_file():
+            raise RuntimeError(f"BAMBUSTUDIO_CONFIG_PATH findes ikke: {config_path}")
+        legacy_cmd.extend(["--load", str(config_path)])
+
+    printer_profile_value = str(printer_profile or "").strip()
+    print_profile_value = str(print_profile or "").strip()
+    filament_profile_value = str(filament_profile or "").strip()
+
+    if printer_profile_value:
+        legacy_cmd.extend(["--printer-profile", printer_profile_value])
+    if print_profile_value:
+        legacy_cmd.extend(["--print-profile", print_profile_value])
+    if filament_profile_value:
+        legacy_cmd.extend(["--filament-profile", filament_profile_value])
+
+    temp_3mf = output_gcode.with_suffix(".gcode.3mf")
+    attempts: list[tuple[str, list[str], str]] = [
+        (
+            "legacy-hyphen",
+            [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(input_stl)],
+            "gcode",
+        ),
+        (
+            "legacy-underscore",
+            [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(input_stl)],
+            "gcode",
+        ),
+        (
+            "modern-3mf-hyphen",
+            [executable, "--slice", "0", "--export-3mf", str(temp_3mf), str(input_stl)],
+            "3mf",
+        ),
+        (
+            "modern-3mf-underscore",
+            [executable, "--slice", "0", "--export_3mf", str(temp_3mf), str(input_stl)],
+            "3mf",
+        ),
+    ]
+
+    errors: list[str] = []
+    for label, cmd, mode in attempts:
+        try:
+            output_gcode.unlink(missing_ok=True)
+            temp_3mf.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        proc, details = _run_bambu_with_runtime_fallback(cmd, executable)
+        details = details.strip()
 
         if proc.returncode != 0:
-            raise RuntimeError(f"BambuStudio fejl: {details[:1000]}")
+            details_lower = details.lower()
+            if "libsoup2 symbols detected" in details_lower and "libsoup3" in details_lower:
+                raise RuntimeError(
+                    "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
+                    "Genbyg image med seneste Dockerfile (matcher WebKit/JSC + libsoup automatisk)."
+                )
+            errors.append(f"{label}: {details[:350]}")
+            if "error while loading shared libraries" in details_lower:
+                break
+            continue
+
+        if mode == "gcode":
+            if output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0:
+                return
+            errors.append(f"{label}: kommandoen kørte men lavede ingen G-code output")
+            continue
+
+        if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
+            try:
+                temp_3mf.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return
+
+        if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
+            errors.append(f"{label}: 3MF blev lavet men indeholdt ingen G-code")
+        else:
+            errors.append(f"{label}: kommandoen kørte men lavede ingen 3MF output")
+
+    if errors:
+        raise RuntimeError(f"BambuStudio fejl: {' | '.join(errors)[:1000]}")
 
     if not output_gcode.exists() or not output_gcode.is_file() or output_gcode.stat().st_size <= 0:
         raise RuntimeError("BambuStudio lavede ingen output-fil")
