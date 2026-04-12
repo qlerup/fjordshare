@@ -402,6 +402,8 @@
       <div class="slice-preview-meta">
         <div id="slicePreviewBed" class="slice-preview-row">Plade: 256 x 256 mm</div>
         <div id="slicePreviewFootprint" class="slice-preview-row">Model footprint: -</div>
+        <div id="slicePreviewHeight" class="slice-preview-row">Model Z: -</div>
+        <div class="slice-preview-row slice-preview-hint">Traek for at rotere view, scroll for zoom, hojreklik for pan.</div>
       </div>
       <div class="slice-rotate-controls">
         <label>Rotation (X/Y/Z)</label>
@@ -433,6 +435,15 @@
           <div id="sliceRotateZValue" class="hint">0 deg</div>
         </div>
       </div>
+      <div class="slice-lift-controls">
+        <label for="sliceLiftZRange">Loeft model (Z)</label>
+        <div class="slice-rotate-buttons">
+          <button id="sliceLiftZMinusBtn" class="btn" type="button">-1 mm</button>
+          <input id="sliceLiftZRange" type="range" min="0" max="80" step="0.5" value="0" aria-label="Loeft model Z">
+          <button id="sliceLiftZPlusBtn" class="btn" type="button">+1 mm</button>
+        </div>
+        <div id="sliceLiftZValue" class="hint">0 mm</div>
+      </div>
     </div>
 
     <div class="slice-modal-grid">
@@ -447,6 +458,32 @@
       <div class="slice-modal-field">
         <label for="sliceFilamentProfileSelect">Filamentprofil</label>
         <select id="sliceFilamentProfileSelect" class="select"></select>
+      </div>
+    </div>
+
+    <div class="slice-modal-grid">
+      <div class="slice-modal-field">
+        <label for="sliceSupportModeSelect">Support</label>
+        <select id="sliceSupportModeSelect" class="select">
+          <option value="auto">Auto / fra profil</option>
+          <option value="on">Til</option>
+          <option value="off">Fra</option>
+        </select>
+      </div>
+      <div class="slice-modal-field">
+        <label for="sliceSupportTypeSelect">Support type</label>
+        <select id="sliceSupportTypeSelect" class="select">
+          <option value="">Auto / fra profil</option>
+          <option value="tree(auto)">tree(auto)</option>
+          <option value="normal(auto)">normal(auto)</option>
+        </select>
+      </div>
+      <div class="slice-modal-field">
+        <label for="sliceSupportStyleSelect">Support style</label>
+        <select id="sliceSupportStyleSelect" class="select">
+          <option value="">Auto / fra profil</option>
+          <option value="default">Default</option>
+        </select>
       </div>
     </div>
 

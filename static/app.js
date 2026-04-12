@@ -30,6 +30,10 @@
       printer_profile: "",
       print_profile: "",
       filament_profile: "",
+      support_mode: "auto",
+      support_type: "",
+      support_style: "",
+      lift_z_mm: 0,
     },
     sliceStatusWasPending: false,
     sliceStatusHoldUntil: 0,
@@ -144,6 +148,7 @@
     slicePreviewCanvas: document.getElementById("slicePreviewCanvas"),
     slicePreviewBed: document.getElementById("slicePreviewBed"),
     slicePreviewFootprint: document.getElementById("slicePreviewFootprint"),
+    slicePreviewHeight: document.getElementById("slicePreviewHeight"),
     sliceRotateXRange: document.getElementById("sliceRotateXRange"),
     sliceRotateXValue: document.getElementById("sliceRotateXValue"),
     sliceRotateXMinusBtn: document.getElementById("sliceRotateXMinusBtn"),
@@ -156,6 +161,13 @@
     sliceRotateZValue: document.getElementById("sliceRotateZValue"),
     sliceRotateZMinusBtn: document.getElementById("sliceRotateZMinusBtn"),
     sliceRotateZPlusBtn: document.getElementById("sliceRotateZPlusBtn"),
+    sliceLiftZRange: document.getElementById("sliceLiftZRange"),
+    sliceLiftZValue: document.getElementById("sliceLiftZValue"),
+    sliceLiftZMinusBtn: document.getElementById("sliceLiftZMinusBtn"),
+    sliceLiftZPlusBtn: document.getElementById("sliceLiftZPlusBtn"),
+    sliceSupportModeSelect: document.getElementById("sliceSupportModeSelect"),
+    sliceSupportTypeSelect: document.getElementById("sliceSupportTypeSelect"),
+    sliceSupportStyleSelect: document.getElementById("sliceSupportStyleSelect"),
     metadataModal: document.getElementById("metadataModal"),
     metadataStepCounter: document.getElementById("metadataStepCounter"),
     metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
@@ -622,6 +634,10 @@
   const SCALE_CAN_DIAMETER_MM = 66;
   const PRESENTATION_TABLE_SIZE_MM = 600;
   const DEFAULT_SLICE_BED_SIZE_MM = Object.freeze({ width_mm: 256, depth_mm: 256 });
+  const SLICE_LIFT_RANGE_MM = Object.freeze({ min: 0, max: 80, step: 0.5 });
+  const SLICE_SUPPORT_MODE_VALUES = new Set(["auto", "on", "off"]);
+  const SLICE_SUPPORT_TYPE_VALUES = new Set(["", "tree(auto)", "normal(auto)"]);
+  const SLICE_SUPPORT_STYLE_VALUES = new Set(["", "default"]);
   const GLTF_UNIT_CONTEXT = Object.freeze({
     unitKey: "m",
     unitLabel: "m",
@@ -1488,6 +1504,28 @@
     return Math.max(-180, Math.min(180, Math.round(numeric)));
   }
 
+  function clampSliceLiftMm(value, fallback = 0) {
+    const numeric = Number(value || fallback || 0);
+    if (!Number.isFinite(numeric)) return 0;
+    const clamped = Math.max(SLICE_LIFT_RANGE_MM.min, Math.min(SLICE_LIFT_RANGE_MM.max, numeric));
+    return Math.round(clamped * 10) / 10;
+  }
+
+  function normalizeSliceSupportMode(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    return SLICE_SUPPORT_MODE_VALUES.has(normalized) ? normalized : "auto";
+  }
+
+  function normalizeSliceSupportType(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    return SLICE_SUPPORT_TYPE_VALUES.has(normalized) ? normalized : "";
+  }
+
+  function normalizeSliceSupportStyle(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    return SLICE_SUPPORT_STYLE_VALUES.has(normalized) ? normalized : "";
+  }
+
   function clampSliceBedSizeMm(value, fallback = 0) {
     const numeric = Number(value || fallback || 0);
     if (!Number.isFinite(numeric)) return Number(fallback || 0);
@@ -1516,10 +1554,53 @@
     };
   }
 
+  function currentSliceLiftMm() {
+    return clampSliceLiftMm((els.sliceLiftZRange && els.sliceLiftZRange.value) || 0);
+  }
+
   function setSliceRotateAxisValueText(axis, rotationDeg) {
     const valueEl = rotationValueElementForAxis(axis);
     if (!valueEl) return;
     valueEl.textContent = `${clampSliceRotationDeg(rotationDeg)} deg`;
+  }
+
+  function setSliceLiftValueText(valueMm) {
+    if (!els.sliceLiftZValue) return;
+    els.sliceLiftZValue.textContent = `${formatNumberCompact(clampSliceLiftMm(valueMm))} mm`;
+  }
+
+  function setSlicePreviewHeight(text, kind = "") {
+    if (!els.slicePreviewHeight) return;
+    els.slicePreviewHeight.textContent = String(text || "Model Z: -");
+    els.slicePreviewHeight.classList.remove("ok", "error", "warn");
+    if (kind === "ok" || kind === "error" || kind === "warn") {
+      els.slicePreviewHeight.classList.add(kind);
+    }
+  }
+
+  function updateSliceSupportControlsUi() {
+    const mode = normalizeSliceSupportMode((els.sliceSupportModeSelect && els.sliceSupportModeSelect.value) || "auto");
+    if (els.sliceSupportModeSelect && els.sliceSupportModeSelect.value !== mode) {
+      els.sliceSupportModeSelect.value = mode;
+    }
+
+    const typeSelect = els.sliceSupportTypeSelect;
+    const styleSelect = els.sliceSupportStyleSelect;
+    const disableDetails = mode !== "on";
+
+    if (typeSelect) {
+      const normalizedType = normalizeSliceSupportType(typeSelect.value);
+      if (typeSelect.value !== normalizedType) typeSelect.value = normalizedType;
+      typeSelect.disabled = disableDetails;
+      if (disableDetails) typeSelect.value = "";
+    }
+
+    if (styleSelect) {
+      const normalizedStyle = normalizeSliceSupportStyle(styleSelect.value);
+      if (styleSelect.value !== normalizedStyle) styleSelect.value = normalizedStyle;
+      styleSelect.disabled = disableDetails;
+      if (disableDetails) styleSelect.value = "";
+    }
   }
 
   function setSlicePreviewFootprint(text, kind = "") {
@@ -1564,14 +1645,35 @@
 
     const aspect = width / height;
     const halfBase = Math.max(8, Number(preview.halfBase || 180));
-    preview.camera.left = -halfBase * aspect;
-    preview.camera.right = halfBase * aspect;
-    preview.camera.top = halfBase;
-    preview.camera.bottom = -halfBase;
-    preview.camera.near = 0.1;
-    preview.camera.far = halfBase * 40;
-    preview.camera.position.set(0, 0, halfBase * 10);
-    preview.camera.lookAt(0, 0, 0);
+    const distanceBase = Math.max(120, halfBase * 3.4);
+    preview.viewDistanceBase = distanceBase;
+
+    if (preview.camera.isPerspectiveCamera) {
+      preview.camera.aspect = aspect;
+      preview.camera.near = 0.1;
+      preview.camera.far = distanceBase * 120;
+    } else {
+      preview.camera.left = -halfBase * aspect;
+      preview.camera.right = halfBase * aspect;
+      preview.camera.top = halfBase;
+      preview.camera.bottom = -halfBase;
+      preview.camera.near = 0.1;
+      preview.camera.far = halfBase * 40;
+      preview.camera.position.set(0, 0, halfBase * 10);
+      preview.camera.lookAt(0, 0, 0);
+    }
+
+    if (preview.controls) {
+      preview.controls.minDistance = Math.max(24, distanceBase * 0.28);
+      preview.controls.maxDistance = Math.max(240, distanceBase * 18);
+      if (!preview.viewInitialized) {
+        preview.camera.position.set(distanceBase * 0.95, -distanceBase * 0.7, distanceBase * 0.9);
+        preview.controls.target.set(0, 0, Math.max(0, currentSliceLiftMm() * 0.35));
+        preview.controls.update();
+        preview.viewInitialized = true;
+      }
+    }
+
     preview.camera.updateProjectionMatrix();
     renderSlicePreview();
   }
@@ -1580,26 +1682,51 @@
     const preview = state.slicePreview;
     if (!preview || !preview.modelGroup || !preview.THREE) {
       setSlicePreviewFootprint("Model footprint: -");
+      setSlicePreviewHeight("Model Z: -");
       return;
     }
 
     const box = new preview.THREE.Box3().setFromObject(preview.modelGroup);
     if (!box || box.isEmpty()) {
       setSlicePreviewFootprint("Model footprint: -");
+      setSlicePreviewHeight("Model Z: -");
       return;
     }
 
     const widthMm = Math.max(0, Number(box.max.x) - Number(box.min.x));
     const depthMm = Math.max(0, Number(box.max.y) - Number(box.min.y));
     const fits = widthMm <= (preview.bedWidthMm + 0.05) && depthMm <= (preview.bedDepthMm + 0.05);
+    const minZ = Number(box.min.z);
+    const maxZ = Number(box.max.z);
 
     setSlicePreviewFootprint(
       `Model footprint: ${formatNumberCompact(widthMm)} x ${formatNumberCompact(depthMm)} mm (${fits ? "fits" : "outside bed"})`,
       fits ? "ok" : "error"
     );
 
+    let zKind = "ok";
+    let zNote = "on plate";
+    if (minZ < -0.05) {
+      zKind = "warn";
+      zNote = `under plate by ${formatNumberCompact(Math.abs(minZ))} mm`;
+    } else if (minZ > 0.05) {
+      zKind = "ok";
+      zNote = `lifted ${formatNumberCompact(minZ)} mm`;
+    }
+    setSlicePreviewHeight(
+      `Model Z: ${formatNumberCompact(minZ)} to ${formatNumberCompact(maxZ)} mm (${zNote})`,
+      zKind
+    );
+
+    if (preview.controls) {
+      preview.controls.target.set(0, 0, Math.max(0, Math.min(120, maxZ * 0.25)));
+      preview.controls.update();
+    }
+
     if (preview.bedMesh && preview.bedMesh.material && preview.bedMesh.material.color) {
-      preview.bedMesh.material.color.setHex(fits ? 0x203949 : 0x4e2329);
+      if (!fits) preview.bedMesh.material.color.setHex(0x4e2329);
+      else if (minZ < -0.05) preview.bedMesh.material.color.setHex(0x5a3226);
+      else preview.bedMesh.material.color.setHex(0x203949);
     }
   }
 
@@ -1655,6 +1782,17 @@
       window.removeEventListener("resize", preview.onResize);
     }
 
+    if (preview.controls && preview.onControlsChange && typeof preview.controls.removeEventListener === "function") {
+      try {
+        preview.controls.removeEventListener("change", preview.onControlsChange);
+      } catch (_err) {}
+    }
+    if (preview.controls && typeof preview.controls.dispose === "function") {
+      try {
+        preview.controls.dispose();
+      } catch (_err) {}
+    }
+
     if (preview.scene && preview.modelGroup) {
       preview.scene.remove(preview.modelGroup);
       disposeSlicePreviewObject(preview.modelGroup);
@@ -1693,7 +1831,7 @@
     if (!els.slicePreviewCanvas) return null;
 
     const modules = await ensureThreeModules();
-    const { THREE } = modules;
+    const { THREE, OrbitControls } = modules;
     const canvas = els.slicePreviewCanvas;
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -1701,14 +1839,20 @@
     renderer.setClearColor(0x000000, 0);
 
     const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-180, 180, 180, -180, 0.1, 7200);
-    camera.position.set(0, 0, 1800);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 12000);
+    camera.up.set(0, 0, 1);
+    camera.position.set(640, -520, 520);
     camera.lookAt(0, 0, 0);
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.82));
     const dir = new THREE.DirectionalLight(0xffffff, 0.5);
     dir.position.set(220, 220, 460);
     scene.add(dir);
+
+    const axisGrid = new THREE.GridHelper(700, 14, 0x2d4964, 0x1a2d3f);
+    axisGrid.rotation.x = Math.PI / 2;
+    axisGrid.position.z = -0.2;
+    scene.add(axisGrid);
 
     const bedMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(DEFAULT_SLICE_BED_SIZE_MM.width_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
@@ -1718,6 +1862,7 @@
         metalness: 0.04,
         transparent: true,
         opacity: 0.95,
+        side: THREE.DoubleSide,
       })
     );
     scene.add(bedMesh);
@@ -1729,11 +1874,25 @@
     bedOutline.position.z = 0.2;
     scene.add(bedOutline);
 
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = false;
+    controls.screenSpacePanning = true;
+    controls.rotateSpeed = 0.82;
+    controls.panSpeed = 0.88;
+    controls.zoomSpeed = 0.95;
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI;
+    controls.target.set(0, 0, 0);
+    const onControlsChange = () => renderSlicePreview();
+    controls.addEventListener("change", onControlsChange);
+
     const preview = {
       THREE,
       renderer,
       scene,
       camera,
+      controls,
+      onControlsChange,
       canvas,
       bedMesh,
       bedOutline,
@@ -1741,6 +1900,8 @@
       bedWidthMm: Number(DEFAULT_SLICE_BED_SIZE_MM.width_mm),
       bedDepthMm: Number(DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
       halfBase: Math.max(DEFAULT_SLICE_BED_SIZE_MM.width_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm) * 0.66,
+      viewDistanceBase: 0,
+      viewInitialized: false,
       onResize: null,
       resizeObserver: null,
     };
@@ -1766,12 +1927,14 @@
     const preview = state.slicePreview;
     if (!preview || !preview.modelGroup) return;
     const rotation = currentSliceRotation();
+    const liftMm = currentSliceLiftMm();
     preview.modelGroup.rotation.set(
       (rotation.x * Math.PI) / 180,
       (rotation.y * Math.PI) / 180,
       (rotation.z * Math.PI) / 180,
       "XYZ"
     );
+    preview.modelGroup.position.set(0, 0, liftMm);
     updateSlicePreviewFootprint();
     renderSlicePreview();
   }
@@ -1793,6 +1956,15 @@
     setSliceModalRotationAxis("z", next.z || 0);
   }
 
+  function setSliceModalLiftMm(valueMm) {
+    const normalized = clampSliceLiftMm(valueMm);
+    if (els.sliceLiftZRange) {
+      els.sliceLiftZRange.value = String(normalized);
+    }
+    setSliceLiftValueText(normalized);
+    applySlicePreviewRotation();
+  }
+
   async function loadSlicePreviewModel(file) {
     const preview = await ensureSlicePreviewRenderer();
     if (!preview || !file) return;
@@ -1806,6 +1978,7 @@
     const ext = String(file.ext || "").toLowerCase();
     if (ext !== ".stl") {
       setSlicePreviewFootprint("Model footprint: Preview understotter STL filer", "error");
+      setSlicePreviewHeight("Model Z: Preview understotter STL filer", "error");
       renderSlicePreview();
       return;
     }
@@ -1813,6 +1986,7 @@
     const modelUrl = String(file.content_url || "").trim();
     if (!modelUrl) {
       setSlicePreviewFootprint("Model footprint: Kunne ikke finde STL", "error");
+      setSlicePreviewHeight("Model Z: Kunne ikke finde STL", "error");
       renderSlicePreview();
       return;
     }
@@ -1823,6 +1997,7 @@
     const { THREE, STLLoader } = modules;
 
     setSlicePreviewFootprint("Model footprint: Indlaeser model...");
+    setSlicePreviewHeight("Model Z: Indlaeser model...");
 
     const geometry = await new Promise((resolve, reject) => {
       const loader = new STLLoader();
@@ -1850,13 +2025,13 @@
       geometry,
       new THREE.MeshStandardMaterial({ color: 0x8ec5ff, roughness: 0.65, metalness: 0.14 })
     );
-    mesh.position.z = 0.8;
+    mesh.position.z = 0.03;
 
     const outline = new THREE.LineSegments(
       new THREE.EdgesGeometry(geometry),
       new THREE.LineBasicMaterial({ color: 0xe6f3ff, transparent: true, opacity: 0.58 })
     );
-    outline.position.z = 0.86;
+    outline.position.z = 0.05;
 
     const modelGroup = new THREE.Group();
     modelGroup.add(mesh);
@@ -1865,6 +2040,7 @@
     preview.modelGroup = modelGroup;
 
     setSliceModalRotation(currentSliceRotation());
+    setSliceModalLiftMm(currentSliceLiftMm());
   }
 
   async function setupSliceModalPreview(file) {
@@ -1897,10 +2073,16 @@
     clearSlicePreview();
     state.currentSliceFileId = 0;
     setSliceModalRotation({ x: 0, y: 0, z: 0 });
+    setSliceModalLiftMm(0);
+    if (els.sliceSupportModeSelect) els.sliceSupportModeSelect.value = "auto";
+    if (els.sliceSupportTypeSelect) els.sliceSupportTypeSelect.value = "";
+    if (els.sliceSupportStyleSelect) els.sliceSupportStyleSelect.value = "";
+    updateSliceSupportControlsUi();
     if (els.slicePreviewBed) {
       els.slicePreviewBed.textContent = `Plade: ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.width_mm)} x ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.depth_mm)} mm`;
     }
     setSlicePreviewFootprint("Model footprint: -");
+    setSlicePreviewHeight("Model Z: -");
     showStatus(els.sliceModalStatus, "");
     if (els.sliceModal) els.sliceModal.classList.add("hidden");
   }
@@ -1913,7 +2095,19 @@
     if (els.sliceModalFileName) els.sliceModalFileName.textContent = String(file.filename || "-");
     if (els.sliceModal) els.sliceModal.classList.remove("hidden");
     setSliceModalRotation({ x: 0, y: 0, z: 0 });
+    setSliceModalLiftMm(clampSliceLiftMm(state.lastSliceSelection.lift_z_mm, 0));
+    if (els.sliceSupportModeSelect) {
+      els.sliceSupportModeSelect.value = normalizeSliceSupportMode(state.lastSliceSelection.support_mode || "auto");
+    }
+    if (els.sliceSupportTypeSelect) {
+      els.sliceSupportTypeSelect.value = normalizeSliceSupportType(state.lastSliceSelection.support_type || "");
+    }
+    if (els.sliceSupportStyleSelect) {
+      els.sliceSupportStyleSelect.value = normalizeSliceSupportStyle(state.lastSliceSelection.support_style || "");
+    }
+    updateSliceSupportControlsUi();
     setSlicePreviewFootprint("Model footprint: Klargor preview...");
+    setSlicePreviewHeight("Model Z: Klargor preview...");
     if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = true;
     showStatus(els.sliceModalStatus, "Henter slice-profiler...", "ok");
 
@@ -1950,6 +2144,7 @@
 
     setupSliceModalPreview(file).catch((err) => {
       setSlicePreviewFootprint(`Model footprint: Preview fejl (${String((err && err.message) || err || "ukendt")})`, "error");
+      setSlicePreviewHeight(`Model Z: Preview fejl (${String((err && err.message) || err || "ukendt")})`, "error");
     });
   }
 
@@ -1957,15 +2152,22 @@
     const printer_profile = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
     const print_profile = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim();
     const filament_profile = String((els.sliceFilamentProfileSelect && els.sliceFilamentProfileSelect.value) || "").trim();
+    const support_mode = normalizeSliceSupportMode((els.sliceSupportModeSelect && els.sliceSupportModeSelect.value) || "auto");
+    const support_type = support_mode === "on" ? normalizeSliceSupportType((els.sliceSupportTypeSelect && els.sliceSupportTypeSelect.value) || "") : "";
+    const support_style = support_mode === "on" ? normalizeSliceSupportStyle((els.sliceSupportStyleSelect && els.sliceSupportStyleSelect.value) || "") : "";
     const rotation = currentSliceRotation();
     const bed = resolveSelectedSliceBedSize();
     return {
       printer_profile,
       print_profile,
       filament_profile,
+      support_mode,
+      support_type,
+      support_style,
       rotation_x_degrees: rotation.x,
       rotation_y_degrees: rotation.y,
       rotation_z_degrees: rotation.z,
+      lift_z_mm: currentSliceLiftMm(),
       bed_width_mm: clampSliceBedSizeMm(bed && bed.width_mm, DEFAULT_SLICE_BED_SIZE_MM.width_mm),
       bed_depth_mm: clampSliceBedSizeMm(bed && bed.depth_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
     };
@@ -2195,17 +2397,25 @@
     const printerProfile = String(profiles.printer_profile || "").trim();
     const printProfile = String(profiles.print_profile || "").trim();
     const filamentProfile = String(profiles.filament_profile || "").trim();
+    const supportMode = normalizeSliceSupportMode(profiles.support_mode || "auto");
+    const supportType = supportMode === "on" ? normalizeSliceSupportType(profiles.support_type || "") : "";
+    const supportStyle = supportMode === "on" ? normalizeSliceSupportStyle(profiles.support_style || "") : "";
     const rotationX = clampSliceRotationDeg(profiles.rotation_x_degrees);
     const rotationY = clampSliceRotationDeg(profiles.rotation_y_degrees);
     const rotationZ = clampSliceRotationDeg(profiles.rotation_z_degrees);
+    const liftZ = clampSliceLiftMm(profiles.lift_z_mm, 0);
     const bedWidth = clampSliceBedSizeMm(profiles.bed_width_mm, 0);
     const bedDepth = clampSliceBedSizeMm(profiles.bed_depth_mm, 0);
     if (printerProfile) body.printer_profile = printerProfile;
     if (printProfile) body.print_profile = printProfile;
     if (filamentProfile) body.filament_profile = filamentProfile;
+    body.support_mode = supportMode;
+    if (supportType) body.support_type = supportType;
+    if (supportStyle) body.support_style = supportStyle;
     body.rotation_x_degrees = rotationX;
     body.rotation_y_degrees = rotationY;
     body.rotation_z_degrees = rotationZ;
+    body.lift_z_mm = liftZ;
     if (bedWidth > 0) body.bed_width_mm = bedWidth;
     if (bedDepth > 0) body.bed_depth_mm = bedDepth;
     const options = { method: "POST" };
@@ -5332,6 +5542,52 @@
     bindSliceAxisControls("x", els.sliceRotateXRange, els.sliceRotateXMinusBtn, els.sliceRotateXPlusBtn);
     bindSliceAxisControls("y", els.sliceRotateYRange, els.sliceRotateYMinusBtn, els.sliceRotateYPlusBtn);
     bindSliceAxisControls("z", els.sliceRotateZRange, els.sliceRotateZMinusBtn, els.sliceRotateZPlusBtn);
+
+    const bindSliceLiftControls = () => {
+      if (els.sliceLiftZRange) {
+        els.sliceLiftZRange.addEventListener("input", () => {
+          setSliceModalLiftMm(els.sliceLiftZRange.value || 0);
+        });
+        els.sliceLiftZRange.addEventListener("change", () => {
+          setSliceModalLiftMm(els.sliceLiftZRange.value || 0);
+        });
+      }
+      if (els.sliceLiftZMinusBtn) {
+        els.sliceLiftZMinusBtn.addEventListener("click", () => {
+          setSliceModalLiftMm(currentSliceLiftMm() - 1);
+        });
+      }
+      if (els.sliceLiftZPlusBtn) {
+        els.sliceLiftZPlusBtn.addEventListener("click", () => {
+          setSliceModalLiftMm(currentSliceLiftMm() + 1);
+        });
+      }
+    };
+    bindSliceLiftControls();
+
+    if (els.sliceSupportModeSelect) {
+      els.sliceSupportModeSelect.addEventListener("change", () => {
+        updateSliceSupportControlsUi();
+      });
+    }
+    if (els.sliceSupportTypeSelect) {
+      els.sliceSupportTypeSelect.addEventListener("change", () => {
+        const normalized = normalizeSliceSupportType(els.sliceSupportTypeSelect.value || "");
+        if (els.sliceSupportTypeSelect.value !== normalized) {
+          els.sliceSupportTypeSelect.value = normalized;
+        }
+      });
+    }
+    if (els.sliceSupportStyleSelect) {
+      els.sliceSupportStyleSelect.addEventListener("change", () => {
+        const normalized = normalizeSliceSupportStyle(els.sliceSupportStyleSelect.value || "");
+        if (els.sliceSupportStyleSelect.value !== normalized) {
+          els.sliceSupportStyleSelect.value = normalized;
+        }
+      });
+    }
+    updateSliceSupportControlsUi();
+
     if (els.sliceModalStartBtn) {
       els.sliceModalStartBtn.addEventListener("click", () => {
         const id = Number(state.currentSliceFileId || state.currentInfoFileId || 0);
@@ -5341,6 +5597,10 @@
           printer_profile: String(profiles.printer_profile || ""),
           print_profile: String(profiles.print_profile || ""),
           filament_profile: String(profiles.filament_profile || ""),
+          support_mode: String(profiles.support_mode || "auto"),
+          support_type: String(profiles.support_type || ""),
+          support_style: String(profiles.support_style || ""),
+          lift_z_mm: clampSliceLiftMm(profiles.lift_z_mm, 0),
         };
 
         els.sliceModalStartBtn.disabled = true;

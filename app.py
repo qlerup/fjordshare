@@ -2088,10 +2088,11 @@ def _build_modern_profile_args(
     print_profile: str,
     filament_profile: str,
     prefer_uploaded: bool = True,
+    load_settings_override: str = "",
 ) -> list[str]:
     args: list[str] = []
 
-    effective_load_settings = _effective_bambustudio_load_settings()
+    effective_load_settings = str(load_settings_override or "").strip() or _effective_bambustudio_load_settings()
     effective_load_filaments = _effective_bambustudio_load_filaments()
     if effective_load_settings:
         args.extend(["--load-settings", effective_load_settings])
@@ -2120,6 +2121,137 @@ def _build_modern_profile_args(
         args.extend(["--load-filaments", filament_json])
 
     return args
+
+
+def _normalize_slice_support_mode(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {"auto", "on", "off"} else "auto"
+
+
+def _normalize_slice_support_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {"", "tree(auto)", "normal(auto)"} else ""
+
+
+def _normalize_slice_support_style(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in {"", "default"} else ""
+
+
+def _profile_bool_setting_value(existing: Any, enabled: bool) -> Any:
+    if isinstance(existing, bool):
+        return enabled
+    if isinstance(existing, (int, float)) and not isinstance(existing, bool):
+        return 1 if enabled else 0
+    if isinstance(existing, str):
+        text = str(existing).strip().lower()
+        if text in {"true", "false", "yes", "no", "on", "off"}:
+            return "true" if enabled else "false"
+        return "1" if enabled else "0"
+    return "1" if enabled else "0"
+
+
+def _build_support_override_load_settings(
+    executable: str,
+    output_gcode: Path,
+    printer_profile: str,
+    print_profile: str,
+    filament_profile: str,
+    support_mode: str,
+    support_type: str,
+    support_style: str,
+) -> tuple[str, Optional[Path], str]:
+    normalized_mode = _normalize_slice_support_mode(support_mode)
+    normalized_type = _normalize_slice_support_type(support_type)
+    normalized_style = _normalize_slice_support_style(support_style)
+
+    if normalized_mode == "auto" and not normalized_type and not normalized_style:
+        return "", None, ""
+
+    machine_json, process_json, _filament_json = _resolve_selected_profile_jsons(
+        executable,
+        str(printer_profile or "").strip(),
+        str(print_profile or "").strip(),
+        str(filament_profile or "").strip(),
+        prefer_uploaded=True,
+    )
+
+    if not machine_json or not process_json:
+        return "", None, "Support-override kraever machine+process profiler (JSON)."
+
+    process_payload = _read_profile_json_payload(Path(process_json))
+    if not isinstance(process_payload, dict):
+        return "", None, "Kunne ikke laese valgt process-profil som JSON."
+
+    patched_payload = dict(process_payload)
+    changed = False
+
+    if normalized_mode in {"on", "off"}:
+        enabled = normalized_mode == "on"
+        enable_keys = (
+            "enable_support",
+            "support_enable",
+            "enable_support_material",
+            "support_material",
+            "support",
+        )
+        had_enable_key = False
+        for key in enable_keys:
+            if key not in patched_payload:
+                continue
+            had_enable_key = True
+            current = patched_payload.get(key)
+            next_value = _profile_bool_setting_value(current, enabled)
+            if current != next_value:
+                patched_payload[key] = next_value
+                changed = True
+        if not had_enable_key:
+            patched_payload["enable_support"] = "1" if enabled else "0"
+            changed = True
+
+    if normalized_mode != "off" and normalized_type:
+        type_keys = ("support_type", "support_structure")
+        found_type = False
+        for key in type_keys:
+            if key not in patched_payload:
+                continue
+            found_type = True
+            if str(patched_payload.get(key) or "") != normalized_type:
+                patched_payload[key] = normalized_type
+                changed = True
+        if not found_type:
+            patched_payload["support_type"] = normalized_type
+            changed = True
+
+    if normalized_mode != "off" and normalized_style:
+        style_keys = ("support_style",)
+        found_style = False
+        for key in style_keys:
+            if key not in patched_payload:
+                continue
+            found_style = True
+            if str(patched_payload.get(key) or "") != normalized_style:
+                patched_payload[key] = normalized_style
+                changed = True
+        if not found_style:
+            patched_payload["support_style"] = normalized_style
+            changed = True
+
+    if not changed:
+        return f"{machine_json};{process_json}", None, ""
+
+    temp_process = output_gcode.with_suffix(".slice_support_override.process.json")
+    try:
+        temp_process.parent.mkdir(parents=True, exist_ok=True)
+        temp_process.write_text(json.dumps(patched_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        try:
+            temp_process.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return "", None, f"Kunne ikke skrive support-override profil: {exc}"
+
+    return f"{machine_json};{temp_process}", temp_process, ""
 
 
 def _validate_selected_slice_profiles(
@@ -2188,6 +2320,23 @@ def _normalize_bed_size_mm(value: Any) -> float:
     return round(parsed, 3)
 
 
+def _normalize_lift_mm(value: Any) -> float:
+    try:
+        parsed = float(value or 0.0)
+    except Exception:
+        parsed = 0.0
+
+    if not math.isfinite(parsed):
+        return 0.0
+
+    if parsed < 0.0:
+        parsed = 0.0
+    if parsed > 80.0:
+        parsed = 80.0
+
+    return round(parsed, 3)
+
+
 def _write_centered_stl_for_slicing(
     input_stl: Path,
     output_stl: Path,
@@ -2196,6 +2345,7 @@ def _write_centered_stl_for_slicing(
     rotation_z_degrees: float = 0.0,
     placement_x_mm: float = 0.0,
     placement_y_mm: float = 0.0,
+    placement_z_mm: float = 0.0,
 ) -> bool:
     if str(input_stl.suffix or "").lower() != ".stl":
         return False
@@ -2259,13 +2409,19 @@ def _write_centered_stl_for_slicing(
 
         offset_x = float(placement_x_mm or 0.0)
         offset_y = float(placement_y_mm or 0.0)
+        offset_z = float(placement_z_mm or 0.0)
         if not math.isfinite(offset_x):
             offset_x = 0.0
         if not math.isfinite(offset_y):
             offset_y = 0.0
+        if not math.isfinite(offset_z):
+            offset_z = 0.0
+        if offset_z < 0.0:
+            offset_z = 0.0
 
         tx += offset_x
         ty += offset_y
+        tz += offset_z
 
         if (
             abs(tx) < 1e-6
@@ -2276,6 +2432,7 @@ def _write_centered_stl_for_slicing(
             and abs(rotation_z) < 1e-6
             and abs(offset_x) < 1e-6
             and abs(offset_y) < 1e-6
+            and abs(offset_z) < 1e-6
         ):
             return False
 
@@ -2301,6 +2458,10 @@ def _slice_stl_to_gcode(
     rotation_x_degrees: float = 0.0,
     rotation_y_degrees: float = 0.0,
     rotation_z_degrees: float = 0.0,
+    lift_z_mm: float = 0.0,
+    support_mode: str = "auto",
+    support_type: str = "",
+    support_style: str = "",
     bed_width_mm: float = 0.0,
     bed_depth_mm: float = 0.0,
 ) -> None:
@@ -2322,6 +2483,13 @@ def _slice_stl_to_gcode(
     printer_profile_value = str(printer_profile or "").strip()
     print_profile_value = str(print_profile or "").strip()
     filament_profile_value = str(filament_profile or "").strip()
+    normalized_lift_z = _normalize_lift_mm(lift_z_mm)
+    normalized_support_mode = _normalize_slice_support_mode(support_mode)
+    normalized_support_type = _normalize_slice_support_type(support_type)
+    normalized_support_style = _normalize_slice_support_style(support_style)
+    if normalized_support_mode == "off":
+        normalized_support_type = ""
+        normalized_support_style = ""
 
     if printer_profile_value:
         legacy_cmd.extend(["--printer-profile", printer_profile_value])
@@ -2329,6 +2497,34 @@ def _slice_stl_to_gcode(
         legacy_cmd.extend(["--print-profile", print_profile_value])
     if filament_profile_value:
         legacy_cmd.extend(["--filament-profile", filament_profile_value])
+
+    support_load_settings_override = ""
+    temp_profile_overrides: list[Path] = []
+    support_override_requested = (
+        normalized_support_mode != "auto"
+        or bool(normalized_support_type)
+        or bool(normalized_support_style)
+    )
+    legacy_allowed = not support_override_requested
+    if support_override_requested:
+        (
+            support_load_settings_override,
+            support_override_file,
+            support_override_error,
+        ) = _build_support_override_load_settings(
+            executable,
+            output_gcode,
+            printer_profile_value,
+            print_profile_value,
+            filament_profile_value,
+            normalized_support_mode,
+            normalized_support_type,
+            normalized_support_style,
+        )
+        if support_override_file is not None:
+            temp_profile_overrides.append(support_override_file)
+        if support_override_error:
+            raise RuntimeError(f"Support-override fejl: {support_override_error}")
 
     normalized_bed_width = _normalize_bed_size_mm(bed_width_mm)
     normalized_bed_depth = _normalize_bed_size_mm(bed_depth_mm)
@@ -2363,6 +2559,7 @@ def _slice_stl_to_gcode(
             rotation_x_degrees=rotation_x_degrees,
             rotation_y_degrees=rotation_y_degrees,
             rotation_z_degrees=rotation_z_degrees,
+            placement_z_mm=normalized_lift_z,
         ):
             slice_input_candidates.append(("center-origin", centered_input))
             temp_slice_inputs.append(centered_input)
@@ -2380,6 +2577,7 @@ def _slice_stl_to_gcode(
                 rotation_z_degrees=rotation_z_degrees,
                 placement_x_mm=normalized_bed_width / 2.0,
                 placement_y_mm=normalized_bed_depth / 2.0,
+                placement_z_mm=normalized_lift_z,
             ):
                 slice_input_candidates.append(("corner-origin", corner_input))
                 temp_slice_inputs.append(corner_input)
@@ -2395,6 +2593,7 @@ def _slice_stl_to_gcode(
             print_profile_value,
             filament_profile_value,
             prefer_uploaded=True,
+            load_settings_override=support_load_settings_override,
         )
         modern_base = [executable, "--slice", "0", *modern_profile_args]
 
@@ -2404,23 +2603,33 @@ def _slice_stl_to_gcode(
             print_profile_value,
             filament_profile_value,
             prefer_uploaded=False,
+            load_settings_override=support_load_settings_override,
         )
         fallback_base = [executable, "--slice", "0", *fallback_profile_args]
 
         temp_3mf = output_gcode.with_suffix(".gcode.3mf")
         def _build_attempts(slice_input_path: Path) -> list[tuple[str, list[str], str]]:
-            attempts: list[tuple[str, list[str], str]] = [
-                (
-                    "legacy-hyphen",
-                    [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(slice_input_path)],
-                    "gcode",
-                ),
-                (
-                    "legacy-underscore",
-                    [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(slice_input_path)],
-                    "gcode",
-                ),
-                (
+            attempts: list[tuple[str, list[str], str]] = []
+
+            if legacy_allowed:
+                attempts.extend(
+                    [
+                        (
+                            "legacy-hyphen",
+                            [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(slice_input_path)],
+                            "gcode",
+                        ),
+                        (
+                            "legacy-underscore",
+                            [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(slice_input_path)],
+                            "gcode",
+                        ),
+                    ]
+                )
+
+            attempts.extend(
+                [
+                    (
                     "modern-3mf-hyphen",
                     [*modern_base, "--export-3mf", str(temp_3mf), str(slice_input_path)],
                     "3mf",
@@ -2442,7 +2651,8 @@ def _slice_stl_to_gcode(
                     [*modern_base, "--export_3mf", str(temp_3mf), str(slice_input_path)],
                     "3mf",
                 ),
-            ]
+                ]
+            )
 
             if BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK and fallback_profile_args != modern_profile_args:
                 attempts.extend(
@@ -2542,6 +2752,11 @@ def _slice_stl_to_gcode(
                     temp_input.unlink(missing_ok=True)
             except Exception:
                 pass
+        for override_file in temp_profile_overrides:
+            try:
+                override_file.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _archive_completed_slice_output(output_gcode: Path) -> Optional[Path]:
@@ -2566,9 +2781,16 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     printer_profile = str(payload.get("printer_profile") or "").strip()
     print_profile = str(payload.get("print_profile") or "").strip()
     filament_profile = str(payload.get("filament_profile") or "").strip()
+    support_mode = _normalize_slice_support_mode(payload.get("support_mode"))
+    support_type = _normalize_slice_support_type(payload.get("support_type"))
+    support_style = _normalize_slice_support_style(payload.get("support_style"))
+    if support_mode == "off":
+        support_type = ""
+        support_style = ""
     rotation_x_degrees = _normalize_rotation_degrees(payload.get("rotation_x_degrees"))
     rotation_y_degrees = _normalize_rotation_degrees(payload.get("rotation_y_degrees"))
     rotation_z_degrees = _normalize_rotation_degrees(payload.get("rotation_z_degrees"))
+    lift_z_mm = _normalize_lift_mm(payload.get("lift_z_mm"))
     bed_width_mm = _normalize_bed_size_mm(payload.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(payload.get("bed_depth_mm"))
     if file_id <= 0:
@@ -2605,6 +2827,10 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             rotation_x_degrees=rotation_x_degrees,
             rotation_y_degrees=rotation_y_degrees,
             rotation_z_degrees=rotation_z_degrees,
+            lift_z_mm=lift_z_mm,
+            support_mode=support_mode,
+            support_type=support_type,
+            support_style=support_style,
             bed_width_mm=bed_width_mm,
             bed_depth_mm=bed_depth_mm,
         )
@@ -2682,9 +2908,13 @@ def enqueue_slice_job(
     printer_profile: str = "",
     print_profile: str = "",
     filament_profile: str = "",
+    support_mode: str = "auto",
+    support_type: str = "",
+    support_style: str = "",
     rotation_x_degrees: float = 0.0,
     rotation_y_degrees: float = 0.0,
     rotation_z_degrees: float = 0.0,
+    lift_z_mm: float = 0.0,
     bed_width_mm: float = 0.0,
     bed_depth_mm: float = 0.0,
 ) -> bool:
@@ -2697,6 +2927,13 @@ def enqueue_slice_job(
     normalized_rotation_x = _normalize_rotation_degrees(rotation_x_degrees)
     normalized_rotation_y = _normalize_rotation_degrees(rotation_y_degrees)
     normalized_rotation_z = _normalize_rotation_degrees(rotation_z_degrees)
+    normalized_lift_z = _normalize_lift_mm(lift_z_mm)
+    normalized_support_mode = _normalize_slice_support_mode(support_mode)
+    normalized_support_type = _normalize_slice_support_type(support_type)
+    normalized_support_style = _normalize_slice_support_style(support_style)
+    if normalized_support_mode == "off":
+        normalized_support_type = ""
+        normalized_support_style = ""
     normalized_bed_width = _normalize_bed_size_mm(bed_width_mm)
     normalized_bed_depth = _normalize_bed_size_mm(bed_depth_mm)
     SLICE_QUEUE.put(
@@ -2706,9 +2943,13 @@ def enqueue_slice_job(
             "printer_profile": str(printer_profile or "").strip(),
             "print_profile": str(print_profile or "").strip(),
             "filament_profile": str(filament_profile or "").strip(),
+            "support_mode": normalized_support_mode,
+            "support_type": normalized_support_type,
+            "support_style": normalized_support_style,
             "rotation_x_degrees": normalized_rotation_x,
             "rotation_y_degrees": normalized_rotation_y,
             "rotation_z_degrees": normalized_rotation_z,
+            "lift_z_mm": normalized_lift_z,
             "bed_width_mm": normalized_bed_width,
             "bed_depth_mm": normalized_bed_depth,
         }
@@ -4763,9 +5004,16 @@ def api_file_slice(file_id: int):
     printer_profile = str(body.get("printer_profile") or "").strip()[:200]
     print_profile = str(body.get("print_profile") or "").strip()[:200]
     filament_profile = str(body.get("filament_profile") or "").strip()[:200]
+    support_mode = _normalize_slice_support_mode(body.get("support_mode"))
+    support_type = _normalize_slice_support_type(body.get("support_type"))
+    support_style = _normalize_slice_support_style(body.get("support_style"))
+    if support_mode == "off":
+        support_type = ""
+        support_style = ""
     rotation_x_degrees = _normalize_rotation_degrees(body.get("rotation_x_degrees"))
     rotation_y_degrees = _normalize_rotation_degrees(body.get("rotation_y_degrees"))
     rotation_z_degrees = _normalize_rotation_degrees(body.get("rotation_z_degrees"))
+    lift_z_mm = _normalize_lift_mm(body.get("lift_z_mm"))
     bed_width_mm = _normalize_bed_size_mm(body.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(body.get("bed_depth_mm"))
 
@@ -4810,6 +5058,15 @@ def api_file_slice(file_id: int):
         profile_details.append(
             f"rotation=({rotation_x_degrees},{rotation_y_degrees},{rotation_z_degrees})deg"
         )
+    if lift_z_mm > 0.0:
+        profile_details.append(f"lift_z={lift_z_mm}mm")
+    if support_mode != "auto" or support_type or support_style:
+        support_txt = [f"support={support_mode}"]
+        if support_type:
+            support_txt.append(f"type={support_type}")
+        if support_style:
+            support_txt.append(f"style={support_style}")
+        profile_details.append("/".join(support_txt))
     if bed_width_mm > 0.0 and bed_depth_mm > 0.0:
         profile_details.append(f"bed={bed_width_mm}x{bed_depth_mm}mm")
     profile_txt = ", ".join(profile_details) if profile_details else "default profiler"
@@ -4831,9 +5088,13 @@ def api_file_slice(file_id: int):
         printer_profile=printer_profile,
         print_profile=print_profile,
         filament_profile=filament_profile,
+        support_mode=support_mode,
+        support_type=support_type,
+        support_style=support_style,
         rotation_x_degrees=rotation_x_degrees,
         rotation_y_degrees=rotation_y_degrees,
         rotation_z_degrees=rotation_z_degrees,
+        lift_z_mm=lift_z_mm,
         bed_width_mm=bed_width_mm,
         bed_depth_mm=bed_depth_mm,
     )
@@ -4845,9 +5106,13 @@ def api_file_slice(file_id: int):
                 "printer_profile": printer_profile,
                 "print_profile": print_profile,
                 "filament_profile": filament_profile,
+                "support_mode": support_mode,
+                "support_type": support_type,
+                "support_style": support_style,
                 "rotation_x_degrees": rotation_x_degrees,
                 "rotation_y_degrees": rotation_y_degrees,
                 "rotation_z_degrees": rotation_z_degrees,
+                "lift_z_mm": lift_z_mm,
                 "bed_width_mm": bed_width_mm,
                 "bed_depth_mm": bed_depth_mm,
             },
