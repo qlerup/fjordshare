@@ -40,7 +40,6 @@ RUN set -eux; \
         libnss3 \
         libopengl0 \
         libpulse0 \
-        libsoup2.4-1 \
         libsm6 \
         libswscale8 \
         libwayland-client0 \
@@ -73,46 +72,87 @@ RUN set -eux; \
         libxrandr2 \
         libxrender1 \
         assimp-utils; \
-    optional_pkgs=""; \
-    for candidate in \
-        libjavascriptcoregtk-4.0-18t64 libjavascriptcoregtk-4.0-18 \
-        libjavascriptcoregtk-4.1-0t64 libjavascriptcoregtk-4.1-0 \
-        libjavascriptcoregtk-6.0-1t64 libjavascriptcoregtk-6.0-1; do \
-        if apt-cache show "$candidate" >/dev/null 2>&1; then \
-            optional_pkgs="$optional_pkgs $candidate"; \
-            break; \
-        fi; \
-    done; \
-    for candidate in \
-        libwebkit2gtk-4.0-37t64 libwebkit2gtk-4.0-37 \
-        libwebkit2gtk-4.1-0t64 libwebkit2gtk-4.1-0 \
-        libwebkitgtk-6.0-4t64 libwebkitgtk-6.0-4; do \
-        if apt-cache show "$candidate" >/dev/null 2>&1; then \
-            optional_pkgs="$optional_pkgs $candidate"; \
-            break; \
-        fi; \
-    done; \
-    optional_pkgs="$(printf '%s' "$optional_pkgs" | sed 's/^ *//;s/ *$//')"; \
-    if [ -n "$optional_pkgs" ]; then \
-        apt-get install -y --no-install-recommends $optional_pkgs; \
+    pick_first_available() { \
+        for pkg in "$@"; do \
+            if apt-cache show "$pkg" >/dev/null 2>&1; then \
+                printf '%s' "$pkg"; \
+                return 0; \
+            fi; \
+        done; \
+        return 1; \
+    }; \
+    js40_pkg="$(pick_first_available libjavascriptcoregtk-4.0-18t64 libjavascriptcoregtk-4.0-18 || true)"; \
+    wk40_pkg="$(pick_first_available libwebkit2gtk-4.0-37t64 libwebkit2gtk-4.0-37 || true)"; \
+    js41_pkg="$(pick_first_available libjavascriptcoregtk-4.1-0t64 libjavascriptcoregtk-4.1-0 || true)"; \
+    wk41_pkg="$(pick_first_available libwebkit2gtk-4.1-0t64 libwebkit2gtk-4.1-0 || true)"; \
+    js60_pkg="$(pick_first_available libjavascriptcoregtk-6.0-1t64 libjavascriptcoregtk-6.0-1 || true)"; \
+    wk60_pkg="$(pick_first_available libwebkitgtk-6.0-4t64 libwebkitgtk-6.0-4 || true)"; \
+    runtime_major=""; \
+    runtime_js_pkg=""; \
+    runtime_wk_pkg=""; \
+    if [ -n "$js40_pkg" ] && [ -n "$wk40_pkg" ]; then \
+        runtime_major="4.0"; \
+        runtime_js_pkg="$js40_pkg"; \
+        runtime_wk_pkg="$wk40_pkg"; \
+    elif [ -n "$js41_pkg" ] && [ -n "$wk41_pkg" ]; then \
+        runtime_major="4.1"; \
+        runtime_js_pkg="$js41_pkg"; \
+        runtime_wk_pkg="$wk41_pkg"; \
+    elif [ -n "$js60_pkg" ] && [ -n "$wk60_pkg" ]; then \
+        runtime_major="6.0"; \
+        runtime_js_pkg="$js60_pkg"; \
+        runtime_wk_pkg="$wk60_pkg"; \
     else \
-        echo "Advarsel: Ingen libwebkit2gtk/libjavascriptcoregtk runtime-pakker fundet i apt repo." >&2; \
+        echo "Fejl: Ingen kompatibel WebKit/JSC runtime-par fundet i apt repo." >&2; \
+        exit 1; \
+    fi; \
+    if [ "$runtime_major" = "4.0" ]; then \
+        runtime_soup_pkg="$(pick_first_available libsoup2.4-1t64 libsoup2.4-1 || true)"; \
+    else \
+        runtime_soup_pkg="$(pick_first_available libsoup-3.0-0t64 libsoup-3.0-0 || true)"; \
+    fi; \
+    if [ -z "$runtime_soup_pkg" ]; then \
+        echo "Fejl: Kunne ikke finde passende libsoup runtime for WebKit $runtime_major" >&2; \
+        exit 1; \
+    fi; \
+    apt-get install -y --no-install-recommends "$runtime_js_pkg" "$runtime_wk_pkg" "$runtime_soup_pkg"; \
+    ldconfig; \
+    if [ "$runtime_major" = "4.1" ]; then \
+        js_src_glob='/usr/lib/*/libjavascriptcoregtk-4.1.so.0'; \
+        wk_src_glob='/usr/lib/*/libwebkit2gtk-4.1.so.0'; \
+    elif [ "$runtime_major" = "6.0" ]; then \
+        js_src_glob='/usr/lib/*/libjavascriptcoregtk-6.0.so.1'; \
+        wk_src_glob='/usr/lib/*/libwebkitgtk-6.0.so.4'; \
+    else \
+        js_src_glob=''; \
+        wk_src_glob=''; \
+    fi; \
+    if [ "$runtime_major" != "4.0" ]; then \
+        if ! ldconfig -p | grep -q 'libjavascriptcoregtk-4.0.so.18'; then \
+            for src in $js_src_glob; do \
+                if [ -f "$src" ]; then \
+                    ln -sf "$(basename "$src")" "$(dirname "$src")/libjavascriptcoregtk-4.0.so.18"; \
+                    break; \
+                fi; \
+            done; \
+        fi; \
+        if ! ldconfig -p | grep -q 'libwebkit2gtk-4.0.so.37'; then \
+            for src in $wk_src_glob; do \
+                if [ -f "$src" ]; then \
+                    ln -sf "$(basename "$src")" "$(dirname "$src")/libwebkit2gtk-4.0.so.37"; \
+                    break; \
+                fi; \
+            done; \
+        fi; \
+        ldconfig; \
     fi; \
     if ! ldconfig -p | grep -q 'libjavascriptcoregtk-4.0.so.18'; then \
-        for src in /usr/lib/*/libjavascriptcoregtk-4.1.so.0 /usr/lib/*/libjavascriptcoregtk-6.0.so.1; do \
-            if [ -f "$src" ]; then \
-                ln -sf "$(basename "$src")" "$(dirname "$src")/libjavascriptcoregtk-4.0.so.18"; \
-                break; \
-            fi; \
-        done; \
+        echo "Fejl: Mangler libjavascriptcoregtk-4.0.so.18 efter runtime setup." >&2; \
+        exit 1; \
     fi; \
     if ! ldconfig -p | grep -q 'libwebkit2gtk-4.0.so.37'; then \
-        for src in /usr/lib/*/libwebkit2gtk-4.1.so.0 /usr/lib/*/libwebkitgtk-6.0.so.4; do \
-            if [ -f "$src" ]; then \
-                ln -sf "$(basename "$src")" "$(dirname "$src")/libwebkit2gtk-4.0.so.37"; \
-                break; \
-            fi; \
-        done; \
+        echo "Fejl: Mangler libwebkit2gtk-4.0.so.37 efter runtime setup." >&2; \
+        exit 1; \
     fi; \
     ldconfig; \
     mkdir -p /opt/bambu-studio; \

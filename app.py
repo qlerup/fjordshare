@@ -979,6 +979,11 @@ def _slice_stl_to_gcode(
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "Ukendt fejl").strip()
         details_lower = details.lower()
+        if "libsoup2 symbols detected" in details_lower and "libsoup3" in details_lower:
+            raise RuntimeError(
+                "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
+                "Genbyg image med seneste Dockerfile (matcher WebKit/JSC + libsoup automatisk)."
+            )
         if "error while loading shared libraries" in details_lower:
             seen_execs: set[str] = {str(executable)}
             fallback_execs = [
