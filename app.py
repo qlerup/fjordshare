@@ -60,6 +60,13 @@ TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 THUMBS_DIR = DATA_DIR / "thumbs"
 FILE_ATTACHMENTS_DIR = DATA_DIR / "file_attachments"
 DB_PATH = DATA_DIR / "fjordshare.db"
+SLICER_PROFILE_DIR = DATA_DIR / "bambu" / "profiles"
+SLICER_PROFILE_MACHINE_PATH = SLICER_PROFILE_DIR / "machine.json"
+SLICER_PROFILE_PROCESS_PATH = SLICER_PROFILE_DIR / "process.json"
+SLICER_PROFILE_FILAMENT_PATH = SLICER_PROFILE_DIR / "filament.json"
+SLICER_PROFILE_CONFIG_PATH = SLICER_PROFILE_DIR / "config.ini"
+SLICER_PROFILE_ALLOWED_CONFIG_EXTS = {".ini", ".cfg", ".conf", ".txt"}
+SLICER_PROFILE_MAX_BYTES = int(str(os.getenv("SLICER_PROFILE_MAX_BYTES", str(5 * 1024 * 1024))) or str(5 * 1024 * 1024))
 
 PERMISSION_RANK = {"view": 1, "upload": 2, "manage": 3}
 RANK_PERMISSION = {v: k for (k, v) in PERMISSION_RANK.items()}
@@ -152,12 +159,69 @@ def parse_bool(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _slicer_profile_paths() -> dict[str, Path]:
+    return {
+        "machine": SLICER_PROFILE_MACHINE_PATH,
+        "process": SLICER_PROFILE_PROCESS_PATH,
+        "filament": SLICER_PROFILE_FILAMENT_PATH,
+        "config": SLICER_PROFILE_CONFIG_PATH,
+    }
+
+
+def _effective_bambustudio_config_path() -> str:
+    configured = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
+    if configured:
+        return configured
+    if SLICER_PROFILE_CONFIG_PATH.exists() and SLICER_PROFILE_CONFIG_PATH.is_file():
+        return str(SLICER_PROFILE_CONFIG_PATH)
+    return ""
+
+
+def _effective_bambustudio_load_settings() -> str:
+    configured = str(BAMBUSTUDIO_LOAD_SETTINGS or "").strip()
+    if configured:
+        return configured
+    if SLICER_PROFILE_MACHINE_PATH.exists() and SLICER_PROFILE_PROCESS_PATH.exists():
+        return f"{SLICER_PROFILE_MACHINE_PATH};{SLICER_PROFILE_PROCESS_PATH}"
+    return ""
+
+
+def _effective_bambustudio_load_filaments() -> str:
+    configured = str(BAMBUSTUDIO_LOAD_FILAMENTS or "").strip()
+    if configured:
+        return configured
+    if SLICER_PROFILE_FILAMENT_PATH.exists() and SLICER_PROFILE_FILAMENT_PATH.is_file():
+        return str(SLICER_PROFILE_FILAMENT_PATH)
+    return ""
+
+
+def _slicer_profile_meta(path: Path) -> dict[str, Any]:
+    exists = bool(path.exists() and path.is_file())
+    size = 0
+    updated_at = ""
+    if exists:
+        try:
+            stat = path.stat()
+            size = max(0, int(stat.st_size))
+            updated_at = datetime.fromtimestamp(stat.st_mtime, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except Exception:
+            size = 0
+            updated_at = ""
+    return {
+        "path": str(path),
+        "exists": exists,
+        "size": size,
+        "updated_at": updated_at,
+    }
+
+
 def _ensure_storage_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
     FILE_ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    SLICER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_or_create_secret() -> str:
@@ -843,11 +907,12 @@ def _read_bambustudio_profiles() -> dict:
 
     parse_error = ""
     source = "env"
-    config_path_raw = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
+    configured_config_raw = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
+    config_path_raw = _effective_bambustudio_config_path()
     profile_root = ""
 
     if config_path_raw:
-        source = "config"
+        source = "config" if configured_config_raw else "upload"
         config_path = Path(config_path_raw)
         if not config_path.exists() or not config_path.is_file():
             parse_error = f"Config-fil findes ikke: {config_path}"
@@ -1171,27 +1236,27 @@ def _build_modern_profile_args(
 ) -> list[str]:
     args: list[str] = []
 
-    env_load_settings = str(BAMBUSTUDIO_LOAD_SETTINGS or "").strip()
-    env_load_filaments = str(BAMBUSTUDIO_LOAD_FILAMENTS or "").strip()
-    if env_load_settings:
-        args.extend(["--load-settings", env_load_settings])
-    if env_load_filaments:
-        args.extend(["--load-filaments", env_load_filaments])
+    effective_load_settings = _effective_bambustudio_load_settings()
+    effective_load_filaments = _effective_bambustudio_load_filaments()
+    if effective_load_settings:
+        args.extend(["--load-settings", effective_load_settings])
+    if effective_load_filaments:
+        args.extend(["--load-filaments", effective_load_filaments])
 
-    if env_load_settings and env_load_filaments:
+    if effective_load_settings and effective_load_filaments:
         return args
 
     profile_root = _find_bambu_profile_root(executable)
     if not profile_root:
         return args
 
-    if not env_load_settings:
+    if not effective_load_settings:
         machine_json = _pick_profile_json(profile_root / "machine", printer_profile)
         process_json = _pick_profile_json(profile_root / "process", print_profile)
         if machine_json and process_json:
             args.extend(["--load-settings", f"{machine_json};{process_json}"])
 
-    if not env_load_filaments:
+    if not effective_load_filaments:
         filament_json = _pick_profile_json(profile_root / "filament", filament_profile)
         if filament_json:
             args.extend(["--load-filaments", filament_json])
@@ -1212,10 +1277,13 @@ def _slice_stl_to_gcode(
     executable = _resolve_bambustudio_executable()
     legacy_cmd = [executable]
 
-    if BAMBUSTUDIO_CONFIG_PATH:
-        config_path = Path(BAMBUSTUDIO_CONFIG_PATH)
+    effective_config_path = _effective_bambustudio_config_path()
+    if effective_config_path:
+        config_path = Path(effective_config_path)
         if not config_path.exists() or not config_path.is_file():
-            raise RuntimeError(f"BAMBUSTUDIO_CONFIG_PATH findes ikke: {config_path}")
+            if BAMBUSTUDIO_CONFIG_PATH:
+                raise RuntimeError(f"BAMBUSTUDIO_CONFIG_PATH findes ikke: {config_path}")
+            raise RuntimeError(f"Slicer config-fil findes ikke: {config_path}")
         legacy_cmd.extend(["--load", str(config_path)])
 
     printer_profile_value = str(printer_profile or "").strip()
@@ -3748,6 +3816,117 @@ def api_settings_dns_effective():
             "configured": bool(value),
         }
     )
+
+
+@app.route("/api/settings/slicer-profiles", methods=["GET", "POST", "DELETE"])
+@login_required
+def api_settings_slicer_profiles():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    paths = _slicer_profile_paths()
+
+    def _payload(extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "ok": True,
+            "items": {kind: _slicer_profile_meta(path) for kind, path in paths.items()},
+            "effective": {
+                "config_path": _effective_bambustudio_config_path(),
+                "load_settings": _effective_bambustudio_load_settings(),
+                "load_filaments": _effective_bambustudio_load_filaments(),
+                "profile_root": str(BAMBUSTUDIO_PROFILE_ROOT or "").strip(),
+            },
+            "max_bytes": int(SLICER_PROFILE_MAX_BYTES),
+        }
+        if extra:
+            data.update(extra)
+        return data
+
+    if request.method == "GET":
+        return jsonify(_payload())
+
+    if request.method == "DELETE":
+        kind = str(request.args.get("kind") or "").strip().lower()
+        if kind not in paths:
+            return jsonify({"ok": False, "error": "Ugyldig profiltype"}), 400
+
+        target = paths[kind]
+        deleted = False
+        try:
+            if target.exists() and target.is_file():
+                target.unlink(missing_ok=True)
+                deleted = True
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"Kunne ikke slette profil: {exc}"}), 500
+
+        if deleted:
+            log_activity(
+                kind="slice",
+                action="config-delete",
+                message=f"Slicer profil slettet ({kind})",
+                level="info",
+                target=target.name,
+                actor=str(current_user.username or ""),
+            )
+
+        return jsonify(_payload({"deleted": deleted, "kind": kind}))
+
+    kind = str(request.form.get("kind") or "").strip().lower()
+    if kind not in paths:
+        return jsonify({"ok": False, "error": "Ugyldig profiltype"}), 400
+
+    upload = request.files.get("file")
+    if upload is None or not str(getattr(upload, "filename", "") or "").strip():
+        return jsonify({"ok": False, "error": "Vælg en fil først"}), 400
+
+    original_name = sanitize_filename(str(upload.filename or "profil"))
+    ext = Path(original_name).suffix.lower()
+    if kind in {"machine", "process", "filament"} and ext != ".json":
+        return jsonify({"ok": False, "error": "Denne profiltype skal uploades som JSON"}), 400
+    if kind == "config" and ext not in SLICER_PROFILE_ALLOWED_CONFIG_EXTS:
+        return jsonify({"ok": False, "error": "Config-fil skal være .ini/.cfg/.conf/.txt"}), 400
+
+    size_guess = _attachment_size_from_filestorage(upload)
+    if size_guess > SLICER_PROFILE_MAX_BYTES:
+        return jsonify({"ok": False, "error": f"Filen er for stor (maks {SLICER_PROFILE_MAX_BYTES} bytes)"}), 400
+
+    target = paths[kind]
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_target = target.with_suffix(f"{target.suffix}.tmp")
+
+    try:
+        upload.save(temp_target)
+        file_size = max(0, int(temp_target.stat().st_size)) if temp_target.exists() else 0
+        if file_size <= 0:
+            try:
+                temp_target.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": "Uploadet fil er tom"}), 400
+        if file_size > SLICER_PROFILE_MAX_BYTES:
+            try:
+                temp_target.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": f"Filen er for stor (maks {SLICER_PROFILE_MAX_BYTES} bytes)"}), 400
+        temp_target.replace(target)
+    except Exception as exc:
+        try:
+            temp_target.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": f"Kunne ikke gemme profil: {exc}"}), 500
+
+    log_activity(
+        kind="slice",
+        action="config-upload",
+        message=f"Slicer profil uploadet ({kind})",
+        level="info",
+        target=target.name,
+        actor=str(current_user.username or ""),
+    )
+
+    return jsonify(_payload({"uploaded": True, "kind": kind, "original_name": original_name}))
 
 
 @app.route("/api/admin/users", methods=["GET", "POST"])

@@ -135,13 +135,14 @@
       <div class="panel">
         <div class="settings-header">
           <h3>Indstillinger</h3>
-          <p class="hint">Delinger, DNS og brugere</p>
+          <p class="hint">Delinger, DNS, brugere og slicer-profiler</p>
         </div>
         <nav id="settingsTabs" class="tabs">
           <button class="tab-btn active" data-settings-tab="shares">Delinger</button>
           <button class="tab-btn" data-settings-tab="dns">DNS</button>
           <button class="tab-btn" data-settings-tab="users">Brugere</button>
           <button class="tab-btn" data-settings-tab="logs">Logs</button>
+          <button class="tab-btn" data-settings-tab="slicer">Slicer</button>
         </nav>
         <div class="tabs-mobile">
           <select id="settingsTabSelect" aria-label="Vælg indstillingsfane">
@@ -149,6 +150,7 @@
             <option value="dns">DNS</option>
             <option value="users">Brugere</option>
             <option value="logs">Logs</option>
+            <option value="slicer">Slicer</option>
           </select>
         </div>
       </div>
@@ -251,6 +253,58 @@
             </thead>
             <tbody id="logsTableBody"></tbody>
           </table>
+        </div>
+      </div>
+
+      <div id="settings-panel-slicer" class="settings-subpanel hidden">
+        <div class="panel">
+          <div class="toolbar">
+            <h3>Slicer profiler</h3>
+            <button id="slicerRefreshBtn" class="icon-btn" type="button" title="Opdater slicer-profiler" aria-label="Opdater slicer-profiler">&#8635;</button>
+          </div>
+          <p class="hint">Upload profiler her, så de gemmes i den korrekte profilmappe og bruges automatisk i slicing.</p>
+          <div id="slicerSettingsStatus" class="status hidden"></div>
+          <div id="slicerEffectiveInfo" class="hint">Indlæser slicer-status...</div>
+        </div>
+
+        <div class="panel">
+          <h3>Printer profil (machine.json)</h3>
+          <div class="toolbar">
+            <input id="slicerMachineInput" class="input" type="file" accept=".json,application/json">
+            <button id="slicerMachineUploadBtn" class="btn primary" type="button">Upload</button>
+            <button id="slicerMachineDeleteBtn" class="btn danger" type="button">Slet</button>
+          </div>
+          <div id="slicerMachineMeta" class="hint">Ingen fil uploadet.</div>
+        </div>
+
+        <div class="panel">
+          <h3>Print settings (process.json)</h3>
+          <div class="toolbar">
+            <input id="slicerProcessInput" class="input" type="file" accept=".json,application/json">
+            <button id="slicerProcessUploadBtn" class="btn primary" type="button">Upload</button>
+            <button id="slicerProcessDeleteBtn" class="btn danger" type="button">Slet</button>
+          </div>
+          <div id="slicerProcessMeta" class="hint">Ingen fil uploadet.</div>
+        </div>
+
+        <div class="panel">
+          <h3>Filament profil (filament.json)</h3>
+          <div class="toolbar">
+            <input id="slicerFilamentInput" class="input" type="file" accept=".json,application/json">
+            <button id="slicerFilamentUploadBtn" class="btn primary" type="button">Upload</button>
+            <button id="slicerFilamentDeleteBtn" class="btn danger" type="button">Slet</button>
+          </div>
+          <div id="slicerFilamentMeta" class="hint">Ingen fil uploadet.</div>
+        </div>
+
+        <div class="panel">
+          <h3>Konfigurationsbundle (INI/CFG)</h3>
+          <div class="toolbar">
+            <input id="slicerConfigInput" class="input" type="file" accept=".ini,.cfg,.conf,.txt,text/plain">
+            <button id="slicerConfigUploadBtn" class="btn primary" type="button">Upload</button>
+            <button id="slicerConfigDeleteBtn" class="btn danger" type="button">Slet</button>
+          </div>
+          <div id="slicerConfigMeta" class="hint">Ingen fil uploadet.</div>
         </div>
       </div>
     </section>
