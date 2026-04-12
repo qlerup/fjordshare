@@ -1516,6 +1516,14 @@
       depth_mm: Number(DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
     };
 
+    // 0) Known-printer selection is an explicit bed preset.
+    const knownKey = String((els.sliceKnownPrinterSelect && els.sliceKnownPrinterSelect.value) || "").trim();
+    if (knownKey) {
+      const knownModel = KNOWN_PRINTER_MODELS.find((m) => m.key === knownKey) || null;
+      const knownBed = normalizeSliceBedSize(knownModel);
+      if (knownBed) return knownBed;
+    }
+
     // 1) Prefer manual override from inputs when provided
     const manualW = Number((els.sliceBedWidthInput && els.sliceBedWidthInput.value) || 0);
     const manualD = Number((els.sliceBedDepthInput && els.sliceBedDepthInput.value) || 0);
@@ -5582,17 +5590,14 @@
     }
     if (els.slicePrinterSelect) {
       els.slicePrinterSelect.addEventListener("change", () => {
-        refreshSlicePreviewBedFromSelection();
-        // Try to preselect a known model when the printer profile name hints at one
+        // Try to preselect a known model when the printer profile name hints at one.
+        // Keep this in sync with bed resolution before we refresh the preview.
         const name = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "");
         const guessed = guessKnownModelFromProfileName(name);
         if (els.sliceKnownPrinterSelect) {
-          if (!els.sliceBedWidthInput?.value && !els.sliceBedDepthInput?.value) {
-            renderKnownPrinterSelect(els.sliceKnownPrinterSelect, guessed);
-          } else {
-            renderKnownPrinterSelect(els.sliceKnownPrinterSelect, "");
-          }
+          renderKnownPrinterSelect(els.sliceKnownPrinterSelect, guessed);
         }
+        refreshSlicePreviewBedFromSelection();
       });
     }
     if (els.sliceKnownPrinterSelect) {
@@ -5628,6 +5633,9 @@
     }
     if (els.sliceBedWidthInput) {
       const onManualBedChange = () => {
+        if (els.sliceKnownPrinterSelect && String(els.sliceKnownPrinterSelect.value || "").trim()) {
+          els.sliceKnownPrinterSelect.value = "";
+        }
         const w = clampSliceBedSizeMm(els.sliceBedWidthInput.value || DEFAULT_SLICE_BED_SIZE_MM.width_mm, DEFAULT_SLICE_BED_SIZE_MM.width_mm);
         els.sliceBedWidthInput.value = String(w);
         refreshSlicePreviewBedFromSelection();
@@ -5637,6 +5645,9 @@
     }
     if (els.sliceBedDepthInput) {
       const onManualBedChange = () => {
+        if (els.sliceKnownPrinterSelect && String(els.sliceKnownPrinterSelect.value || "").trim()) {
+          els.sliceKnownPrinterSelect.value = "";
+        }
         const d = clampSliceBedSizeMm(els.sliceBedDepthInput.value || DEFAULT_SLICE_BED_SIZE_MM.depth_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm);
         els.sliceBedDepthInput.value = String(d);
         refreshSlicePreviewBedFromSelection();
@@ -6090,5 +6101,3 @@
     showStatus(els.uploadStatus, err.message || "Init fejlede", "error");
   });
 })();
-
-

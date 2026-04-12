@@ -2548,6 +2548,13 @@ def _slice_stl_to_gcode(
         except Exception:
             pass
 
+    requested_transform = (
+        abs(float(rotation_x_degrees or 0.0)) >= 1e-6
+        or abs(float(rotation_y_degrees or 0.0)) >= 1e-6
+        or abs(float(rotation_z_degrees or 0.0)) >= 1e-6
+        or normalized_lift_z > 1e-6
+    )
+
     slice_input_candidates: list[tuple[str, Path]] = []
     temp_slice_inputs: list[Path] = []
 
@@ -2584,7 +2591,15 @@ def _slice_stl_to_gcode(
         except Exception:
             pass
 
-    slice_input_candidates.append(("original", input_stl))
+    transformed_candidates = [label for label, _path in slice_input_candidates if label in {"center-origin", "corner-origin"}]
+    if requested_transform:
+        if not transformed_candidates:
+            raise RuntimeError(
+                "Kunne ikke forberede roteret/loeftet STL til slicing. "
+                "Proev med lavere rotation/loeft eller upload en STL med korrekt orientering."
+            )
+    else:
+        slice_input_candidates.append(("original", input_stl))
 
     try:
         modern_profile_args = _build_modern_profile_args(
@@ -6825,5 +6840,4 @@ _bootstrap_thumbnail_queue()
 if __name__ == "__main__":
     port = int(str(os.getenv("APP_PORT", "8080")) or "8080")
     app.run(host="0.0.0.0", port=port, debug=False)
-
 
