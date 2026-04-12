@@ -639,6 +639,7 @@
   const DEFAULT_SLICE_BED_SIZE_MM = Object.freeze({ width_mm: 256, depth_mm: 256 });
   const KNOWN_PRINTER_MODELS = Object.freeze([
     { key: "", name: "Auto / fra profil", width_mm: 0, depth_mm: 0 },
+    { key: "bambu-h2d", name: "Bambu Lab H2D (350×320)", width_mm: 350, depth_mm: 320 },
     { key: "bambu-a1-mini", name: "Bambu Lab A1 mini (180×180)", width_mm: 180, depth_mm: 180 },
     { key: "bambu-a1", name: "Bambu Lab A1 (256×256)", width_mm: 256, depth_mm: 256 },
     { key: "bambu-p1", name: "Bambu Lab P1P/P1S (256×256)", width_mm: 256, depth_mm: 256 },
@@ -1440,9 +1441,10 @@
 
   function renderKnownPrinterSelect(selectEl, selectedKey = "") {
     if (!selectEl) return;
-    const html = KNOWN_PRINTER_MODELS.map((m) => `<option value="${esc(m.key)}">${esc(m.name)}</option>`).join("");
+    const models = KNOWN_PRINTER_MODELS; // built-ins first
+    const html = models.map((m) => `<option value="${esc(m.key)}">${esc(m.name)}</option>`).join("");
     selectEl.innerHTML = html;
-    const match = KNOWN_PRINTER_MODELS.find((m) => m.key === String(selectedKey || ""));
+    const match = models.find((m) => m.key === String(selectedKey || ""));
     selectEl.value = match ? match.key : "";
   }
 
@@ -1457,6 +1459,7 @@
   function guessKnownModelFromProfileName(name = "") {
     const n = String(name || "").toLowerCase();
     if (!n) return "";
+    if (/\bh2d\b/.test(n)) return "bambu-h2d";
     if (/\ba1\s*mini\b|\ba1mini\b/.test(n)) return "bambu-a1-mini";
     if (/\ba1\b/.test(n)) return "bambu-a1";
     if (/\bp1p\b|\bp1s\b/.test(n)) return "bambu-p1";
@@ -5596,6 +5599,31 @@
       renderKnownPrinterSelect(els.sliceKnownPrinterSelect, "");
       els.sliceKnownPrinterSelect.addEventListener("change", () => {
         applyKnownPrinterBedSize(els.sliceKnownPrinterSelect.value || "");
+      });
+    }
+
+    if (els.sliceSaveKnownPrinterBtn) {
+      els.sliceSaveKnownPrinterBtn.addEventListener("click", () => {
+        const w = clampSliceBedSizeMm(els.sliceBedWidthInput && els.sliceBedWidthInput.value ? Number(els.sliceBedWidthInput.value) : 0, 0);
+        const d = clampSliceBedSizeMm(els.sliceBedDepthInput && els.sliceBedDepthInput.value ? Number(els.sliceBedDepthInput.value) : 0, 0);
+        if (!(w > 0 && d > 0)) {
+          showStatus(els.sliceModalStatus, "Angiv først gyldig X og Y (mm) før du gemmer som kendt printer.", "error");
+          return;
+        }
+        const name = window.prompt("Navn på kendt printer (fx 'Bambu Lab H2D'):", "Bambu Lab H2D");
+        const label = String(name || "").trim();
+        if (!label) return;
+        // Normalize to an in-session entry by re-rendering the select with a temporary custom option
+        const key = `custom-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`.replace(/-+/g, '-').replace(/^-|-$/g, '');
+        // Build a transient list: prepend the custom one then built-ins (simple approach without persistence for now)
+        const custom = { key, name: `${label} (${w}×${d})`, width_mm: w, depth_mm: d };
+        const models = [KNOWN_PRINTER_MODELS[0], custom, ...KNOWN_PRINTER_MODELS.slice(1)];
+        const html = models.map((m) => `<option value="${esc(m.key)}">${esc(m.name)}</option>`).join("");
+        if (els.sliceKnownPrinterSelect) {
+          els.sliceKnownPrinterSelect.innerHTML = html;
+          els.sliceKnownPrinterSelect.value = key;
+        }
+        showStatus(els.sliceModalStatus, `Tilføjet kendt printer: ${label} (${w}×${d} mm)`, "ok");
       });
     }
     if (els.sliceBedWidthInput) {
