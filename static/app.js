@@ -116,6 +116,7 @@
     fileInfoAttachList: document.getElementById("fileInfoAttachList"),
     fileInfoSaveBtn: document.getElementById("fileInfoSaveBtn"),
     fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
+    fileInfoSliceDownloadLink: document.getElementById("fileInfoSliceDownloadLink"),
     fileInfoSliceBtn: document.getElementById("fileInfoSliceBtn"),
     fileInfoOpen3DBtn: document.getElementById("fileInfoOpen3DBtn"),
     sliceModal: document.getElementById("sliceModal"),
@@ -1535,6 +1536,23 @@
     if (els.fileInfoQty) els.fileInfoQty.value = String(Math.max(1, Number(file.quantity || 1) || 1));
     if (els.fileInfoDownloadLink) {
       els.fileInfoDownloadLink.href = String(file.download_url || "#");
+    }
+    if (els.fileInfoSliceDownloadLink) {
+      const sliceOutput = file && file.slice_output && typeof file.slice_output === "object" ? file.slice_output : null;
+      const downloadUrl = String((sliceOutput && sliceOutput.download_url) || "").trim();
+      const hasSliceOutput = !!downloadUrl;
+      els.fileInfoSliceDownloadLink.classList.toggle("hidden", !hasSliceOutput);
+      if (hasSliceOutput) {
+        const sizeValue = Number((sliceOutput && sliceOutput.file_size) || 0);
+        const sizeLabel = sizeValue > 0 ? ` (${formatSize(sizeValue)})` : "";
+        els.fileInfoSliceDownloadLink.href = downloadUrl;
+        els.fileInfoSliceDownloadLink.textContent = `Download G-code${sizeLabel}`;
+        els.fileInfoSliceDownloadLink.title = String((sliceOutput && sliceOutput.filename) || "G-code");
+      } else {
+        els.fileInfoSliceDownloadLink.href = "#";
+        els.fileInfoSliceDownloadLink.textContent = "Download G-code";
+        els.fileInfoSliceDownloadLink.removeAttribute("title");
+      }
     }
     if (els.fileInfoOpen3DBtn) {
       els.fileInfoOpen3DBtn.classList.toggle("hidden", !file.is_3d_openable);

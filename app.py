@@ -3416,7 +3416,111 @@ def file_thumb_path(file_row: sqlite3.Row) -> Optional[Path]:
     return _thumbnail_abs_path_from_rel(rel)
 
 
-def serialize_file_row(row: sqlite3.Row, share_token: Optional[str] = None) -> dict:
+def _is_slice_output_ext(ext: str) -> bool:
+    return str(ext or "").strip().lower() == ".gcode"
+
+
+def _expected_slice_output_stem(source_filename: str) -> str:
+    source_stem = str(Path(str(source_filename or "")).stem or "").strip()
+    if not source_stem:
+        return ""
+    expected_name = sanitize_filename(f"{source_stem}.gcode")
+    return str(Path(expected_name).stem or "").strip().lower()
+
+
+def _slice_output_name_matches_source(source_filename: str, output_filename: str) -> bool:
+    expected_stem = _expected_slice_output_stem(source_filename)
+    if not expected_stem:
+        return False
+
+    output_stem = str(Path(str(output_filename or "")).stem or "").strip().lower()
+    if not output_stem:
+        return False
+
+    if output_stem == expected_stem:
+        return True
+
+    if output_stem.startswith(f"{expected_stem}_"):
+        suffix = output_stem[len(expected_stem) + 1:]
+        return suffix.isdigit()
+
+    return False
+
+
+def _pick_slice_output_for_source_row(source_row: sqlite3.Row, candidate_rows: list[sqlite3.Row]) -> Optional[sqlite3.Row]:
+    source_ext = str(source_row["ext"] or "").lower()
+    if not _supports_slicing_for_ext(source_ext):
+        return None
+
+    source_filename = str(source_row["filename"] or "")
+    matches: list[sqlite3.Row] = []
+    for candidate in candidate_rows:
+        candidate_ext = str(candidate["ext"] or "").lower()
+        if not _is_slice_output_ext(candidate_ext):
+            continue
+
+        candidate_name = str(candidate["filename"] or "")
+        if _slice_output_name_matches_source(source_filename, candidate_name):
+            matches.append(candidate)
+
+    if not matches:
+        return None
+
+    matches.sort(
+        key=lambda r: (
+            str(r["uploaded_at"] or ""),
+            int(r["id"] or 0),
+        ),
+        reverse=True,
+    )
+    return matches[0]
+
+
+def _pair_visible_file_rows_with_slice_output(rows: list[sqlite3.Row]) -> list[tuple[sqlite3.Row, Optional[sqlite3.Row]]]:
+    gcode_by_folder: dict[str, list[sqlite3.Row]] = {}
+    visible_rows: list[sqlite3.Row] = []
+
+    for row in rows:
+        folder_path = normalize_folder_path(str(row["folder_path"] or ""))
+        ext = str(row["ext"] or "").lower()
+        if _is_slice_output_ext(ext):
+            gcode_by_folder.setdefault(folder_path, []).append(row)
+            continue
+        visible_rows.append(row)
+
+    paired: list[tuple[sqlite3.Row, Optional[sqlite3.Row]]] = []
+    for row in visible_rows:
+        folder_path = normalize_folder_path(str(row["folder_path"] or ""))
+        output_row = _pick_slice_output_for_source_row(row, gcode_by_folder.get(folder_path, []))
+        paired.append((row, output_row))
+
+    return paired
+
+
+def _serialize_slice_output_row(row: sqlite3.Row, share_token: Optional[str] = None) -> dict[str, Any]:
+    if share_token:
+        content_url = url_for("api_share_file_content", token=share_token, file_id=int(row["id"]))
+        download_url = url_for("api_share_file_download", token=share_token, file_id=int(row["id"]))
+    else:
+        content_url = url_for("api_file_content", file_id=int(row["id"]))
+        download_url = url_for("api_file_download", file_id=int(row["id"]))
+
+    return {
+        "id": int(row["id"]),
+        "filename": str(row["filename"] or ""),
+        "ext": str(row["ext"] or "").lower(),
+        "file_size": int(row["file_size"] or 0),
+        "uploaded_at": str(row["uploaded_at"] or ""),
+        "content_url": content_url,
+        "download_url": download_url,
+    }
+
+
+def serialize_file_row(
+    row: sqlite3.Row,
+    share_token: Optional[str] = None,
+    slice_output_row: Optional[sqlite3.Row] = None,
+) -> dict:
     ext = str(row["ext"] or "").lower()
     is_3d = ext in THREE_D_EXTENSIONS
     is_3d_openable = ext in THREE_D_VIEWER_EXTENSIONS
@@ -3466,6 +3570,7 @@ def serialize_file_row(row: sqlite3.Row, share_token: Optional[str] = None) -> d
         "thumb_supported": bool(thumb_supported),
         "content_url": content_url,
         "download_url": download_url,
+        "slice_output": _serialize_slice_output_row(slice_output_row, share_token=share_token) if slice_output_row is not None else None,
     }
 
 
@@ -3885,18 +3990,22 @@ def api_files_list():
                 "SELECT * FROM files ORDER BY uploaded_at DESC, id DESC LIMIT 1000"
             ).fetchall()
 
-    items: list[dict] = []
+    accessible_rows: list[sqlite3.Row] = []
     for row in rows:
         if user_can_access_file(current_user, row, "view"):
-            ext = str(row["ext"] or "").lower()
-            thumb_status = str(row["thumb_status"] or "none").strip().lower()
-            thumb_rel = str(row["thumb_rel"] or "").strip()
-            if _supports_thumbnail_for_ext(ext) and (not thumb_rel or thumb_status in {"queued", "error"}):
-                try:
-                    enqueue_thumbnail(int(row["id"]))
-                except Exception:
-                    pass
-            items.append(serialize_file_row(row))
+            accessible_rows.append(row)
+
+    items: list[dict] = []
+    for row, slice_output_row in _pair_visible_file_rows_with_slice_output(accessible_rows):
+        ext = str(row["ext"] or "").lower()
+        thumb_status = str(row["thumb_status"] or "none").strip().lower()
+        thumb_rel = str(row["thumb_rel"] or "").strip()
+        if _supports_thumbnail_for_ext(ext) and (not thumb_rel or thumb_status in {"queued", "error"}):
+            try:
+                enqueue_thumbnail(int(row["id"]))
+            except Exception:
+                pass
+        items.append(serialize_file_row(row, slice_output_row=slice_output_row))
 
     zip_jobs = list_zip_jobs_for_folder(folder)
 
@@ -5176,7 +5285,9 @@ def api_share_files(token: str):
         rows = conn.execute(query, params).fetchall()
 
     touch_share_used(int(row["id"]))
-    items = [serialize_file_row(r, share_token=token) for r in rows]
+
+    paired_rows = _pair_visible_file_rows_with_slice_output(rows)
+    items = [serialize_file_row(r, share_token=token, slice_output_row=slice_output_row) for r, slice_output_row in paired_rows]
     return jsonify({"ok": True, "items": items})
 
 
