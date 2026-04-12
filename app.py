@@ -795,23 +795,35 @@ def _read_bambustudio_profiles() -> dict:
 
 
 def _resolve_bambustudio_executable() -> str:
+    def _prefer_apprun(path_str: str) -> str:
+        p = Path(path_str)
+        try:
+            parts_lower = [part.lower() for part in p.parts]
+        except Exception:
+            return path_str
+        if len(parts_lower) >= 3 and parts_lower[-3:] == ["appdir", "bin", "bambu-studio"]:
+            app_run = p.parent.parent / "AppRun"
+            if app_run.is_file():
+                return str(app_run)
+        return path_str
+
     configured = str(BAMBUSTUDIO_BIN or "").strip()
     if not configured:
         raise RuntimeError("BAMBUSTUDIO_BIN er ikke konfigureret")
 
     candidate_path = Path(configured)
     if candidate_path.is_file():
-        return str(candidate_path)
+        return _prefer_apprun(str(candidate_path))
 
     resolved = shutil.which(configured)
     if resolved:
-        return resolved
+        return _prefer_apprun(resolved)
 
     if configured.lower() in {"bambu-studio", "bambustudio"}:
         for alt in ("BambuStudio", "bambu-studio", "BambuStudio-console", "bambu-studio-console"):
             resolved_alt = shutil.which(alt)
             if resolved_alt:
-                return resolved_alt
+                return _prefer_apprun(resolved_alt)
 
     raise RuntimeError(f"BambuStudio blev ikke fundet: {configured}")
 

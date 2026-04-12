@@ -1,4 +1,4 @@
-﻿FROM python:3.11-slim-bookworm
+﻿FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -32,7 +32,7 @@ RUN set -eux; \
         libgstreamer1.0-0 \
         libglu1-mesa \
         libgtk-3-0 \
-        libjavascriptcoregtk-4.0-18 \
+        libjavascriptcoregtk-4.0-18t64 \
         libosmesa6 \
         libpangoft2-1.0-0 \
         libgl1 \
@@ -47,7 +47,7 @@ RUN set -eux; \
         libwayland-client0 \
         libwayland-cursor0 \
         libwayland-egl1 \
-        libwebkit2gtk-4.0-37 \
+        libwebkit2gtk-4.0-37t64 \
         libx11-6 \
         libx11-xcb1 \
         libxcb-cursor0 \
