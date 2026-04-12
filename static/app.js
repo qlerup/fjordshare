@@ -143,6 +143,7 @@
     sliceModalFileName: document.getElementById("sliceModalFileName"),
     sliceModalStatus: document.getElementById("sliceModalStatus"),
     slicePrinterSelect: document.getElementById("slicePrinterSelect"),
+    sliceKnownPrinterSelect: document.getElementById("sliceKnownPrinterSelect"),
     sliceBedWidthInput: document.getElementById("sliceBedWidthInput"),
     sliceBedDepthInput: document.getElementById("sliceBedDepthInput"),
     slicePrintProfileSelect: document.getElementById("slicePrintProfileSelect"),
@@ -636,6 +637,16 @@
   const SCALE_CAN_DIAMETER_MM = 66;
   const PRESENTATION_TABLE_SIZE_MM = 600;
   const DEFAULT_SLICE_BED_SIZE_MM = Object.freeze({ width_mm: 256, depth_mm: 256 });
+  const KNOWN_PRINTER_MODELS = Object.freeze([
+    { key: "", name: "Auto / fra profil", width_mm: 0, depth_mm: 0 },
+    { key: "bambu-a1-mini", name: "Bambu Lab A1 mini (180×180)", width_mm: 180, depth_mm: 180 },
+    { key: "bambu-a1", name: "Bambu Lab A1 (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "bambu-p1", name: "Bambu Lab P1P/P1S (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "bambu-x1", name: "Bambu Lab X1/X1C (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "generic-220", name: "Generic 220×220", width_mm: 220, depth_mm: 220 },
+    { key: "generic-235", name: "Generic 235×235", width_mm: 235, depth_mm: 235 },
+    { key: "generic-300", name: "Generic 300×300", width_mm: 300, depth_mm: 300 },
+  ]);
   const SLICE_LIFT_RANGE_MM = Object.freeze({ min: 0, max: 80, step: 0.5 });
   const SLICE_SUPPORT_MODE_VALUES = new Set(["auto", "on", "off"]);
   const SLICE_SUPPORT_TYPE_VALUES = new Set(["", "tree(auto)", "normal(auto)"]);
@@ -1427,6 +1438,35 @@
     selectEl.innerHTML = html;
   }
 
+  function renderKnownPrinterSelect(selectEl, selectedKey = "") {
+    if (!selectEl) return;
+    const html = KNOWN_PRINTER_MODELS.map((m) => `<option value="${esc(m.key)}">${esc(m.name)}</option>`).join("");
+    selectEl.innerHTML = html;
+    const match = KNOWN_PRINTER_MODELS.find((m) => m.key === String(selectedKey || ""));
+    selectEl.value = match ? match.key : "";
+  }
+
+  function applyKnownPrinterBedSize(key) {
+    const model = KNOWN_PRINTER_MODELS.find((m) => m.key === String(key || ""));
+    if (!model || !(Number(model.width_mm) > 0 && Number(model.depth_mm) > 0)) return;
+    if (els.sliceBedWidthInput) els.sliceBedWidthInput.value = String(model.width_mm);
+    if (els.sliceBedDepthInput) els.sliceBedDepthInput.value = String(model.depth_mm);
+    refreshSlicePreviewBedFromSelection();
+  }
+
+  function guessKnownModelFromProfileName(name = "") {
+    const n = String(name || "").toLowerCase();
+    if (!n) return "";
+    if (/\ba1\s*mini\b|\ba1mini\b/.test(n)) return "bambu-a1-mini";
+    if (/\ba1\b/.test(n)) return "bambu-a1";
+    if (/\bp1p\b|\bp1s\b/.test(n)) return "bambu-p1";
+    if (/\bx1c\b|\bx1\b/.test(n)) return "bambu-x1";
+    if (/\b220x?220\b/.test(n)) return "generic-220";
+    if (/\b235x?235\b/.test(n)) return "generic-235";
+    if (/\b300x?300\b/.test(n)) return "generic-300";
+    return "";
+  }
+
   function setSliceSelectValue(selectEl, preferredValue = "") {
     if (!selectEl) return;
     const wanted = String(preferredValue || "").trim();
@@ -2142,6 +2182,11 @@
       setSliceSelectValue(els.slicePrinterSelect, state.lastSliceSelection.printer_profile);
       setSliceSelectValue(els.slicePrintProfileSelect, state.lastSliceSelection.print_profile);
       setSliceSelectValue(els.sliceFilamentProfileSelect, state.lastSliceSelection.filament_profile);
+      // Render known printer options and try to guess from selected printer name
+      if (els.sliceKnownPrinterSelect) {
+        const guessed = guessKnownModelFromProfileName((els.slicePrinterSelect && els.slicePrinterSelect.value) || "");
+        renderKnownPrinterSelect(els.sliceKnownPrinterSelect, guessed);
+      }
       refreshSlicePreviewBedFromSelection();
 
       if (profiles.parse_error) {
@@ -5535,6 +5580,22 @@
     if (els.slicePrinterSelect) {
       els.slicePrinterSelect.addEventListener("change", () => {
         refreshSlicePreviewBedFromSelection();
+        // Try to preselect a known model when the printer profile name hints at one
+        const name = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "");
+        const guessed = guessKnownModelFromProfileName(name);
+        if (els.sliceKnownPrinterSelect) {
+          if (!els.sliceBedWidthInput?.value && !els.sliceBedDepthInput?.value) {
+            renderKnownPrinterSelect(els.sliceKnownPrinterSelect, guessed);
+          } else {
+            renderKnownPrinterSelect(els.sliceKnownPrinterSelect, "");
+          }
+        }
+      });
+    }
+    if (els.sliceKnownPrinterSelect) {
+      renderKnownPrinterSelect(els.sliceKnownPrinterSelect, "");
+      els.sliceKnownPrinterSelect.addEventListener("change", () => {
+        applyKnownPrinterBedSize(els.sliceKnownPrinterSelect.value || "");
       });
     }
     if (els.sliceBedWidthInput) {
