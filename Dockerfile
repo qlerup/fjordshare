@@ -1,4 +1,4 @@
-﻿FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -22,8 +22,6 @@ RUN set -eux; \
         libdbus-1-3 \
         libdrm2 \
         libegl1 \
-        libavcodec61 \
-        libavutil59 \
         libfontconfig1 \
         libfreetype6 \
         libgbm1 \
@@ -41,7 +39,6 @@ RUN set -eux; \
         libopengl0 \
         libpulse0 \
         libsm6 \
-        libswscale8 \
         libwayland-client0 \
         libwayland-cursor0 \
         libwayland-egl1 \
@@ -91,6 +88,17 @@ RUN set -eux; \
         done; \
         return 1; \
     }; \
+    avcodec_pkg="$(pick_first_available libavcodec61 libavcodec60 libavcodec59 || true)"; \
+    avutil_pkg="$(pick_first_available libavutil59 libavutil58 libavutil57 || true)"; \
+    swscale_pkg="$(pick_first_available libswscale8 libswscale7 libswscale6 || true)"; \
+    media_pkgs=""; \
+    [ -n "$avcodec_pkg" ] && media_pkgs="$media_pkgs $avcodec_pkg" || true; \
+    [ -n "$avutil_pkg" ] && media_pkgs="$media_pkgs $avutil_pkg" || true; \
+    [ -n "$swscale_pkg" ] && media_pkgs="$media_pkgs $swscale_pkg" || true; \
+    media_pkgs="$(printf '%s' "$media_pkgs" | sed 's/^ *//;s/ *$//')"; \
+    if [ -n "$media_pkgs" ]; then \
+        apt-get install -y --no-install-recommends $media_pkgs; \
+    fi; \
     js40_pkg="$(pick_first_available libjavascriptcoregtk-4.0-18t64 libjavascriptcoregtk-4.0-18 || true)"; \
     wk40_pkg="$(pick_first_available libwebkit2gtk-4.0-37t64 libwebkit2gtk-4.0-37 || true)"; \
     js41_pkg="$(pick_first_available libjavascriptcoregtk-4.1-0t64 libjavascriptcoregtk-4.1-0 || true)"; \
@@ -142,6 +150,7 @@ RUN set -eux; \
         echo "Fejl: Kunne ikke finde passende libsoup runtime for WebKit $runtime_wk_major" >&2; \
         exit 1; \
     fi; \
+    echo "Bambu runtime libs: webkit=$runtime_wk_major jsc=$runtime_js_major soup=$runtime_soup_pkg"; \
     apt-get install -y --no-install-recommends "$runtime_js_pkg" "$runtime_wk_pkg" "$runtime_soup_pkg"; \
     ldconfig; \
     if [ "$runtime_js_major" = "4.1" ]; then \
