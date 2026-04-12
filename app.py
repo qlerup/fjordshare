@@ -61,10 +61,18 @@ THUMBS_DIR = DATA_DIR / "thumbs"
 FILE_ATTACHMENTS_DIR = DATA_DIR / "file_attachments"
 DB_PATH = DATA_DIR / "fjordshare.db"
 SLICER_PROFILE_DIR = DATA_DIR / "bambu" / "profiles"
-SLICER_PROFILE_MACHINE_PATH = SLICER_PROFILE_DIR / "machine.json"
-SLICER_PROFILE_PROCESS_PATH = SLICER_PROFILE_DIR / "process.json"
-SLICER_PROFILE_FILAMENT_PATH = SLICER_PROFILE_DIR / "filament.json"
-SLICER_PROFILE_CONFIG_PATH = SLICER_PROFILE_DIR / "config.ini"
+SLICER_PROFILE_PRINTER_DIR = SLICER_PROFILE_DIR / "printer_profiles"
+SLICER_PROFILE_PRINT_SETTINGS_DIR = SLICER_PROFILE_DIR / "printer_print_settings"
+SLICER_PROFILE_FILAMENT_DIR = SLICER_PROFILE_DIR / "filament_profiles"
+SLICER_PROFILE_CONFIG_DIR = SLICER_PROFILE_DIR / "config_bundle"
+SLICER_PROFILE_MACHINE_PATH = SLICER_PROFILE_PRINTER_DIR / "machine.json"
+SLICER_PROFILE_PROCESS_PATH = SLICER_PROFILE_PRINT_SETTINGS_DIR / "process.json"
+SLICER_PROFILE_FILAMENT_PATH = SLICER_PROFILE_FILAMENT_DIR / "filament.json"
+SLICER_PROFILE_CONFIG_PATH = SLICER_PROFILE_CONFIG_DIR / "config.ini"
+SLICER_PROFILE_LEGACY_MACHINE_PATH = SLICER_PROFILE_DIR / "machine.json"
+SLICER_PROFILE_LEGACY_PROCESS_PATH = SLICER_PROFILE_DIR / "process.json"
+SLICER_PROFILE_LEGACY_FILAMENT_PATH = SLICER_PROFILE_DIR / "filament.json"
+SLICER_PROFILE_LEGACY_CONFIG_PATH = SLICER_PROFILE_DIR / "config.ini"
 SLICER_PROFILE_ALLOWED_CONFIG_EXTS = {".ini", ".cfg", ".conf", ".txt"}
 SLICER_PROFILE_MAX_BYTES = int(str(os.getenv("SLICER_PROFILE_MAX_BYTES", str(5 * 1024 * 1024))) or str(5 * 1024 * 1024))
 
@@ -215,6 +223,25 @@ def _slicer_profile_meta(path: Path) -> dict[str, Any]:
     }
 
 
+def _migrate_legacy_slicer_profile_files() -> None:
+    legacy_mappings = (
+        (SLICER_PROFILE_LEGACY_MACHINE_PATH, SLICER_PROFILE_MACHINE_PATH),
+        (SLICER_PROFILE_LEGACY_PROCESS_PATH, SLICER_PROFILE_PROCESS_PATH),
+        (SLICER_PROFILE_LEGACY_FILAMENT_PATH, SLICER_PROFILE_FILAMENT_PATH),
+        (SLICER_PROFILE_LEGACY_CONFIG_PATH, SLICER_PROFILE_CONFIG_PATH),
+    )
+    for legacy_path, target_path in legacy_mappings:
+        if not legacy_path.exists() or not legacy_path.is_file():
+            continue
+        if target_path.exists() and target_path.is_file():
+            continue
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_path.replace(target_path)
+        except Exception:
+            continue
+
+
 def _ensure_storage_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
@@ -222,6 +249,11 @@ def _ensure_storage_dirs() -> None:
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
     FILE_ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    SLICER_PROFILE_PRINTER_DIR.mkdir(parents=True, exist_ok=True)
+    SLICER_PROFILE_PRINT_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    SLICER_PROFILE_FILAMENT_DIR.mkdir(parents=True, exist_ok=True)
+    SLICER_PROFILE_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_slicer_profile_files()
 
 
 def _load_or_create_secret() -> str:
