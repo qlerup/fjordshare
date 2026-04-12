@@ -1440,6 +1440,18 @@
     return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   }
 
+  function stripSliceProfileCopySuffix(value) {
+    let text = String(value || "").trim();
+    if (!text) return "";
+    text = text.replace(/\s*[\-_/]\s*(copy|kopi)(?:\s*\d+)?\s*$/i, "");
+    text = text.replace(/\s*\((copy|kopi)(?:\s*\d+)?\)\s*$/i, "");
+    return text.trim();
+  }
+
+  function canonicalSliceProfileToken(value) {
+    return normalizeProfileToken(stripSliceProfileCopySuffix(value));
+  }
+
   function normalizeSliceBedSize(candidate) {
     if (!candidate || typeof candidate !== "object") return null;
     const width = Number(candidate.width_mm);
@@ -1475,17 +1487,39 @@
       ? state.sliceProfiles.printer_beds
       : {};
     const selected = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
+    const selectedToken = canonicalSliceProfileToken(selected);
 
     const fromExact = selected ? normalizeSliceBedSize(beds[selected]) : null;
     if (fromExact) return fromExact;
 
     if (selected) {
-      const wanted = normalizeProfileToken(selected);
+      const wanted = selectedToken;
       if (wanted) {
         for (const [name, value] of Object.entries(beds)) {
-          if (normalizeProfileToken(name) !== wanted) continue;
+          if (canonicalSliceProfileToken(name) !== wanted) continue;
           const normalized = normalizeSliceBedSize(value);
           if (normalized) return normalized;
+        }
+
+        let bestMatch = null;
+        let bestScore = 0;
+        for (const [name, value] of Object.entries(beds)) {
+          const candidateToken = canonicalSliceProfileToken(name);
+          if (!candidateToken) continue;
+
+          let score = 0;
+          if (wanted.includes(candidateToken) || candidateToken.includes(wanted)) {
+            score = Math.min(wanted.length, candidateToken.length);
+          }
+          if (score <= bestScore) continue;
+
+          const normalized = normalizeSliceBedSize(value);
+          if (!normalized) continue;
+          bestMatch = normalized;
+          bestScore = score;
+        }
+        if (bestMatch && bestScore >= 6) {
+          return bestMatch;
         }
       }
     }
