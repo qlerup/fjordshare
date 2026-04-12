@@ -191,7 +191,7 @@ def _slicer_profile_allowed_exts(kind: str) -> set[str]:
 def _slicer_profile_name_keys(kind: str) -> tuple[str, ...]:
     key = str(kind or "").strip().lower()
     if key == "machine":
-        return ("inherits", "printer_settings_id", "setting_id", "name")
+        return ("printer_settings_id", "name", "inherits", "setting_id")
     if key == "process":
         return ("inherits", "print_settings_id", "process_settings_id", "setting_id", "name")
     if key == "filament":
@@ -1645,6 +1645,7 @@ def _pick_profile_json(
     requested_name: str,
     fallback_first: bool = True,
     machine_profile_json: str = "",
+    process_profile_json: str = "",
 ) -> str:
     try:
         files = sorted((p for p in profile_dir.glob("*.json") if p.is_file()), key=lambda p: p.name.lower())
@@ -1653,6 +1654,41 @@ def _pick_profile_json(
 
     if not files:
         return ""
+
+    def _profile_json_tokens(profile_json: str) -> list[str]:
+        raw_path = str(profile_json or "").strip()
+        if not raw_path:
+            return []
+
+        profile_path = Path(raw_path)
+        payload = _read_profile_json_payload(profile_path)
+        names: list[str] = []
+        if payload is not None:
+            names.extend(_profile_json_name_candidates(payload))
+
+        stem_name = str(profile_path.stem or "").strip()
+        if stem_name:
+            names.append(stem_name)
+
+        return [
+            token
+            for token in _dedupe_preserve_order(_normalize_profile_token(name) for name in names)
+            if token
+        ]
+
+    def _compatibility_tokens(payload: Optional[dict[str, Any]], keys: tuple[str, ...]) -> list[str]:
+        if payload is None:
+            return []
+
+        names: list[str] = []
+        for key in keys:
+            names.extend(_string_values_from_any(payload.get(key)))
+
+        return [
+            token
+            for token in _dedupe_preserve_order(_normalize_profile_token(name) for name in names)
+            if token
+        ]
 
     expected_type = _expected_profile_type_for_dir(profile_dir)
     candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
@@ -1673,21 +1709,7 @@ def _pick_profile_json(
         candidates.append((path, tokens, payload))
 
     if expected_type == "process" and machine_profile_json:
-        machine_tokens: list[str] = []
-        try:
-            machine_path = Path(str(machine_profile_json))
-            machine_payload = _read_profile_json_payload(machine_path)
-            if machine_payload is not None:
-                machine_names = [*_profile_json_name_candidates(machine_payload), str(machine_path.stem or "")]
-            else:
-                machine_names = [str(machine_path.stem or "")]
-            machine_tokens = [
-                token
-                for token in _dedupe_preserve_order(_normalize_profile_token(name) for name in machine_names)
-                if token
-            ]
-        except Exception:
-            machine_tokens = []
+        machine_tokens = _profile_json_tokens(machine_profile_json)
 
         if machine_tokens:
             compatible_candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
@@ -1696,15 +1718,51 @@ def _pick_profile_json(
                     compatible_candidates.append((path, tokens, payload))
                     continue
 
-                compatible_printers = _string_values_from_any(payload.get("compatible_printers"))
-                compatible_tokens = [
-                    token
-                    for token in _dedupe_preserve_order(_normalize_profile_token(name) for name in compatible_printers)
-                    if token
-                ]
+                compatible_tokens = _compatibility_tokens(payload, ("compatible_printers", "compatible_printer"))
 
                 # If no explicit compatibility list exists, keep candidate as-is.
                 if not compatible_tokens or _profile_tokens_overlap(compatible_tokens, machine_tokens):
+                    compatible_candidates.append((path, tokens, payload))
+
+            if compatible_candidates:
+                candidates = compatible_candidates
+
+    if expected_type == "filament":
+        machine_tokens = _profile_json_tokens(machine_profile_json)
+        process_tokens = _profile_json_tokens(process_profile_json)
+
+        if machine_tokens or process_tokens:
+            compatible_candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
+            for path, tokens, payload in candidates:
+                if payload is None:
+                    compatible_candidates.append((path, tokens, payload))
+                    continue
+
+                compatible = True
+                if machine_tokens:
+                    compatible_printer_tokens = _compatibility_tokens(
+                        payload,
+                        ("compatible_printers", "compatible_printer", "compatible_machines", "compatible_machine"),
+                    )
+                    if compatible_printer_tokens and not _profile_tokens_overlap(compatible_printer_tokens, machine_tokens):
+                        compatible = False
+
+                if compatible and process_tokens:
+                    compatible_process_tokens = _compatibility_tokens(
+                        payload,
+                        (
+                            "compatible_processes",
+                            "compatible_process",
+                            "compatible_prints",
+                            "compatible_print",
+                            "compatible_print_profiles",
+                            "compatible_print_profile",
+                        ),
+                    )
+                    if compatible_process_tokens and not _profile_tokens_overlap(compatible_process_tokens, process_tokens):
+                        compatible = False
+
+                if compatible:
                     compatible_candidates.append((path, tokens, payload))
 
             if compatible_candidates:
@@ -1743,6 +1801,74 @@ def _pick_profile_json(
     return str(candidates[0][0]) if fallback_first else ""
 
 
+def _resolve_selected_profile_jsons(
+    executable: str,
+    printer_profile: str,
+    print_profile: str,
+    filament_profile: str,
+    prefer_uploaded: bool = True,
+) -> tuple[str, str, str]:
+    discovered_profile_root: Optional[Path] = None
+
+    machine_json = ""
+    process_json = ""
+    filament_json = ""
+
+    strict_machine = bool(str(printer_profile or "").strip())
+    strict_process = bool(str(print_profile or "").strip())
+    strict_filament = bool(str(filament_profile or "").strip())
+
+    if prefer_uploaded:
+        machine_json = _pick_profile_json(
+            SLICER_PROFILE_PRINTER_DIR,
+            printer_profile,
+            fallback_first=not strict_machine,
+        )
+        process_json = _pick_profile_json(
+            SLICER_PROFILE_PRINT_SETTINGS_DIR,
+            print_profile,
+            fallback_first=not strict_process,
+            machine_profile_json=machine_json,
+        )
+        filament_json = _pick_profile_json(
+            SLICER_PROFILE_FILAMENT_DIR,
+            filament_profile,
+            fallback_first=not strict_filament,
+            machine_profile_json=machine_json,
+            process_profile_json=process_json,
+        )
+
+    if (not machine_json) or (not process_json) or (not filament_json):
+        discovered_profile_root = _find_bambu_profile_root(executable)
+
+    if discovered_profile_root:
+        if not machine_json:
+            machine_json = _pick_profile_json(
+                discovered_profile_root / "machine",
+                printer_profile,
+                fallback_first=not strict_machine,
+            )
+
+        if not process_json:
+            process_json = _pick_profile_json(
+                discovered_profile_root / "process",
+                print_profile,
+                fallback_first=not strict_process,
+                machine_profile_json=machine_json,
+            )
+
+        if not filament_json:
+            filament_json = _pick_profile_json(
+                discovered_profile_root / "filament",
+                filament_profile,
+                fallback_first=not strict_filament,
+                machine_profile_json=machine_json,
+                process_profile_json=process_json,
+            )
+
+    return machine_json, process_json, filament_json
+
+
 def _build_modern_profile_args(
     executable: str,
     printer_profile: str,
@@ -1762,50 +1888,62 @@ def _build_modern_profile_args(
     if effective_load_settings and effective_load_filaments:
         return args
 
-    discovered_profile_root: Optional[Path] = None
+    machine_json = ""
+    process_json = ""
+    filament_json = ""
+    if (not effective_load_settings) or (not effective_load_filaments):
+        machine_json, process_json, filament_json = _resolve_selected_profile_jsons(
+            executable,
+            printer_profile,
+            print_profile,
+            filament_profile,
+            prefer_uploaded=prefer_uploaded,
+        )
 
-    if not effective_load_settings:
-        machine_json = ""
-        process_json = ""
+    if not effective_load_settings and machine_json and process_json:
+        args.extend(["--load-settings", f"{machine_json};{process_json}"])
 
-        if prefer_uploaded:
-            machine_json = _pick_profile_json(SLICER_PROFILE_PRINTER_DIR, printer_profile, fallback_first=False)
-            process_json = _pick_profile_json(
-                SLICER_PROFILE_PRINT_SETTINGS_DIR,
-                print_profile,
-                fallback_first=False,
-                machine_profile_json=machine_json,
-            )
-
-        if (not machine_json) or (not process_json):
-            discovered_profile_root = _find_bambu_profile_root(executable)
-            if discovered_profile_root:
-                if not machine_json:
-                    machine_json = _pick_profile_json(discovered_profile_root / "machine", printer_profile)
-                if not process_json:
-                    process_json = _pick_profile_json(
-                        discovered_profile_root / "process",
-                        print_profile,
-                        machine_profile_json=machine_json,
-                    )
-
-        if machine_json and process_json:
-            args.extend(["--load-settings", f"{machine_json};{process_json}"])
-
-    if not effective_load_filaments:
-        filament_json = ""
-        if prefer_uploaded:
-            filament_json = _pick_profile_json(SLICER_PROFILE_FILAMENT_DIR, filament_profile, fallback_first=False)
-        if not filament_json:
-            if discovered_profile_root is None:
-                discovered_profile_root = _find_bambu_profile_root(executable)
-            if discovered_profile_root:
-                filament_json = _pick_profile_json(discovered_profile_root / "filament", filament_profile)
-
-        if filament_json:
-            args.extend(["--load-filaments", filament_json])
+    if not effective_load_filaments and filament_json:
+        args.extend(["--load-filaments", filament_json])
 
     return args
+
+
+def _validate_selected_slice_profiles(
+    executable: str,
+    printer_profile: str,
+    print_profile: str,
+    filament_profile: str,
+) -> str:
+    machine_json, process_json, filament_json = _resolve_selected_profile_jsons(
+        executable,
+        printer_profile,
+        print_profile,
+        filament_profile,
+        prefer_uploaded=True,
+    )
+
+    if printer_profile and not machine_json:
+        return f'Printerprofil "{printer_profile}" blev ikke fundet.'
+
+    if print_profile and not process_json:
+        if printer_profile:
+            return f'Printprofil "{print_profile}" findes ikke eller er ikke kompatibel med printer "{printer_profile}".'
+        return f'Printprofil "{print_profile}" blev ikke fundet.'
+
+    if filament_profile and not filament_json:
+        if printer_profile and print_profile:
+            return (
+                f'Filamentprofil "{filament_profile}" findes ikke eller er ikke kompatibel med '
+                f'printer "{printer_profile}" og printprofil "{print_profile}".'
+            )
+        if printer_profile:
+            return f'Filamentprofil "{filament_profile}" findes ikke eller er ikke kompatibel med printer "{printer_profile}".'
+        if print_profile:
+            return f'Filamentprofil "{filament_profile}" findes ikke eller er ikke kompatibel med printprofil "{print_profile}".'
+        return f'Filamentprofil "{filament_profile}" blev ikke fundet.'
+
+    return ""
 
 
 def _slice_stl_to_gcode(
@@ -3948,6 +4086,20 @@ def api_file_slice(file_id: int):
     status_now = str(row["slice_status"] or "none").strip().lower() or "none"
     if status_now in {"queued", "processing"}:
         return jsonify({"ok": True, "queued": True, "already_running": True})
+
+    validation_error = ""
+    try:
+        validation_error = _validate_selected_slice_profiles(
+            _resolve_bambustudio_executable(),
+            printer_profile,
+            print_profile,
+            filament_profile,
+        )
+    except Exception as exc:
+        validation_error = f"Kunne ikke validere slicer-profiler: {exc}"
+
+    if validation_error:
+        return jsonify({"ok": False, "error": validation_error}), 400
 
     profile_details = []
     if printer_profile:
