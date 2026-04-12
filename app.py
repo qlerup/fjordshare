@@ -1171,6 +1171,67 @@ def _extract_profile_name_from_section(section_name: str, prefixes: tuple[str, .
     return ""
 
 
+def _expected_profile_type_for_dir(profile_dir: Path) -> str:
+    name = str(profile_dir.name or "").strip().lower()
+    if name in {"machine", "process", "filament"}:
+        return name
+    return ""
+
+
+def _read_profile_json_payload(profile_file: Path) -> Optional[dict[str, Any]]:
+    try:
+        text = profile_file.read_text(encoding="utf-8-sig", errors="ignore")
+    except Exception:
+        return None
+
+    if not text:
+        return None
+
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _profile_json_name_candidates(payload: dict[str, Any]) -> list[str]:
+    names: list[str] = []
+    for key in (
+        "name",
+        "printer_settings_id",
+        "print_settings_id",
+        "filament_settings_id",
+        "setting_id",
+        "inherits",
+    ):
+        value = _slicer_profile_name_from_value(payload.get(key))
+        if value:
+            names.append(value)
+    return _dedupe_preserve_order(names)
+
+
+def _profile_payload_is_usable(payload: Optional[dict[str, Any]], expected_type: str) -> bool:
+    if payload is None:
+        return not bool(expected_type)
+
+    payload_type = str(payload.get("type") or "").strip().lower()
+    if expected_type and payload_type != expected_type:
+        return False
+
+    from_value = str(payload.get("from") or "").strip().lower()
+    if from_value == "unsupported":
+        return False
+
+    instantiation = str(payload.get("instantiation") or "").strip().lower()
+    if expected_type and instantiation in {"false", "0", "no"}:
+        return False
+
+    return True
+
+
 def _list_profile_names_from_dir(profile_dir: Path) -> list[str]:
     names: list[str] = []
     try:
@@ -1178,8 +1239,22 @@ def _list_profile_names_from_dir(profile_dir: Path) -> list[str]:
     except Exception:
         return names
 
+    expected_type = _expected_profile_type_for_dir(profile_dir)
+
     for profile_file in files:
-        name = str(profile_file.stem or "").strip()
+        payload = _read_profile_json_payload(profile_file)
+        if not _profile_payload_is_usable(payload, expected_type):
+            continue
+
+        name = ""
+        if payload is not None:
+            candidates = _profile_json_name_candidates(payload)
+            if candidates:
+                name = str(candidates[0] or "").strip()
+
+        if not name:
+            name = str(profile_file.stem or "").strip()
+
         if name:
             names.append(name)
     return names
@@ -1515,17 +1590,55 @@ def _pick_profile_json(profile_dir: Path, requested_name: str, fallback_first: b
     if not files:
         return ""
 
+    expected_type = _expected_profile_type_for_dir(profile_dir)
+    candidates: list[tuple[Path, list[str]]] = []
+    for path in files:
+        payload = _read_profile_json_payload(path)
+        if not _profile_payload_is_usable(payload, expected_type):
+            continue
+
+        name_candidates: list[str] = [str(path.stem or "").strip()]
+        if payload is not None:
+            name_candidates = [*_profile_json_name_candidates(payload), *name_candidates]
+
+        token_candidates = _dedupe_preserve_order(_normalize_profile_token(name) for name in name_candidates)
+        tokens = [token for token in token_candidates if token]
+        if not tokens:
+            continue
+
+        candidates.append((path, tokens))
+
+    if not candidates:
+        return str(files[0]) if fallback_first else ""
+
     wanted = _normalize_profile_token(requested_name)
     if wanted:
-        for path in files:
-            stem = _normalize_profile_token(path.stem)
-            if stem == wanted or (wanted in stem) or (stem and stem in wanted):
-                return str(path)
+        exact = [path for path, tokens in candidates if wanted in tokens]
+        if exact:
+            return str(exact[0])
+
+        subset_matches: list[tuple[Path, int]] = []
+        for path, tokens in candidates:
+            lengths = [len(token) for token in tokens if token in wanted]
+            if lengths:
+                subset_matches.append((path, max(lengths)))
+        if subset_matches:
+            subset_matches.sort(key=lambda item: (-item[1], item[0].name.lower()))
+            return str(subset_matches[0][0])
+
+        superset_matches: list[tuple[Path, int]] = []
+        for path, tokens in candidates:
+            lengths = [len(token) for token in tokens if wanted in token]
+            if lengths:
+                superset_matches.append((path, min(lengths)))
+        if superset_matches:
+            superset_matches.sort(key=lambda item: (item[1], item[0].name.lower()))
+            return str(superset_matches[0][0])
 
         if not fallback_first:
             return ""
 
-    return str(files[0])
+    return str(candidates[0][0]) if fallback_first else ""
 
 
 def _build_modern_profile_args(
