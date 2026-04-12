@@ -190,7 +190,7 @@ def _slicer_profile_name_keys(kind: str) -> tuple[str, ...]:
     if key == "machine":
         return ("printer_settings_id", "name", "inherits", "setting_id")
     if key == "process":
-        return ("print_settings_id", "process_settings_id", "setting_id", "name", "inherits")
+        return ("inherits", "print_settings_id", "process_settings_id", "setting_id", "name")
     if key == "filament":
         return ("filament_settings_id", "setting_id", "name", "inherits", "filament_id")
     return ("name", "inherits", "setting_id")
