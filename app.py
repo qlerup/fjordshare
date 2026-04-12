@@ -99,6 +99,7 @@ BAMBUSTUDIO_FILAMENT_PROFILES = str(os.getenv("BAMBUSTUDIO_FILAMENT_PROFILES", "
 BAMBUSTUDIO_LOAD_SETTINGS = str(os.getenv("BAMBUSTUDIO_LOAD_SETTINGS", "")).strip()
 BAMBUSTUDIO_LOAD_FILAMENTS = str(os.getenv("BAMBUSTUDIO_LOAD_FILAMENTS", "")).strip()
 BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK = str(os.getenv("BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK", "0")).strip().lower() in {"1", "true", "yes", "on"}
+SLICER_PRINTER_BED_MAP_SETTING_KEY = "slicer_printer_bed_map_v1"
 try:
     BAMBUSTUDIO_TIMEOUT_SEC = max(60, int(str(os.getenv("BAMBUSTUDIO_TIMEOUT_SEC", "1800")) or "1800"))
 except Exception:
@@ -2335,6 +2336,56 @@ def _normalize_lift_mm(value: Any) -> float:
         parsed = 80.0
 
     return round(parsed, 3)
+
+
+def _normalize_slicer_printer_bed_map(raw: Any) -> dict[str, dict[str, float]]:
+    out: dict[str, dict[str, float]] = {}
+    if not isinstance(raw, dict):
+        return out
+
+    for name_raw, value in raw.items():
+        name = str(name_raw or "").strip()[:200]
+        if not name:
+            continue
+
+        width_mm = 0.0
+        depth_mm = 0.0
+        if isinstance(value, dict):
+            width_mm = _normalize_bed_size_mm(value.get("width_mm"))
+            depth_mm = _normalize_bed_size_mm(value.get("depth_mm"))
+        else:
+            nums = _extract_float_numbers(value, max_items=2)
+            if len(nums) >= 2:
+                width_mm = _normalize_bed_size_mm(nums[0])
+                depth_mm = _normalize_bed_size_mm(nums[1])
+
+        if width_mm > 0.0 and depth_mm > 0.0:
+            out[name] = {
+                "width_mm": float(width_mm),
+                "depth_mm": float(depth_mm),
+            }
+
+    return out
+
+
+def _load_slicer_printer_bed_map() -> dict[str, dict[str, float]]:
+    raw = str(get_setting(SLICER_PRINTER_BED_MAP_SETTING_KEY, "") or "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return {}
+    return _normalize_slicer_printer_bed_map(payload)
+
+
+def _save_slicer_printer_bed_map(mapping: Any) -> dict[str, dict[str, float]]:
+    normalized = _normalize_slicer_printer_bed_map(mapping)
+    set_setting(
+        SLICER_PRINTER_BED_MAP_SETTING_KEY,
+        json.dumps(normalized, ensure_ascii=False, sort_keys=True),
+    )
+    return normalized
 
 
 def _write_centered_stl_for_slicing(
@@ -4996,6 +5047,7 @@ def api_slice_profiles():
         return jsonify({"ok": False, "error": "Kun admin"}), 403
 
     data = _read_bambustudio_profiles()
+    printer_bed_map = _load_slicer_printer_bed_map()
     return jsonify(
         {
             "ok": True,
@@ -5004,6 +5056,7 @@ def api_slice_profiles():
                 "print_profiles": data.get("print_profiles", []),
                 "filament_profiles": data.get("filament_profiles", []),
                 "printer_beds": data.get("printer_beds", {}),
+                "printer_bed_map": printer_bed_map,
             },
             "source": str(data.get("source") or ""),
             "config_path": str(data.get("config_path") or ""),
@@ -5586,6 +5639,8 @@ def api_settings_slicer_profiles():
     dirs = _slicer_profile_dirs()
 
     def _payload(extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        profiles_data = _read_bambustudio_profiles()
+        printer_bed_map = _load_slicer_printer_bed_map()
         effective_profile_root = str(BAMBUSTUDIO_PROFILE_ROOT or "").strip()
         if not effective_profile_root:
             has_uploaded_profiles = bool(
@@ -5608,6 +5663,11 @@ def api_settings_slicer_profiles():
                 "load_filaments": _effective_bambustudio_load_filaments(),
                 "profile_root": effective_profile_root,
             },
+            "profiles": {
+                "printers": profiles_data.get("printers", []),
+                "printer_beds": profiles_data.get("printer_beds", {}),
+            },
+            "printer_bed_map": printer_bed_map,
             "max_bytes": int(SLICER_PROFILE_MAX_BYTES),
         }
         if extra:
@@ -5653,6 +5713,29 @@ def api_settings_slicer_profiles():
                     "deleted_count": deleted_count,
                     "deleted_files": deleted_files,
                     "kind": kind,
+                }
+            )
+        )
+
+    json_body = request.get_json(silent=True) or {}
+    if isinstance(json_body, dict) and ("printer_bed_map" in json_body):
+        try:
+            normalized_map = _save_slicer_printer_bed_map(json_body.get("printer_bed_map"))
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"Kunne ikke gemme printer-plade mapping: {exc}"}), 500
+
+        log_activity(
+            kind="slice",
+            action="config-update",
+            message=f"Printer-plade mapping opdateret ({len(normalized_map)} profiler)",
+            level="info",
+            actor=str(current_user.username or ""),
+        )
+        return jsonify(
+            _payload(
+                {
+                    "updated_printer_bed_map": True,
+                    "mapping_count": len(normalized_map),
                 }
             )
         )

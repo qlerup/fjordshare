@@ -274,6 +274,28 @@
         </div>
 
         <div class="panel">
+          <div class="toolbar">
+            <h3>Printer pladestørrelser</h3>
+            <button id="slicerBedMapSaveBtn" class="btn small primary" type="button">Gem mapping</button>
+            <button id="slicerBedMapResetBtn" class="btn small" type="button">Nulstil mapping</button>
+          </div>
+          <p class="hint">Sæt fast pladestørrelse pr. printerprofil her. Slice-dialogen bruger automatisk disse værdier.</p>
+          <table class="table compact">
+            <thead>
+              <tr>
+                <th>Printerprofil</th>
+                <th>X (mm)</th>
+                <th>Y (mm)</th>
+                <th>Kilde</th>
+              </tr>
+            </thead>
+            <tbody id="slicerBedMapTableBody">
+              <tr><td colspan="4" class="hint">Indlæser printer-mapping...</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="panel">
           <h3>Printer profil (machine.json)</h3>
           <div id="slicerMachineDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere printer-profiler hertil, eller klik for at vælge filer.</div>
           <div class="toolbar">
@@ -447,21 +469,8 @@
         <select id="slicePrinterSelect" class="select"></select>
       </div>
       <div class="slice-modal-field">
-        <label for="sliceBedWidthInput">Pladestørrelse (mm)</label>
-        <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;">
-          <input id="sliceBedWidthInput" class="input" type="number" min="40" max="2000" step="1" placeholder="Bredde (X)">
-          <span style="opacity:0.7;">×</span>
-          <input id="sliceBedDepthInput" class="input" type="number" min="40" max="2000" step="1" placeholder="Dybde (Y)">
-        </div>
-        <div class="hint">Udfyld for at tilsidesætte pladestørrelsen fra profilen.</div>
-        <div class="toolbar" style="margin-top:6px;gap:8px;justify-content:flex-start;">
-          <button id="sliceSaveKnownPrinterBtn" class="btn small" type="button">Gem som kendt printer…</button>
-        </div>
-      </div>
-      <div class="slice-modal-field">
-        <label for="sliceKnownPrinterSelect">Kendt printer (forudfyld)</label>
-        <select id="sliceKnownPrinterSelect" class="select"></select>
-        <div class="hint">Vælg en model for at forudfylde pladestørrelse. Du kan efterfølgende justere X/Y.</div>
+        <label>Pladestørrelse</label>
+        <div class="hint">Styres fra Indstillinger → Slicer → Printer pladestørrelser.</div>
       </div>
       <div class="slice-modal-field">
         <label for="slicePrintProfileSelect">Printprofil</label>
@@ -629,5 +638,3 @@
 <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
 <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
 {% endblock %}
-
-

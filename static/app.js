@@ -238,6 +238,9 @@
     slicerRefreshBtn: document.getElementById("slicerRefreshBtn"),
     slicerSettingsStatus: document.getElementById("slicerSettingsStatus"),
     slicerEffectiveInfo: document.getElementById("slicerEffectiveInfo"),
+    slicerBedMapTableBody: document.getElementById("slicerBedMapTableBody"),
+    slicerBedMapSaveBtn: document.getElementById("slicerBedMapSaveBtn"),
+    slicerBedMapResetBtn: document.getElementById("slicerBedMapResetBtn"),
     slicerMachineDropZone: document.getElementById("slicerMachineDropZone"),
     slicerMachineInput: document.getElementById("slicerMachineInput"),
     slicerMachineUploadBtn: document.getElementById("slicerMachineUploadBtn"),
@@ -1520,61 +1523,43 @@
     return out;
   }
 
+  function pickSliceBedByProfileName(beds, profileName = "") {
+    if (!beds || typeof beds !== "object") return null;
+    const selected = String(profileName || "").trim();
+    if (!selected) return null;
+
+    const direct = normalizeSliceBedSize(beds[selected]);
+    if (direct) return direct;
+
+    const wanted = normalizeProfileToken(selected);
+    if (!wanted) return null;
+    for (const [name, value] of Object.entries(beds)) {
+      if (normalizeProfileToken(name) !== wanted) continue;
+      const normalized = normalizeSliceBedSize(value);
+      if (normalized) return normalized;
+    }
+    return null;
+  }
+
   function resolveSelectedSliceBedSize() {
     const parsedDefault = {
       width_mm: Number(DEFAULT_SLICE_BED_SIZE_MM.width_mm),
       depth_mm: Number(DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
     };
 
-    // 0) Known-printer selection is an explicit bed preset.
-    const knownKey = String((els.sliceKnownPrinterSelect && els.sliceKnownPrinterSelect.value) || "").trim();
-    if (knownKey) {
-      const knownOption = (els.sliceKnownPrinterSelect && els.sliceKnownPrinterSelect.selectedOptions)
-        ? (els.sliceKnownPrinterSelect.selectedOptions[0] || null)
-        : null;
-      const optWidth = Number(knownOption && knownOption.dataset ? knownOption.dataset.widthMm : 0);
-      const optDepth = Number(knownOption && knownOption.dataset ? knownOption.dataset.depthMm : 0);
-      const fromOption = normalizeSliceBedSize({ width_mm: optWidth, depth_mm: optDepth });
-      if (fromOption) return fromOption;
-
-      const knownModel = KNOWN_PRINTER_MODELS.find((m) => m.key === knownKey) || null;
-      const knownBed = normalizeSliceBedSize(knownModel);
-      if (knownBed) return knownBed;
-    }
-
-    // 1) Prefer manual override from inputs when provided
-    const manualW = Number((els.sliceBedWidthInput && els.sliceBedWidthInput.value) || 0);
-    const manualD = Number((els.sliceBedDepthInput && els.sliceBedDepthInput.value) || 0);
-    if (Number.isFinite(manualW) && Number.isFinite(manualD) && manualW >= 40 && manualD >= 40) {
-      return {
-        width_mm: clampSliceBedSizeMm(manualW, parsedDefault.width_mm),
-        depth_mm: clampSliceBedSizeMm(manualD, parsedDefault.depth_mm),
-      };
-    }
-
-    const beds = state.sliceProfiles && typeof state.sliceProfiles === "object" && state.sliceProfiles.printer_beds
-      ? state.sliceProfiles.printer_beds
-      : {};
     const selected = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
 
-    const fromExact = selected ? normalizeSliceBedSize(beds[selected]) : null;
-    if (fromExact) return fromExact;
+    const mappedBeds = state.sliceProfiles && typeof state.sliceProfiles === "object" && state.sliceProfiles.printer_bed_map
+      ? state.sliceProfiles.printer_bed_map
+      : {};
+    const fromMapped = pickSliceBedByProfileName(mappedBeds, selected);
+    if (fromMapped) return fromMapped;
 
-    if (selected) {
-      const wanted = normalizeProfileToken(selected);
-      if (wanted) {
-        for (const [name, value] of Object.entries(beds)) {
-          if (normalizeProfileToken(name) !== wanted) continue;
-          const normalized = normalizeSliceBedSize(value);
-          if (normalized) return normalized;
-        }
-      }
-    }
-
-    for (const value of Object.values(beds)) {
-      const normalized = normalizeSliceBedSize(value);
-      if (normalized) return normalized;
-    }
+    const detectedBeds = state.sliceProfiles && typeof state.sliceProfiles === "object" && state.sliceProfiles.printer_beds
+      ? state.sliceProfiles.printer_beds
+      : {};
+    const fromDetected = pickSliceBedByProfileName(detectedBeds, selected);
+    if (fromDetected) return fromDetected;
 
     return parsedDefault;
   }
@@ -2023,7 +2008,18 @@
       (rotation.z * Math.PI) / 180,
       "XYZ"
     );
-    preview.modelGroup.position.set(0, 0, liftMm);
+
+    // Snap preview mesh to plate after rotation so it mirrors backend slicing behavior.
+    preview.modelGroup.position.set(0, 0, 0);
+    try {
+      const box = new preview.THREE.Box3().setFromObject(preview.modelGroup);
+      const minZ = box && !box.isEmpty() ? Number(box.min.z) : 0;
+      const snappedOffset = Number.isFinite(minZ) ? (-minZ) : 0;
+      preview.modelGroup.position.z = snappedOffset + liftMm;
+    } catch (_err) {
+      preview.modelGroup.position.z = liftMm;
+    }
+
     updateSlicePreviewFootprint();
     renderSlicePreview();
   }
@@ -2150,6 +2146,7 @@
       print_profiles: toStringList(profiles.print_profiles),
       filament_profiles: toStringList(profiles.filament_profiles),
       printer_beds: parseSlicePrinterBeds(profiles.printer_beds),
+      printer_bed_map: parseSlicePrinterBeds(profiles.printer_bed_map),
       parse_error: String(data.parse_error || ""),
       source: String(data.source || ""),
       config_path: String(data.config_path || ""),
@@ -3711,21 +3708,107 @@
     return [];
   }
 
+  function renderSlicerBedMapRows(printers, detectedBeds, mappedBeds) {
+    if (!els.slicerBedMapTableBody) return;
+
+    const printerNames = Array.from(new Set([
+      ...toStringList(printers),
+      ...Object.keys(detectedBeds || {}),
+      ...Object.keys(mappedBeds || {}),
+    ])).filter(Boolean);
+
+    if (!printerNames.length) {
+      els.slicerBedMapTableBody.innerHTML = `<tr><td colspan="4" class="hint">Ingen printerprofiler fundet endnu.</td></tr>`;
+      return;
+    }
+
+    printerNames.sort((a, b) => String(a).localeCompare(String(b), "da"));
+    els.slicerBedMapTableBody.innerHTML = printerNames
+      .map((name) => {
+        const mapped = pickSliceBedByProfileName(mappedBeds, name);
+        const detected = pickSliceBedByProfileName(detectedBeds, name);
+        const active = mapped || detected;
+        const widthValue = active ? formatNumberCompact(active.width_mm) : "";
+        const depthValue = active ? formatNumberCompact(active.depth_mm) : "";
+        const sourceLabel = mapped ? "Indstillinger" : (detected ? "Profil" : "-");
+        return `
+          <tr data-bed-map-name="${esc(name)}">
+            <td>${esc(name)}</td>
+            <td><input class="input" type="number" min="40" max="2000" step="1" data-bed-map-axis="width" value="${esc(widthValue)}"></td>
+            <td><input class="input" type="number" min="40" max="2000" step="1" data-bed-map-axis="depth" value="${esc(depthValue)}"></td>
+            <td>${esc(sourceLabel)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
+  function collectSlicerBedMapFromTable() {
+    const out = {};
+    const rows = Array.from((els.slicerBedMapTableBody && els.slicerBedMapTableBody.querySelectorAll("tr[data-bed-map-name]")) || []);
+    rows.forEach((row) => {
+      const name = String(row && row.dataset ? row.dataset.bedMapName : "").trim();
+      if (!name) return;
+      const widthInput = row.querySelector("input[data-bed-map-axis='width']");
+      const depthInput = row.querySelector("input[data-bed-map-axis='depth']");
+      const width = clampSliceBedSizeMm(widthInput && widthInput.value ? Number(widthInput.value) : 0, 0);
+      const depth = clampSliceBedSizeMm(depthInput && depthInput.value ? Number(depthInput.value) : 0, 0);
+      if (width > 0 && depth > 0) {
+        out[name] = { width_mm: width, depth_mm: depth };
+      }
+    });
+    return out;
+  }
+
+  async function saveSlicerBedMap() {
+    if (state.role !== "admin") return;
+    const printer_bed_map = collectSlicerBedMapFromTable();
+    const data = await api("/api/settings/slicer-profiles", {
+      method: "POST",
+      body: { printer_bed_map },
+    });
+    state.slicerSettings = data && typeof data === "object" ? data : {};
+    state.sliceProfiles = null;
+    renderSlicerSettings();
+    const count = Object.keys(printer_bed_map).length;
+    showStatus(els.slicerSettingsStatus, `Printer-mapping gemt (${count} profiler).`, "ok");
+  }
+
+  async function resetSlicerBedMap() {
+    if (state.role !== "admin") return;
+    if (!window.confirm("Nulstil alle gemte printer-pladestørrelser?")) return;
+    const data = await api("/api/settings/slicer-profiles", {
+      method: "POST",
+      body: { printer_bed_map: {} },
+    });
+    state.slicerSettings = data && typeof data === "object" ? data : {};
+    state.sliceProfiles = null;
+    renderSlicerSettings();
+    showStatus(els.slicerSettingsStatus, "Printer-mapping nulstillet.", "ok");
+  }
+
   function renderSlicerSettings() {
     const data = state.slicerSettings && typeof state.slicerSettings === "object" ? state.slicerSettings : {};
     const items = data.items && typeof data.items === "object" ? data.items : {};
     const effective = data.effective && typeof data.effective === "object" ? data.effective : {};
+    const profiles = data.profiles && typeof data.profiles === "object" ? data.profiles : {};
+    const printerNames = toStringList(profiles.printers);
+    const detectedBeds = parseSlicePrinterBeds(profiles.printer_beds);
+    const mappedBeds = parseSlicePrinterBeds(data.printer_bed_map);
 
     if (els.slicerMachineMeta) els.slicerMachineMeta.textContent = slicerMetaText(items.machine);
     if (els.slicerProcessMeta) els.slicerProcessMeta.textContent = slicerMetaText(items.process);
     if (els.slicerFilamentMeta) els.slicerFilamentMeta.textContent = slicerMetaText(items.filament);
     if (els.slicerConfigMeta) els.slicerConfigMeta.textContent = slicerMetaText(items.config);
 
+    renderSlicerBedMapRows(printerNames, detectedBeds, mappedBeds);
+
     if (els.slicerEffectiveInfo) {
       const lines = [
         `Effektiv config: ${String(effective.config_path || "(ingen)")}`,
         `Effektiv settings: ${String(effective.load_settings || "(auto)")}`,
         `Effektiv filament: ${String(effective.load_filaments || "(auto)")}`,
+        `Printer-mapping: ${String(Object.keys(mappedBeds).length)}`,
       ];
       els.slicerEffectiveInfo.textContent = lines.join(" | ");
     }
@@ -6035,6 +6118,20 @@
       els.slicerRefreshBtn.addEventListener("click", () => {
         loadSlicerSettings().catch((err) => {
           showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke hente slicer-profiler", "error");
+        });
+      });
+    }
+    if (els.slicerBedMapSaveBtn) {
+      els.slicerBedMapSaveBtn.addEventListener("click", () => {
+        saveSlicerBedMap().catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke gemme printer-mapping", "error");
+        });
+      });
+    }
+    if (els.slicerBedMapResetBtn) {
+      els.slicerBedMapResetBtn.addEventListener("click", () => {
+        resetSlicerBedMap().catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke nulstille printer-mapping", "error");
         });
       });
     }
