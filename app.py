@@ -77,6 +77,8 @@ BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
 BAMBUSTUDIO_PRINTER_PROFILES = str(os.getenv("BAMBUSTUDIO_PRINTER_PROFILES", "")).strip()
 BAMBUSTUDIO_PRINT_PROFILES = str(os.getenv("BAMBUSTUDIO_PRINT_PROFILES", "")).strip()
 BAMBUSTUDIO_FILAMENT_PROFILES = str(os.getenv("BAMBUSTUDIO_FILAMENT_PROFILES", "")).strip()
+BAMBUSTUDIO_LOAD_SETTINGS = str(os.getenv("BAMBUSTUDIO_LOAD_SETTINGS", "")).strip()
+BAMBUSTUDIO_LOAD_FILAMENTS = str(os.getenv("BAMBUSTUDIO_LOAD_FILAMENTS", "")).strip()
 try:
     BAMBUSTUDIO_TIMEOUT_SEC = max(60, int(str(os.getenv("BAMBUSTUDIO_TIMEOUT_SEC", "1800")) or "1800"))
 except Exception:
@@ -104,7 +106,7 @@ ZIP_UPLOAD_MAX_FILES = int(str(os.getenv("ZIP_UPLOAD_MAX_FILES", "10000")) or "1
 ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES = int(str(os.getenv("ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES", str(2 * 1024 * 1024 * 1024))) or str(2 * 1024 * 1024 * 1024))
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
-UI_VERSION_MARKER = str(os.getenv("UI_VERSION_MARKER", "TMP-2026-04-12-03")).strip() or "TMP-2026-04-12-03"
+UI_VERSION_MARKER = str(os.getenv("UI_VERSION_MARKER", "TMP-2026-04-12-04")).strip() or "TMP-2026-04-12-04"
 ACTIVITY_LOG_LIMIT_DEFAULT = 200
 ACTIVITY_LOG_LIMIT_MAX = 1000
 ACTIVITY_KIND_LABELS = {
@@ -1017,6 +1019,100 @@ def _run_bambu_with_runtime_fallback(command: list[str], executable: str) -> tup
     return proc, details
 
 
+def _normalize_profile_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _find_bambu_profile_root(executable: str) -> Optional[Path]:
+    candidates: list[Path] = [
+        Path("/opt/bambu-studio/appdir/resources/profiles/BBL"),
+        Path("/opt/bambu-studio/resources/profiles/BBL"),
+    ]
+
+    raw_executable = str(executable or "").strip()
+    if raw_executable:
+        exe_path = Path(raw_executable)
+        try:
+            if exe_path.exists():
+                exe_path = exe_path.resolve()
+        except Exception:
+            pass
+
+        candidates.extend(
+            [
+                exe_path.parent / "resources" / "profiles" / "BBL",
+                exe_path.parent.parent / "resources" / "profiles" / "BBL",
+                exe_path.parent.parent.parent / "resources" / "profiles" / "BBL",
+            ]
+        )
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+    return None
+
+
+def _pick_profile_json(profile_dir: Path, requested_name: str) -> str:
+    try:
+        files = sorted((p for p in profile_dir.glob("*.json") if p.is_file()), key=lambda p: p.name.lower())
+    except Exception:
+        return ""
+
+    if not files:
+        return ""
+
+    wanted = _normalize_profile_token(requested_name)
+    if wanted:
+        for path in files:
+            stem = _normalize_profile_token(path.stem)
+            if stem == wanted or (wanted in stem) or (stem and stem in wanted):
+                return str(path)
+
+    return str(files[0])
+
+
+def _build_modern_profile_args(
+    executable: str,
+    printer_profile: str,
+    print_profile: str,
+    filament_profile: str,
+) -> list[str]:
+    args: list[str] = []
+
+    env_load_settings = str(BAMBUSTUDIO_LOAD_SETTINGS or "").strip()
+    env_load_filaments = str(BAMBUSTUDIO_LOAD_FILAMENTS or "").strip()
+    if env_load_settings:
+        args.extend(["--load-settings", env_load_settings])
+    if env_load_filaments:
+        args.extend(["--load-filaments", env_load_filaments])
+
+    if env_load_settings and env_load_filaments:
+        return args
+
+    profile_root = _find_bambu_profile_root(executable)
+    if not profile_root:
+        return args
+
+    if not env_load_settings:
+        machine_json = _pick_profile_json(profile_root / "machine", printer_profile)
+        process_json = _pick_profile_json(profile_root / "process", print_profile)
+        if machine_json and process_json:
+            args.extend(["--load-settings", f"{machine_json};{process_json}"])
+
+    if not env_load_filaments:
+        filament_json = _pick_profile_json(profile_root / "filament", filament_profile)
+        if filament_json:
+            args.extend(["--load-filaments", filament_json])
+
+    return args
+
+
 def _slice_stl_to_gcode(
     input_stl: Path,
     output_gcode: Path,
@@ -1047,6 +1143,15 @@ def _slice_stl_to_gcode(
     if filament_profile_value:
         legacy_cmd.extend(["--filament-profile", filament_profile_value])
 
+    modern_profile_args = _build_modern_profile_args(
+        executable,
+        printer_profile_value,
+        print_profile_value,
+        filament_profile_value,
+    )
+    modern_base = [executable, "--slice", "0", *modern_profile_args]
+    modern_arrange_base = [*modern_base, "--orient", "--arrange", "1"]
+
     temp_3mf = output_gcode.with_suffix(".gcode.3mf")
     attempts: list[tuple[str, list[str], str]] = [
         (
@@ -1061,12 +1166,29 @@ def _slice_stl_to_gcode(
         ),
         (
             "modern-3mf-hyphen",
-            [executable, "--slice", "0", "--export-3mf", str(temp_3mf), str(input_stl)],
+            [*modern_base, "--export-3mf", str(temp_3mf), str(input_stl)],
+            "3mf",
+        ),
+        (
+            "modern-3mf-arrange-hyphen",
+            [*modern_arrange_base, "--export-3mf", str(temp_3mf), str(input_stl)],
+            "3mf",
+        ),
+        (
+            "modern-3mf-outputdir-hyphen",
+            [
+                *modern_arrange_base,
+                "--outputdir",
+                str(temp_3mf.parent),
+                "--export-3mf",
+                temp_3mf.name,
+                str(input_stl),
+            ],
             "3mf",
         ),
         (
             "modern-3mf-underscore",
-            [executable, "--slice", "0", "--export_3mf", str(temp_3mf), str(input_stl)],
+            [*modern_base, "--export_3mf", str(temp_3mf), str(input_stl)],
             "3mf",
         ),
     ]
@@ -1113,7 +1235,13 @@ def _slice_stl_to_gcode(
             errors.append(f"{label}: kommandoen kørte men lavede ingen 3MF output")
 
     if errors:
-        raise RuntimeError(f"BambuStudio fejl: {' | '.join(errors)[:1000]}")
+        guidance = ""
+        if any("unable to create plate triangles" in err.lower() for err in errors):
+            guidance = (
+                " | Mangler muligvis machine/process/filament settings til modern CLI. "
+                "Sæt BAMBUSTUDIO_LOAD_SETTINGS og BAMBUSTUDIO_LOAD_FILAMENTS i .env."
+            )
+        raise RuntimeError(f"BambuStudio fejl: {(' | '.join(errors) + guidance)[:1000]}")
 
     if not output_gcode.exists() or not output_gcode.is_file() or output_gcode.stat().st_size <= 0:
         raise RuntimeError("BambuStudio lavede ingen output-fil")
