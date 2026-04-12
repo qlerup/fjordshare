@@ -104,6 +104,17 @@ ZIP_UPLOAD_MAX_FILES = int(str(os.getenv("ZIP_UPLOAD_MAX_FILES", "10000")) or "1
 ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES = int(str(os.getenv("ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES", str(2 * 1024 * 1024 * 1024))) or str(2 * 1024 * 1024 * 1024))
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
+ACTIVITY_LOG_LIMIT_DEFAULT = 200
+ACTIVITY_LOG_LIMIT_MAX = 1000
+ACTIVITY_KIND_LABELS = {
+    "upload": "Upload",
+    "thumbnail": "Thumbnail",
+    "slice": "Slice",
+    "zip": "ZIP",
+    "delete": "Slet",
+    "folder": "Mappe",
+    "system": "System",
+}
 
 HEIC_CONVERSION_AVAILABLE = bool(Image and ImageOps and register_heif_opener)
 if HEIC_CONVERSION_AVAILABLE:
@@ -648,11 +659,19 @@ def _set_file_thumbnail_state(
     status: str,
     thumb_rel: Optional[str] = None,
     error: Optional[str] = None,
+    actor: str = "system",
 ) -> None:
     safe_status = str(status or "").strip().lower() or "none"
     safe_rel = str(thumb_rel or "").strip()
     safe_error = str(error or "").strip()
     with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT folder_path, filename, thumb_status, thumb_error FROM files WHERE id=?",
+            (int(file_id),),
+        ).fetchone()
+        prev_status = str(row["thumb_status"] or "").strip().lower() if row else ""
+        prev_error = str(row["thumb_error"] or "").strip() if row else ""
+
         conn.execute(
             """
             UPDATE files
@@ -670,6 +689,29 @@ def _set_file_thumbnail_state(
                 int(file_id),
             ),
         )
+
+        status_changed = prev_status != safe_status
+        error_changed = bool(safe_error) and safe_error != prev_error
+        if row is not None and (status_changed or error_changed):
+            message = {
+                "queued": "Thumbnail sat i kø",
+                "processing": "Thumbnail generering startet",
+                "ready": "Thumbnail klar",
+                "none": "Thumbnail ikke relevant for filtypen",
+                "error": safe_error or "Thumbnail fejl",
+            }.get(safe_status, f"Thumbnail status: {safe_status}")
+            _insert_activity_log_conn(
+                conn,
+                kind="thumbnail",
+                action=safe_status,
+                message=message,
+                level="error" if safe_status == "error" else "info",
+                folder_path=str(row["folder_path"] or ""),
+                target=str(row["filename"] or ""),
+                actor=actor,
+                file_id=int(file_id),
+            )
+
         conn.commit()
 
 
@@ -685,10 +727,18 @@ def _set_file_slice_state(
     file_id: int,
     status: str,
     error: str = "",
+    actor: str = "system",
 ) -> None:
     safe_status = str(status or "").strip().lower() or "none"
     safe_error = str(error or "").strip()
     with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT folder_path, filename, slice_status, slice_error FROM files WHERE id=?",
+            (int(file_id),),
+        ).fetchone()
+        prev_status = str(row["slice_status"] or "").strip().lower() if row else ""
+        prev_error = str(row["slice_error"] or "").strip() if row else ""
+
         conn.execute(
             """
             UPDATE files
@@ -704,6 +754,29 @@ def _set_file_slice_state(
                 int(file_id),
             ),
         )
+
+        status_changed = prev_status != safe_status
+        error_changed = bool(safe_error) and safe_error != prev_error
+        if row is not None and (status_changed or error_changed):
+            message = {
+                "queued": "Slice sat i kø",
+                "processing": "Slicing startet",
+                "ready": "Slicing færdig",
+                "none": "Slice nulstillet",
+                "error": safe_error or "Slicing fejl",
+            }.get(safe_status, f"Slice status: {safe_status}")
+            _insert_activity_log_conn(
+                conn,
+                kind="slice",
+                action=safe_status,
+                message=message,
+                level="error" if safe_status == "error" else "info",
+                folder_path=str(row["folder_path"] or ""),
+                target=str(row["filename"] or ""),
+                actor=actor,
+                file_id=int(file_id),
+            )
+
         conn.commit()
 
 
@@ -900,10 +973,10 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
 
     ext = str(row["ext"] or "").lower()
     if not _supports_slicing_for_ext(ext):
-        _set_file_slice_state(file_id, "error", "Slicing understøtter kun STL")
+        _set_file_slice_state(file_id, "error", "Slicing understøtter kun STL", actor=requested_by or "system")
         return
 
-    _set_file_slice_state(file_id, "processing", "")
+    _set_file_slice_state(file_id, "processing", "", actor=requested_by or "system")
 
     output_path: Optional[Path] = None
     try:
@@ -931,14 +1004,14 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             upload_client_id=None,
         )
 
-        _set_file_slice_state(file_id, "ready", "")
+        _set_file_slice_state(file_id, "ready", "", actor=requested_by or "system")
     except Exception as exc:
         try:
             if output_path and output_path.exists() and output_path.is_file():
                 output_path.unlink(missing_ok=True)
         except Exception:
             pass
-        _set_file_slice_state(file_id, "error", str(exc))
+        _set_file_slice_state(file_id, "error", str(exc), actor=requested_by or "system")
 
 
 def _slice_worker_loop() -> None:
@@ -953,7 +1026,7 @@ def _slice_worker_loop() -> None:
             try:
                 fid = int((payload or {}).get("file_id") or 0)
                 if fid > 0:
-                    _set_file_slice_state(fid, "error", f"slice worker error: {exc}")
+                    _set_file_slice_state(fid, "error", f"slice worker error: {exc}", actor="system")
             except Exception:
                 pass
         finally:
@@ -1283,8 +1356,20 @@ def _create_zip_job(
                 created,
             ),
         )
+        job_id = int(cur.lastrowid or 0)
+        _insert_activity_log_conn(
+            conn,
+            kind="zip",
+            action="queued",
+            message="ZIP upload modtaget og sat i kø",
+            level="info",
+            folder_path=folder,
+            target=str(zip_name or f"zip-job-{job_id}"),
+            actor=str(created_by or ""),
+            job_id=job_id,
+        )
         conn.commit()
-        return int(cur.lastrowid or 0)
+        return job_id
 
 
 def _set_zip_job_state(
@@ -1299,6 +1384,13 @@ def _set_zip_job_state(
     updated_at = now_iso()
 
     with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT folder_path, zip_name, status, error, created_by FROM zip_jobs WHERE id=?",
+            (jid,),
+        ).fetchone()
+        prev_status = str(row["status"] or "").strip().lower() if row else ""
+        prev_error = str(row["error"] or "").strip() if row else ""
+
         if extracted_files is None:
             conn.execute(
                 """
@@ -1317,6 +1409,34 @@ def _set_zip_job_state(
                 """,
                 (safe_status, safe_error, max(0, int(extracted_files)), updated_at, jid),
             )
+
+        status_changed = prev_status != safe_status
+        error_changed = bool(safe_error) and safe_error != prev_error
+        if row is not None and (status_changed or error_changed):
+            if safe_status == "processing":
+                message = "ZIP udpakning startet"
+            elif safe_status == "done":
+                count_txt = f" ({max(0, int(extracted_files))} filer)" if extracted_files is not None else ""
+                message = f"ZIP udpakning færdig{count_txt}"
+            elif safe_status == "error":
+                message = safe_error or "ZIP fejl"
+            elif safe_status == "queued":
+                message = "ZIP sat i kø"
+            else:
+                message = f"ZIP status: {safe_status}"
+
+            _insert_activity_log_conn(
+                conn,
+                kind="zip",
+                action=safe_status,
+                message=message,
+                level="error" if safe_status == "error" else "info",
+                folder_path=str(row["folder_path"] or ""),
+                target=str(row["zip_name"] or f"zip-job-{jid}"),
+                actor=str(row["created_by"] or "system"),
+                job_id=jid,
+            )
+
         conn.commit()
 
 
@@ -1421,6 +1541,79 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _insert_activity_log_conn(
+    conn: sqlite3.Connection,
+    kind: str,
+    action: str,
+    message: str,
+    level: str = "info",
+    folder_path: str = "",
+    target: str = "",
+    actor: str = "",
+    file_id: Optional[int] = None,
+    job_id: Optional[int] = None,
+) -> None:
+    safe_level = str(level or "info").strip().lower() or "info"
+    if safe_level not in {"info", "warn", "error"}:
+        safe_level = "info"
+    safe_kind = str(kind or "system").strip().lower() or "system"
+    safe_action = str(action or "event").strip().lower() or "event"
+    safe_message = str(message or "").strip()[:2000]
+    safe_folder = normalize_folder_path(str(folder_path or ""))
+    safe_target = str(target or "").strip()[:300]
+    safe_actor = str(actor or "").strip()[:120]
+
+    conn.execute(
+        """
+        INSERT INTO activity_logs(
+            level, kind, action, target, folder_path, message, actor, file_id, job_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            safe_level,
+            safe_kind,
+            safe_action,
+            safe_target,
+            safe_folder,
+            safe_message,
+            safe_actor,
+            int(file_id) if file_id else None,
+            int(job_id) if job_id else None,
+            now_iso(),
+        ),
+    )
+
+
+def log_activity(
+    kind: str,
+    action: str,
+    message: str,
+    level: str = "info",
+    folder_path: str = "",
+    target: str = "",
+    actor: str = "",
+    file_id: Optional[int] = None,
+    job_id: Optional[int] = None,
+) -> None:
+    try:
+        with closing(get_conn()) as conn:
+            _insert_activity_log_conn(
+                conn,
+                kind=kind,
+                action=action,
+                message=message,
+                level=level,
+                folder_path=folder_path,
+                target=target,
+                actor=actor,
+                file_id=file_id,
+                job_id=job_id,
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
 def init_db() -> None:
     with closing(get_conn()) as conn:
         conn.executescript(
@@ -1511,6 +1704,22 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_zip_jobs_folder_status ON zip_jobs(folder_path, status, id DESC);
+
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                level TEXT NOT NULL DEFAULT 'info',
+                kind TEXT NOT NULL,
+                action TEXT NOT NULL,
+                target TEXT,
+                folder_path TEXT,
+                message TEXT,
+                actor TEXT,
+                file_id INTEGER,
+                job_id INTEGER,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON activity_logs(created_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_activity_logs_kind ON activity_logs(kind, action, id DESC);
 
             CREATE TABLE IF NOT EXISTS share_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1983,6 +2192,19 @@ def commit_uploaded_file(
         upload_client_id=upload_client_id,
     )
     try:
+        log_activity(
+            kind="upload",
+            action="completed",
+            message=f"Fil uploadet ({int(row['file_size'] or 0)} bytes)",
+            level="info",
+            folder_path=str(row["folder_path"] or folder),
+            target=str(row["filename"] or target.name),
+            actor=str(uploaded_by or ""),
+            file_id=int(row["id"]),
+        )
+    except Exception:
+        pass
+    try:
         ext = str(row["ext"] or "").lower()
         if _supports_thumbnail_for_ext(ext):
             enqueue_thumbnail(int(row["id"]))
@@ -2441,6 +2663,15 @@ def api_folders_create():
         _, abs_folder = folder_abs_path(folder_path)
         abs_folder.mkdir(parents=True, exist_ok=True)
         ensure_folder_record(folder_path, owner_user_id=int(current_user.id))
+        log_activity(
+            kind="folder",
+            action="create",
+            message="Mappe oprettet",
+            level="info",
+            folder_path=folder_path,
+            target=folder_path,
+            actor=str(current_user.username or ""),
+        )
 
         return jsonify({"ok": True, "folder_path": folder_path})
     except ValueError as exc:
@@ -2669,7 +2900,26 @@ def api_file_slice(file_id: int):
     if status_now in {"queued", "processing"}:
         return jsonify({"ok": True, "queued": True, "already_running": True})
 
-    _set_file_slice_state(int(file_id), "queued", "")
+    profile_details = []
+    if printer_profile:
+        profile_details.append(f"printer={printer_profile}")
+    if print_profile:
+        profile_details.append(f"print={print_profile}")
+    if filament_profile:
+        profile_details.append(f"filament={filament_profile}")
+    profile_txt = ", ".join(profile_details) if profile_details else "default profiler"
+    log_activity(
+        kind="slice",
+        action="requested",
+        message=f"Slice bestilt ({profile_txt})",
+        level="info",
+        folder_path=str(row["folder_path"] or ""),
+        target=str(row["filename"] or ""),
+        actor=str(current_user.username or ""),
+        file_id=int(file_id),
+    )
+
+    _set_file_slice_state(int(file_id), "queued", "", actor=str(current_user.username or ""))
     enqueue_slice_job(
         int(file_id),
         str(current_user.username or ""),
@@ -2884,6 +3134,26 @@ def api_files_batch_delete():
             )
 
         conn.commit()
+
+    try:
+        file_preview = ", ".join(str(r["filename"] or "") for r in rows_to_delete[:8] if str(r["filename"] or "").strip())
+        folder_preview = ", ".join(folder_paths[:5])
+        details = f"Slettede {removed_file_count} filer og {removed_folder_count} mapper."
+        if file_preview:
+            details += f" Filer: {file_preview}"
+        if folder_preview:
+            details += f" Mapper: {folder_preview}"
+        log_activity(
+            kind="delete",
+            action="batch",
+            message=details,
+            level="info",
+            folder_path=folder_paths[0] if folder_paths else "",
+            target=f"{removed_file_count} filer / {removed_folder_count} mapper",
+            actor=str(current_user.username or ""),
+        )
+    except Exception:
+        pass
 
     return jsonify(
         {
@@ -3189,102 +3459,47 @@ def api_admin_logs():
         return jsonify({"ok": False, "error": "Kun admin"}), 403
 
     try:
-        limit = int(str(request.args.get("limit") or "150"))
+        limit = int(str(request.args.get("limit") or str(ACTIVITY_LOG_LIMIT_DEFAULT)))
     except Exception:
-        limit = 150
-    limit = max(20, min(limit, 500))
+        limit = ACTIVITY_LOG_LIMIT_DEFAULT
+    limit = max(20, min(limit, ACTIVITY_LOG_LIMIT_MAX))
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, level, kind, action, target, folder_path, message, actor, file_id, job_id, created_at
+            FROM activity_logs
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
 
     items: list[dict] = []
-    with closing(get_conn()) as conn:
-        slice_rows = conn.execute(
-            """
-            SELECT id, folder_path, filename, slice_error, slice_updated_at
-            FROM files
-            WHERE lower(COALESCE(slice_status,''))='error'
-              AND TRIM(COALESCE(slice_error,''))<>''
-            ORDER BY slice_updated_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-
-        thumb_rows = conn.execute(
-            """
-            SELECT id, folder_path, filename, thumb_error, thumb_updated_at
-            FROM files
-            WHERE lower(COALESCE(thumb_status,''))='error'
-              AND TRIM(COALESCE(thumb_error,''))<>''
-            ORDER BY thumb_updated_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-
-        zip_rows = conn.execute(
-            """
-            SELECT id, folder_path, zip_name, error, updated_at, created_at
-            FROM zip_jobs
-            WHERE lower(COALESCE(status,''))='error'
-              AND TRIM(COALESCE(error,''))<>''
-            ORDER BY updated_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-
-    for row in slice_rows:
+    for row in rows:
+        level = str(row["level"] or "info").strip().lower() or "info"
+        kind = str(row["kind"] or "system").strip().lower() or "system"
+        action = str(row["action"] or "event").strip().lower() or "event"
         items.append(
             {
-                "kind": "slice",
-                "kind_label": "Slice",
-                "timestamp": str(row["slice_updated_at"] or ""),
+                "id": int(row["id"]),
+                "level": level,
+                "level_label": level.upper(),
+                "kind": kind,
+                "kind_label": ACTIVITY_KIND_LABELS.get(kind, kind.capitalize()),
+                "action": action,
+                "action_label": action.replace("-", " "),
+                "timestamp": str(row["created_at"] or ""),
                 "folder_path": str(row["folder_path"] or ""),
-                "target": str(row["filename"] or ""),
-                "message": str(row["slice_error"] or ""),
-                "file_id": int(row["id"]),
-                "_sort_id": int(row["id"]),
+                "target": str(row["target"] or ""),
+                "message": str(row["message"] or ""),
+                "actor": str(row["actor"] or ""),
+                "file_id": int(row["file_id"] or 0),
+                "job_id": int(row["job_id"] or 0),
             }
         )
 
-    for row in thumb_rows:
-        items.append(
-            {
-                "kind": "thumbnail",
-                "kind_label": "Thumbnail",
-                "timestamp": str(row["thumb_updated_at"] or ""),
-                "folder_path": str(row["folder_path"] or ""),
-                "target": str(row["filename"] or ""),
-                "message": str(row["thumb_error"] or ""),
-                "file_id": int(row["id"]),
-                "_sort_id": int(row["id"]),
-            }
-        )
-
-    for row in zip_rows:
-        items.append(
-            {
-                "kind": "zip",
-                "kind_label": "ZIP",
-                "timestamp": str(row["updated_at"] or row["created_at"] or ""),
-                "folder_path": str(row["folder_path"] or ""),
-                "target": str(row["zip_name"] or f"zip-job-{int(row['id'])}"),
-                "message": str(row["error"] or ""),
-                "job_id": int(row["id"]),
-                "_sort_id": int(row["id"]),
-            }
-        )
-
-    items.sort(
-        key=lambda item: (
-            str(item.get("timestamp") or ""),
-            int(item.get("_sort_id") or 0),
-        ),
-        reverse=True,
-    )
-    for item in items:
-        item.pop("_sort_id", None)
-
-    return jsonify({"ok": True, "items": items[:limit], "count": len(items[:limit])})
+    return jsonify({"ok": True, "items": items, "count": len(items)})
 
 
 @app.route("/api/shares", methods=["GET", "POST"])
@@ -3666,6 +3881,19 @@ def api_share_file_delete(token: str, file_id: int):
         conn.commit()
 
     touch_share_used(int(share_row["id"]))
+    try:
+        log_activity(
+            kind="delete",
+            action="share-file",
+            message="Fil slettet via delingslink",
+            level="info",
+            folder_path=str(file_row["folder_path"] or ""),
+            target=str(file_row["filename"] or f"file-{int(file_id)}"),
+            actor="share-link",
+            file_id=int(file_id),
+        )
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 
@@ -3716,6 +3944,16 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
             queued_zip_path = (TUS_TMP_DIR / f"zipjob-{job_id}-{secrets.token_hex(6)}.zip").resolve()
             if not _is_relative_to(TUS_TMP_DIR, queued_zip_path):
                 _set_zip_job_state(job_id, "error", "Ugyldig intern ZIP-sti")
+                log_activity(
+                    kind="upload",
+                    action="error",
+                    message="Upload finalize fejlede: Ugyldig intern ZIP-sti",
+                    level="error",
+                    folder_path=folder,
+                    target=filename,
+                    actor=uploaded_by,
+                    job_id=job_id,
+                )
                 return False, None, "Upload finalize fejlede: Ugyldig intern ZIP-sti"
 
             try:
@@ -3726,6 +3964,16 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
                     data_path.unlink(missing_ok=True)
                 except Exception:
                     pass
+                log_activity(
+                    kind="upload",
+                    action="error",
+                    message=f"Upload finalize fejlede: {exc}",
+                    level="error",
+                    folder_path=folder,
+                    target=filename,
+                    actor=uploaded_by,
+                    job_id=job_id,
+                )
                 return False, None, f"Upload finalize fejlede: {exc}"
 
             try:
@@ -3746,6 +3994,16 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
                     queued_zip_path.unlink(missing_ok=True)
                 except Exception:
                     pass
+                log_activity(
+                    kind="upload",
+                    action="error",
+                    message=f"Upload finalize fejlede: {exc}",
+                    level="error",
+                    folder_path=folder,
+                    target=filename,
+                    actor=uploaded_by,
+                    job_id=job_id,
+                )
                 return False, None, f"Upload finalize fejlede: {exc}"
 
             row = None
@@ -3759,6 +4017,15 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
                 last_modified_ms=last_modified_ms,
             )
     except Exception as exc:
+        log_activity(
+            kind="upload",
+            action="error",
+            message=f"Upload finalize fejlede: {exc}",
+            level="error",
+            folder_path=folder,
+            target=filename,
+            actor=uploaded_by,
+        )
         return False, None, f"Upload finalize fejlede: {exc}"
 
     try:
@@ -3848,6 +4115,15 @@ def api_upload_tus_create():
         "owner_user_id": int(current_user.id),
     }
     tus_store_meta(upload_id, upload_meta)
+    log_activity(
+        kind="upload",
+        action="started",
+        message=f"Upload startet (forventet størrelse: {max(0, upload_length)} bytes)",
+        level="info",
+        folder_path=folder,
+        target=filename,
+        actor=str(current_user.username or ""),
+    )
 
     resp = make_response("", 201)
     for key, value in tus_headers().items():

@@ -1492,6 +1492,34 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
+.log-entry-status {
+  white-space: nowrap;
+}
+
+.log-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.log-status-success {
+  color: #c8f7df;
+  background: rgba(52, 211, 153, 0.14);
+  border-color: rgba(52, 211, 153, 0.35);
+}
+
+.log-status-error {
+  color: #ffd9d9;
+  background: rgba(255, 107, 107, 0.15);
+  border-color: rgba(255, 107, 107, 0.4);
+}
+
 .log-entry-target,
 .log-entry-folder,
 .log-entry-message {

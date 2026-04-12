@@ -2699,7 +2699,7 @@
     if (!els.logsTableBody) return;
     const list = Array.isArray(state.adminLogs) ? state.adminLogs : [];
     if (!list.length) {
-      els.logsTableBody.innerHTML = `<tr><td colspan="5" class="hint">Ingen fejl fundet.</td></tr>`;
+      els.logsTableBody.innerHTML = `<tr><td colspan="6" class="hint">Ingen loghændelser fundet.</td></tr>`;
       return;
     }
 
@@ -2710,13 +2710,31 @@
         const target = String(entry.target || "-");
         const folder = String(entry.folder_path || "-");
         const message = String(entry.message || "-");
+        const action = String(entry.action_label || entry.action || "").trim();
+        const actor = String(entry.actor || "").trim();
+        const levelRaw = String(entry.level || "").toLowerCase();
+        const isError = levelRaw === "error"
+          || String(entry.action || "").toLowerCase() === "error"
+          || /\b(error|fejl|failed|failure)\b/i.test(message);
+        const statusText = isError ? "Error" : "Success";
+        const statusClass = isError ? "error" : "success";
+
+        let description = message;
+        if (actor && actor.toLowerCase() !== "system") {
+          description = `[${actor}] ${description}`;
+        }
+        if (action && action.toLowerCase() !== "event") {
+          description = `${action}: ${description}`;
+        }
+
         return `
           <tr>
             <td>${esc(timeText)}</td>
+            <td class="log-entry-status"><span class="log-status-pill log-status-${esc(statusClass)}">${esc(statusText)}</span></td>
             <td class="log-entry-type">${esc(kind)}</td>
             <td class="log-entry-target">${esc(target)}</td>
             <td class="log-entry-folder">${esc(folder)}</td>
-            <td class="log-entry-message">${esc(message)}</td>
+            <td class="log-entry-message">${esc(description)}</td>
           </tr>
         `;
       })
