@@ -81,6 +81,16 @@ RUN set -eux; \
         done; \
         return 1; \
     }; \
+    has_file_match() { \
+        for pattern in "$@"; do \
+            for f in $pattern; do \
+                if [ -e "$f" ]; then \
+                    return 0; \
+                fi; \
+            done; \
+        done; \
+        return 1; \
+    }; \
     js40_pkg="$(pick_first_available libjavascriptcoregtk-4.0-18t64 libjavascriptcoregtk-4.0-18 || true)"; \
     wk40_pkg="$(pick_first_available libwebkit2gtk-4.0-37t64 libwebkit2gtk-4.0-37 || true)"; \
     js41_pkg="$(pick_first_available libjavascriptcoregtk-4.1-0t64 libjavascriptcoregtk-4.1-0 || true)"; \
@@ -131,7 +141,7 @@ RUN set -eux; \
         if ! ldconfig -p | grep -q 'libjavascriptcoregtk-4.0.so.18'; then \
             for src in $js_src_glob; do \
                 if [ -f "$src" ]; then \
-                    ln -sf "$(basename "$src")" "$(dirname "$src")/libjavascriptcoregtk-4.0.so.18"; \
+                    ln -sf "$src" "$(dirname "$src")/libjavascriptcoregtk-4.0.so.18"; \
                     break; \
                 fi; \
             done; \
@@ -139,18 +149,18 @@ RUN set -eux; \
         if ! ldconfig -p | grep -q 'libwebkit2gtk-4.0.so.37'; then \
             for src in $wk_src_glob; do \
                 if [ -f "$src" ]; then \
-                    ln -sf "$(basename "$src")" "$(dirname "$src")/libwebkit2gtk-4.0.so.37"; \
+                    ln -sf "$src" "$(dirname "$src")/libwebkit2gtk-4.0.so.37"; \
                     break; \
                 fi; \
             done; \
         fi; \
         ldconfig; \
     fi; \
-    if ! ldconfig -p | grep -q 'libjavascriptcoregtk-4.0.so.18'; then \
+    if ! ldconfig -p | grep -q 'libjavascriptcoregtk-4.0.so.18' && ! has_file_match /usr/lib/*/libjavascriptcoregtk-4.0.so.18 /usr/local/lib/libjavascriptcoregtk-4.0.so.18; then \
         echo "Fejl: Mangler libjavascriptcoregtk-4.0.so.18 efter runtime setup." >&2; \
         exit 1; \
     fi; \
-    if ! ldconfig -p | grep -q 'libwebkit2gtk-4.0.so.37'; then \
+    if ! ldconfig -p | grep -q 'libwebkit2gtk-4.0.so.37' && ! has_file_match /usr/lib/*/libwebkit2gtk-4.0.so.37 /usr/local/lib/libwebkit2gtk-4.0.so.37; then \
         echo "Fejl: Mangler libwebkit2gtk-4.0.so.37 efter runtime setup." >&2; \
         exit 1; \
     fi; \
