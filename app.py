@@ -122,7 +122,7 @@ ZIP_UPLOAD_MAX_FILES = int(str(os.getenv("ZIP_UPLOAD_MAX_FILES", "10000")) or "1
 ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES = int(str(os.getenv("ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES", str(2 * 1024 * 1024 * 1024))) or str(2 * 1024 * 1024 * 1024))
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
-UI_VERSION_MARKER = str(os.getenv("UI_VERSION_MARKER", "TMP-2026-04-12-06")).strip() or "TMP-2026-04-12-06"
+UI_VERSION_MARKER = str(os.getenv("UI_VERSION_MARKER", "TMP-2026-04-12-07")).strip() or "TMP-2026-04-12-07"
 ACTIVITY_LOG_LIMIT_DEFAULT = 200
 ACTIVITY_LOG_LIMIT_MAX = 1000
 ACTIVITY_KIND_LABELS = {
@@ -167,19 +167,65 @@ def parse_bool(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _slicer_profile_paths() -> dict[str, Path]:
+def _slicer_profile_dirs() -> dict[str, Path]:
     return {
-        "machine": SLICER_PROFILE_MACHINE_PATH,
-        "process": SLICER_PROFILE_PROCESS_PATH,
-        "filament": SLICER_PROFILE_FILAMENT_PATH,
-        "config": SLICER_PROFILE_CONFIG_PATH,
+        "machine": SLICER_PROFILE_PRINTER_DIR,
+        "process": SLICER_PROFILE_PRINT_SETTINGS_DIR,
+        "filament": SLICER_PROFILE_FILAMENT_DIR,
+        "config": SLICER_PROFILE_CONFIG_DIR,
     }
+
+
+def _slicer_profile_allowed_exts(kind: str) -> set[str]:
+    key = str(kind or "").strip().lower()
+    if key in {"machine", "process", "filament"}:
+        return {".json"}
+    if key == "config":
+        return set(SLICER_PROFILE_ALLOWED_CONFIG_EXTS)
+    return set()
+
+
+def _list_slicer_profile_files(profile_dir: Path, allowed_exts: Optional[set[str]] = None) -> list[Path]:
+    try:
+        files = [p for p in profile_dir.iterdir() if p.is_file()]
+    except Exception:
+        return []
+
+    out: list[Path] = []
+    for path in files:
+        ext = str(path.suffix or "").lower()
+        if allowed_exts and ext not in allowed_exts:
+            continue
+        out.append(path)
+
+    out.sort(key=lambda p: p.name.lower())
+    return out
+
+
+def _latest_slicer_profile_file(paths: Iterable[Path]) -> Optional[Path]:
+    latest_path: Optional[Path] = None
+    latest_mtime = float("-inf")
+    for path in paths:
+        try:
+            mtime = float(path.stat().st_mtime)
+        except Exception:
+            continue
+        if mtime > latest_mtime:
+            latest_mtime = mtime
+            latest_path = path
+    return latest_path
 
 
 def _effective_bambustudio_config_path() -> str:
     configured = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
     if configured:
         return configured
+
+    uploaded_configs = _list_slicer_profile_files(SLICER_PROFILE_CONFIG_DIR, _slicer_profile_allowed_exts("config"))
+    latest_uploaded = _latest_slicer_profile_file(uploaded_configs)
+    if latest_uploaded is not None:
+        return str(latest_uploaded)
+
     if SLICER_PROFILE_CONFIG_PATH.exists() and SLICER_PROFILE_CONFIG_PATH.is_file():
         return str(SLICER_PROFILE_CONFIG_PATH)
     return ""
@@ -189,8 +235,6 @@ def _effective_bambustudio_load_settings() -> str:
     configured = str(BAMBUSTUDIO_LOAD_SETTINGS or "").strip()
     if configured:
         return configured
-    if SLICER_PROFILE_MACHINE_PATH.exists() and SLICER_PROFILE_PROCESS_PATH.exists():
-        return f"{SLICER_PROFILE_MACHINE_PATH};{SLICER_PROFILE_PROCESS_PATH}"
     return ""
 
 
@@ -198,28 +242,52 @@ def _effective_bambustudio_load_filaments() -> str:
     configured = str(BAMBUSTUDIO_LOAD_FILAMENTS or "").strip()
     if configured:
         return configured
-    if SLICER_PROFILE_FILAMENT_PATH.exists() and SLICER_PROFILE_FILAMENT_PATH.is_file():
-        return str(SLICER_PROFILE_FILAMENT_PATH)
     return ""
 
 
-def _slicer_profile_meta(path: Path) -> dict[str, Any]:
-    exists = bool(path.exists() and path.is_file())
-    size = 0
+def _slicer_profile_meta(profile_dir: Path, allowed_exts: Optional[set[str]] = None) -> dict[str, Any]:
+    files = _list_slicer_profile_files(profile_dir, allowed_exts)
+    total_size = 0
     updated_at = ""
-    if exists:
+    latest_file = _latest_slicer_profile_file(files)
+    if latest_file is not None:
         try:
-            stat = path.stat()
-            size = max(0, int(stat.st_size))
+            stat = latest_file.stat()
             updated_at = datetime.fromtimestamp(stat.st_mtime, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         except Exception:
-            size = 0
             updated_at = ""
+
+    file_items: list[dict[str, Any]] = []
+    for file_path in files:
+        file_size = 0
+        file_updated = ""
+        try:
+            stat = file_path.stat()
+            file_size = max(0, int(stat.st_size))
+            file_updated = datetime.fromtimestamp(stat.st_mtime, timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except Exception:
+            file_size = 0
+            file_updated = ""
+
+        total_size += file_size
+        if len(file_items) < 25:
+            file_items.append(
+                {
+                    "name": file_path.name,
+                    "path": str(file_path),
+                    "size": file_size,
+                    "updated_at": file_updated,
+                }
+            )
+
     return {
-        "path": str(path),
-        "exists": exists,
-        "size": size,
+        "path": str(profile_dir),
+        "exists": bool(files),
+        "size": total_size,
         "updated_at": updated_at,
+        "count": len(files),
+        "omitted": max(0, len(files) - len(file_items)),
+        "files": file_items,
     }
 
 
@@ -973,6 +1041,18 @@ def _read_bambustudio_profiles() -> dict:
     print_profiles.extend(_split_profile_env_list(BAMBUSTUDIO_PRINT_PROFILES))
     filament_profiles.extend(_split_profile_env_list(BAMBUSTUDIO_FILAMENT_PROFILES))
 
+    uploaded_printers = _list_profile_names_from_dir(SLICER_PROFILE_PRINTER_DIR)
+    uploaded_print_profiles = _list_profile_names_from_dir(SLICER_PROFILE_PRINT_SETTINGS_DIR)
+    uploaded_filament_profiles = _list_profile_names_from_dir(SLICER_PROFILE_FILAMENT_DIR)
+    if uploaded_printers or uploaded_print_profiles or uploaded_filament_profiles:
+        printers.extend(uploaded_printers)
+        print_profiles.extend(uploaded_print_profiles)
+        filament_profiles.extend(uploaded_filament_profiles)
+        if source == "env":
+            source = "upload"
+        if not profile_root:
+            profile_root = str(SLICER_PROFILE_DIR)
+
     if not printers or not print_profiles or not filament_profiles:
         try:
             executable = _resolve_bambustudio_executable()
@@ -1241,7 +1321,7 @@ def _find_bambu_profile_root(executable: str) -> Optional[Path]:
     return None
 
 
-def _pick_profile_json(profile_dir: Path, requested_name: str) -> str:
+def _pick_profile_json(profile_dir: Path, requested_name: str, fallback_first: bool = True) -> str:
     try:
         files = sorted((p for p in profile_dir.glob("*.json") if p.is_file()), key=lambda p: p.name.lower())
     except Exception:
@@ -1256,6 +1336,9 @@ def _pick_profile_json(profile_dir: Path, requested_name: str) -> str:
             stem = _normalize_profile_token(path.stem)
             if stem == wanted or (wanted in stem) or (stem and stem in wanted):
                 return str(path)
+
+        if not fallback_first:
+            return ""
 
     return str(files[0])
 
@@ -1278,18 +1361,31 @@ def _build_modern_profile_args(
     if effective_load_settings and effective_load_filaments:
         return args
 
-    profile_root = _find_bambu_profile_root(executable)
-    if not profile_root:
-        return args
+    discovered_profile_root: Optional[Path] = None
 
     if not effective_load_settings:
-        machine_json = _pick_profile_json(profile_root / "machine", printer_profile)
-        process_json = _pick_profile_json(profile_root / "process", print_profile)
+        machine_json = _pick_profile_json(SLICER_PROFILE_PRINTER_DIR, printer_profile, fallback_first=False)
+        process_json = _pick_profile_json(SLICER_PROFILE_PRINT_SETTINGS_DIR, print_profile, fallback_first=False)
+
+        if (not machine_json) or (not process_json):
+            discovered_profile_root = _find_bambu_profile_root(executable)
+            if discovered_profile_root:
+                if not machine_json:
+                    machine_json = _pick_profile_json(discovered_profile_root / "machine", printer_profile)
+                if not process_json:
+                    process_json = _pick_profile_json(discovered_profile_root / "process", print_profile)
+
         if machine_json and process_json:
             args.extend(["--load-settings", f"{machine_json};{process_json}"])
 
     if not effective_load_filaments:
-        filament_json = _pick_profile_json(profile_root / "filament", filament_profile)
+        filament_json = _pick_profile_json(SLICER_PROFILE_FILAMENT_DIR, filament_profile, fallback_first=False)
+        if not filament_json:
+            if discovered_profile_root is None:
+                discovered_profile_root = _find_bambu_profile_root(executable)
+            if discovered_profile_root:
+                filament_json = _pick_profile_json(discovered_profile_root / "filament", filament_profile)
+
         if filament_json:
             args.extend(["--load-filaments", filament_json])
 
@@ -3856,17 +3952,30 @@ def api_settings_slicer_profiles():
     if not current_user.is_admin:
         return jsonify({"ok": False, "error": "Kun admin"}), 403
 
-    paths = _slicer_profile_paths()
+    dirs = _slicer_profile_dirs()
 
     def _payload(extra: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        effective_profile_root = str(BAMBUSTUDIO_PROFILE_ROOT or "").strip()
+        if not effective_profile_root:
+            has_uploaded_profiles = bool(
+                _list_slicer_profile_files(SLICER_PROFILE_PRINTER_DIR, _slicer_profile_allowed_exts("machine"))
+                or _list_slicer_profile_files(SLICER_PROFILE_PRINT_SETTINGS_DIR, _slicer_profile_allowed_exts("process"))
+                or _list_slicer_profile_files(SLICER_PROFILE_FILAMENT_DIR, _slicer_profile_allowed_exts("filament"))
+            )
+            if has_uploaded_profiles:
+                effective_profile_root = str(SLICER_PROFILE_DIR)
+
         data: dict[str, Any] = {
             "ok": True,
-            "items": {kind: _slicer_profile_meta(path) for kind, path in paths.items()},
+            "items": {
+                kind: _slicer_profile_meta(profile_dir, _slicer_profile_allowed_exts(kind))
+                for kind, profile_dir in dirs.items()
+            },
             "effective": {
                 "config_path": _effective_bambustudio_config_path(),
                 "load_settings": _effective_bambustudio_load_settings(),
                 "load_filaments": _effective_bambustudio_load_filaments(),
-                "profile_root": str(BAMBUSTUDIO_PROFILE_ROOT or "").strip(),
+                "profile_root": effective_profile_root,
             },
             "max_bytes": int(SLICER_PROFILE_MAX_BYTES),
         }
@@ -3879,86 +3988,132 @@ def api_settings_slicer_profiles():
 
     if request.method == "DELETE":
         kind = str(request.args.get("kind") or "").strip().lower()
-        if kind not in paths:
+        if kind not in dirs:
             return jsonify({"ok": False, "error": "Ugyldig profiltype"}), 400
 
-        target = paths[kind]
-        deleted = False
-        try:
-            if target.exists() and target.is_file():
-                target.unlink(missing_ok=True)
-                deleted = True
-        except Exception as exc:
-            return jsonify({"ok": False, "error": f"Kunne ikke slette profil: {exc}"}), 500
+        target_dir = dirs[kind]
+        allowed_exts = _slicer_profile_allowed_exts(kind)
+        deleted_count = 0
+        deleted_files: list[str] = []
 
-        if deleted:
+        try:
+            for file_path in _list_slicer_profile_files(target_dir, allowed_exts):
+                file_path.unlink(missing_ok=True)
+                deleted_count += 1
+                if len(deleted_files) < 25:
+                    deleted_files.append(file_path.name)
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"Kunne ikke slette profilfiler: {exc}"}), 500
+
+        if deleted_count > 0:
             log_activity(
                 kind="slice",
                 action="config-delete",
-                message=f"Slicer profil slettet ({kind})",
+                message=f"Slicer profiler slettet ({kind}, {deleted_count} filer)",
                 level="info",
-                target=target.name,
+                target=kind,
                 actor=str(current_user.username or ""),
             )
 
-        return jsonify(_payload({"deleted": deleted, "kind": kind}))
+        return jsonify(
+            _payload(
+                {
+                    "deleted": deleted_count > 0,
+                    "deleted_count": deleted_count,
+                    "deleted_files": deleted_files,
+                    "kind": kind,
+                }
+            )
+        )
 
     kind = str(request.form.get("kind") or "").strip().lower()
-    if kind not in paths:
+    if kind not in dirs:
         return jsonify({"ok": False, "error": "Ugyldig profiltype"}), 400
 
-    upload = request.files.get("file")
-    if upload is None or not str(getattr(upload, "filename", "") or "").strip():
+    uploads = [
+        upload
+        for upload in request.files.getlist("file")
+        if str(getattr(upload, "filename", "") or "").strip()
+    ]
+    if not uploads:
+        single_upload = request.files.get("file")
+        if single_upload is not None and str(getattr(single_upload, "filename", "") or "").strip():
+            uploads = [single_upload]
+
+    if not uploads:
         return jsonify({"ok": False, "error": "Vælg en fil først"}), 400
 
-    original_name = sanitize_filename(str(upload.filename or "profil"))
-    ext = Path(original_name).suffix.lower()
-    if kind in {"machine", "process", "filament"} and ext != ".json":
-        return jsonify({"ok": False, "error": "Denne profiltype skal uploades som JSON"}), 400
-    if kind == "config" and ext not in SLICER_PROFILE_ALLOWED_CONFIG_EXTS:
-        return jsonify({"ok": False, "error": "Config-fil skal være .ini/.cfg/.conf/.txt"}), 400
+    allowed_exts = _slicer_profile_allowed_exts(kind)
+    validated: list[tuple[Any, str]] = []
 
-    size_guess = _attachment_size_from_filestorage(upload)
-    if size_guess > SLICER_PROFILE_MAX_BYTES:
-        return jsonify({"ok": False, "error": f"Filen er for stor (maks {SLICER_PROFILE_MAX_BYTES} bytes)"}), 400
+    for upload in uploads:
+        original_name = sanitize_filename(str(upload.filename or "profil"))
+        if not original_name:
+            return jsonify({"ok": False, "error": "Ugyldigt filnavn"}), 400
 
-    target = paths[kind]
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temp_target = target.with_suffix(f"{target.suffix}.tmp")
+        ext = Path(original_name).suffix.lower()
+        if allowed_exts and ext not in allowed_exts:
+            if kind in {"machine", "process", "filament"}:
+                return jsonify({"ok": False, "error": "Denne profiltype skal uploades som JSON"}), 400
+            return jsonify({"ok": False, "error": "Config-fil skal være .ini/.cfg/.conf/.txt"}), 400
 
-    try:
-        upload.save(temp_target)
-        file_size = max(0, int(temp_target.stat().st_size)) if temp_target.exists() else 0
-        if file_size <= 0:
-            try:
-                temp_target.unlink(missing_ok=True)
-            except Exception:
-                pass
-            return jsonify({"ok": False, "error": "Uploadet fil er tom"}), 400
-        if file_size > SLICER_PROFILE_MAX_BYTES:
-            try:
-                temp_target.unlink(missing_ok=True)
-            except Exception:
-                pass
-            return jsonify({"ok": False, "error": f"Filen er for stor (maks {SLICER_PROFILE_MAX_BYTES} bytes)"}), 400
-        temp_target.replace(target)
-    except Exception as exc:
+        size_guess = _attachment_size_from_filestorage(upload)
+        if size_guess > SLICER_PROFILE_MAX_BYTES:
+            return jsonify({"ok": False, "error": f"Filen '{original_name}' er for stor (maks {SLICER_PROFILE_MAX_BYTES} bytes)"}), 400
+
+        validated.append((upload, original_name))
+
+    target_dir = dirs[kind]
+    target_dir.mkdir(parents=True, exist_ok=True)
+    saved_names: list[str] = []
+
+    for upload, original_name in validated:
+        target = target_dir / original_name
+        temp_target = target.with_suffix(f"{target.suffix}.tmp")
+
         try:
-            temp_target.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return jsonify({"ok": False, "error": f"Kunne ikke gemme profil: {exc}"}), 500
+            upload.save(temp_target)
+            file_size = max(0, int(temp_target.stat().st_size)) if temp_target.exists() else 0
+            if file_size <= 0:
+                try:
+                    temp_target.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "error": f"Uploadet fil er tom: {original_name}"}), 400
+            if file_size > SLICER_PROFILE_MAX_BYTES:
+                try:
+                    temp_target.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "error": f"Filen '{original_name}' er for stor (maks {SLICER_PROFILE_MAX_BYTES} bytes)"}), 400
+            temp_target.replace(target)
+            saved_names.append(original_name)
+        except Exception as exc:
+            try:
+                temp_target.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": f"Kunne ikke gemme profil '{original_name}': {exc}"}), 500
 
     log_activity(
         kind="slice",
         action="config-upload",
-        message=f"Slicer profil uploadet ({kind})",
+        message=f"Slicer profiler uploadet ({kind}, {len(saved_names)} filer)",
         level="info",
-        target=target.name,
+        target=kind,
         actor=str(current_user.username or ""),
     )
 
-    return jsonify(_payload({"uploaded": True, "kind": kind, "original_name": original_name}))
+    return jsonify(
+        _payload(
+            {
+                "uploaded": True,
+                "uploaded_count": len(saved_names),
+                "uploaded_files": saved_names[:25],
+                "kind": kind,
+            }
+        )
+    )
 
 
 @app.route("/api/admin/users", methods=["GET", "POST"])

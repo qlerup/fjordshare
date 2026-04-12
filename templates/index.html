@@ -262,49 +262,53 @@
             <h3>Slicer profiler</h3>
             <button id="slicerRefreshBtn" class="icon-btn" type="button" title="Opdater slicer-profiler" aria-label="Opdater slicer-profiler">&#8635;</button>
           </div>
-          <p class="hint">Upload profiler her, så de gemmes i den korrekte profilmappe og bruges automatisk i slicing.</p>
+          <p class="hint">Upload profiler her, så de gemmes i den korrekte profilmappe og bruges automatisk i slicing. Du kan trække og slippe flere filer ad gangen i hvert felt.</p>
           <div id="slicerSettingsStatus" class="status hidden"></div>
           <div id="slicerEffectiveInfo" class="hint">Indlæser slicer-status...</div>
         </div>
 
         <div class="panel">
           <h3>Printer profil (machine.json)</h3>
+          <div id="slicerMachineDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere printer-profiler hertil, eller klik for at vælge filer.</div>
           <div class="toolbar">
-            <input id="slicerMachineInput" class="input" type="file" accept=".json,application/json">
+            <input id="slicerMachineInput" class="input" type="file" accept=".json,application/json" multiple>
             <button id="slicerMachineUploadBtn" class="btn primary" type="button">Upload</button>
-            <button id="slicerMachineDeleteBtn" class="btn danger" type="button">Slet</button>
+            <button id="slicerMachineDeleteBtn" class="btn danger" type="button">Slet alle</button>
           </div>
-          <div id="slicerMachineMeta" class="hint">Ingen fil uploadet.</div>
+          <div id="slicerMachineMeta" class="hint">Ingen filer uploadet.</div>
         </div>
 
         <div class="panel">
           <h3>Print settings (process.json)</h3>
+          <div id="slicerProcessDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere print-settings profiler hertil, eller klik for at vælge filer.</div>
           <div class="toolbar">
-            <input id="slicerProcessInput" class="input" type="file" accept=".json,application/json">
+            <input id="slicerProcessInput" class="input" type="file" accept=".json,application/json" multiple>
             <button id="slicerProcessUploadBtn" class="btn primary" type="button">Upload</button>
-            <button id="slicerProcessDeleteBtn" class="btn danger" type="button">Slet</button>
+            <button id="slicerProcessDeleteBtn" class="btn danger" type="button">Slet alle</button>
           </div>
-          <div id="slicerProcessMeta" class="hint">Ingen fil uploadet.</div>
+          <div id="slicerProcessMeta" class="hint">Ingen filer uploadet.</div>
         </div>
 
         <div class="panel">
           <h3>Filament profil (filament.json)</h3>
+          <div id="slicerFilamentDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere filament-profiler hertil, eller klik for at vælge filer.</div>
           <div class="toolbar">
-            <input id="slicerFilamentInput" class="input" type="file" accept=".json,application/json">
+            <input id="slicerFilamentInput" class="input" type="file" accept=".json,application/json" multiple>
             <button id="slicerFilamentUploadBtn" class="btn primary" type="button">Upload</button>
-            <button id="slicerFilamentDeleteBtn" class="btn danger" type="button">Slet</button>
+            <button id="slicerFilamentDeleteBtn" class="btn danger" type="button">Slet alle</button>
           </div>
-          <div id="slicerFilamentMeta" class="hint">Ingen fil uploadet.</div>
+          <div id="slicerFilamentMeta" class="hint">Ingen filer uploadet.</div>
         </div>
 
         <div class="panel">
           <h3>Konfigurationsbundle (INI/CFG)</h3>
+          <div id="slicerConfigDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere config-filer hertil, eller klik for at vælge filer.</div>
           <div class="toolbar">
-            <input id="slicerConfigInput" class="input" type="file" accept=".ini,.cfg,.conf,.txt,text/plain">
+            <input id="slicerConfigInput" class="input" type="file" accept=".ini,.cfg,.conf,.txt,text/plain" multiple>
             <button id="slicerConfigUploadBtn" class="btn primary" type="button">Upload</button>
-            <button id="slicerConfigDeleteBtn" class="btn danger" type="button">Slet</button>
+            <button id="slicerConfigDeleteBtn" class="btn danger" type="button">Slet alle</button>
           </div>
-          <div id="slicerConfigMeta" class="hint">Ingen fil uploadet.</div>
+          <div id="slicerConfigMeta" class="hint">Ingen filer uploadet.</div>
         </div>
       </div>
     </section>

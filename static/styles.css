@@ -1381,6 +1381,26 @@ input[type="checkbox"] {
   color: #dbe7ff;
 }
 
+.slicer-dropzone {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  min-height: 46px;
+  padding: 8px 10px;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.01);
+  margin-bottom: 8px;
+}
+
+.slicer-dropzone.dragover {
+  border-color: rgba(91, 140, 255, 0.9);
+  background: rgba(91, 140, 255, 0.12);
+  color: #dbe7ff;
+}
+
 .file-info-attach-empty {
   border: 1px solid var(--border);
   border-radius: 10px;

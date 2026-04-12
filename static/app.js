@@ -194,18 +194,22 @@
     slicerRefreshBtn: document.getElementById("slicerRefreshBtn"),
     slicerSettingsStatus: document.getElementById("slicerSettingsStatus"),
     slicerEffectiveInfo: document.getElementById("slicerEffectiveInfo"),
+    slicerMachineDropZone: document.getElementById("slicerMachineDropZone"),
     slicerMachineInput: document.getElementById("slicerMachineInput"),
     slicerMachineUploadBtn: document.getElementById("slicerMachineUploadBtn"),
     slicerMachineDeleteBtn: document.getElementById("slicerMachineDeleteBtn"),
     slicerMachineMeta: document.getElementById("slicerMachineMeta"),
+    slicerProcessDropZone: document.getElementById("slicerProcessDropZone"),
     slicerProcessInput: document.getElementById("slicerProcessInput"),
     slicerProcessUploadBtn: document.getElementById("slicerProcessUploadBtn"),
     slicerProcessDeleteBtn: document.getElementById("slicerProcessDeleteBtn"),
     slicerProcessMeta: document.getElementById("slicerProcessMeta"),
+    slicerFilamentDropZone: document.getElementById("slicerFilamentDropZone"),
     slicerFilamentInput: document.getElementById("slicerFilamentInput"),
     slicerFilamentUploadBtn: document.getElementById("slicerFilamentUploadBtn"),
     slicerFilamentDeleteBtn: document.getElementById("slicerFilamentDeleteBtn"),
     slicerFilamentMeta: document.getElementById("slicerFilamentMeta"),
+    slicerConfigDropZone: document.getElementById("slicerConfigDropZone"),
     slicerConfigInput: document.getElementById("slicerConfigInput"),
     slicerConfigUploadBtn: document.getElementById("slicerConfigUploadBtn"),
     slicerConfigDeleteBtn: document.getElementById("slicerConfigDeleteBtn"),
@@ -2729,11 +2733,30 @@
   }
 
   function slicerMetaText(item) {
-    if (!item || !item.exists) return "Ingen fil uploadet.";
-    const filePath = String(item.path || "");
+    const count = Math.max(0, Number(item && item.count ? item.count : 0));
+    if (!item || count <= 0) return "Ingen filer uploadet.";
+
     const sizeText = formatSize(Number(item.size || 0));
     const updatedText = item.updated_at ? formatDate(item.updated_at) : "-";
-    return `Aktiv fil: ${filePath} (${sizeText}, ${updatedText})`;
+    const fileItems = Array.isArray(item.files) ? item.files : [];
+    const preview = fileItems
+      .slice(0, 3)
+      .map((entry) => String((entry && entry.name) || "").trim())
+      .filter(Boolean)
+      .join(", ");
+    const omitted = Math.max(0, Number(item.omitted || 0));
+    const previewText = preview
+      ? ` | Eksempel: ${preview}${omitted > 0 ? ` (+${omitted} mere)` : ""}`
+      : "";
+    return `Filer: ${count} (${sizeText}, ${updatedText})${previewText}`;
+  }
+
+  function normalizeSlicerFiles(source) {
+    if (!source) return [];
+    if (Array.isArray(source)) return source.filter(Boolean);
+    if (typeof FileList !== "undefined" && source instanceof FileList) return Array.from(source);
+    if (source && source.files) return Array.from(source.files || []);
+    return [];
   }
 
   function renderSlicerSettings() {
@@ -2765,29 +2788,34 @@
     return state.slicerSettings;
   }
 
-  async function uploadSlicerFile(kind, fileInput, label) {
+  async function uploadSlicerFile(kind, fileSource, label) {
     if (state.role !== "admin") return;
-    const file = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
-    if (!file) {
-      showStatus(els.slicerSettingsStatus, `Vælg en fil for ${label}.`, "error");
+    const files = normalizeSlicerFiles(fileSource);
+    if (!files.length) {
+      showStatus(els.slicerSettingsStatus, `Vælg mindst én fil for ${label}.`, "error");
       return;
     }
 
     const formData = new FormData();
     formData.append("kind", String(kind || ""));
-    formData.append("file", file, file.name || "profil");
+    files.forEach((file) => {
+      formData.append("file", file, (file && file.name) || "profil");
+    });
 
     const data = await api("/api/settings/slicer-profiles", { method: "POST", body: formData });
     state.slicerSettings = data && typeof data === "object" ? data : {};
     renderSlicerSettings();
     state.sliceProfiles = null;
-    if (fileInput) fileInput.value = "";
-    showStatus(els.slicerSettingsStatus, `${label} uploadet og aktiveret.`, "ok");
+    if (fileSource && fileSource.files) fileSource.value = "";
+
+    const uploadedCount = Math.max(0, Number(data && data.uploaded_count ? data.uploaded_count : files.length));
+    const fileWord = uploadedCount === 1 ? "fil" : "filer";
+    showStatus(els.slicerSettingsStatus, `${uploadedCount} ${fileWord} uploadet til ${label}.`, "ok");
   }
 
   async function deleteSlicerFile(kind, label) {
     if (state.role !== "admin") return;
-    if (!window.confirm(`Slet ${label} fra serveren?`)) return;
+    if (!window.confirm(`Slet alle filer i ${label}?`)) return;
 
     const data = await api(`/api/settings/slicer-profiles?kind=${encodeURIComponent(String(kind || ""))}`, {
       method: "DELETE",
@@ -2795,7 +2823,59 @@
     state.slicerSettings = data && typeof data === "object" ? data : {};
     renderSlicerSettings();
     state.sliceProfiles = null;
-    showStatus(els.slicerSettingsStatus, `${label} slettet.`, "ok");
+
+    const deletedCount = Math.max(0, Number(data && data.deleted_count ? data.deleted_count : 0));
+    if (deletedCount <= 0) {
+      showStatus(els.slicerSettingsStatus, `Ingen filer at slette i ${label}.`, "ok");
+      return;
+    }
+    const fileWord = deletedCount === 1 ? "fil" : "filer";
+    showStatus(els.slicerSettingsStatus, `${deletedCount} ${fileWord} slettet fra ${label}.`, "ok");
+  }
+
+  function bindSlicerDropZone(dropZone, fileInput, kind, label) {
+    if (!dropZone) return;
+
+    dropZone.addEventListener("click", () => {
+      if (!fileInput) return;
+      fileInput.click();
+    });
+    dropZone.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (!fileInput) return;
+      fileInput.click();
+    });
+
+    dropZone.addEventListener("dragenter", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      globalDropDepth = 0;
+      hideGlobalDropOverlay();
+      dropZone.classList.add("dragover");
+    });
+    dropZone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      globalDropDepth = 0;
+      hideGlobalDropOverlay();
+      dropZone.classList.add("dragover");
+    });
+    dropZone.addEventListener("dragleave", (event) => {
+      event.stopPropagation();
+      dropZone.classList.remove("dragover");
+    });
+    dropZone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      globalDropDepth = 0;
+      hideGlobalDropOverlay();
+      dropZone.classList.remove("dragover");
+      const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+      uploadSlicerFile(kind, files, label).catch((err) => {
+        showStatus(els.slicerSettingsStatus, err.message || `Kunne ikke uploade filer til ${label}`, "error");
+      });
+    });
   }
 
   function renderAdminLogs() {
@@ -4858,63 +4938,68 @@
 
     if (els.slicerMachineUploadBtn) {
       els.slicerMachineUploadBtn.addEventListener("click", () => {
-        uploadSlicerFile("machine", els.slicerMachineInput, "Printer profil").catch((err) => {
-          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke uploade printer profil", "error");
+        uploadSlicerFile("machine", els.slicerMachineInput, "printer-profiler").catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke uploade printer-profiler", "error");
         });
       });
     }
     if (els.slicerMachineDeleteBtn) {
       els.slicerMachineDeleteBtn.addEventListener("click", () => {
-        deleteSlicerFile("machine", "printer profil").catch((err) => {
-          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke slette printer profil", "error");
+        deleteSlicerFile("machine", "printer-profiler").catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke slette printer-profiler", "error");
         });
       });
     }
 
     if (els.slicerProcessUploadBtn) {
       els.slicerProcessUploadBtn.addEventListener("click", () => {
-        uploadSlicerFile("process", els.slicerProcessInput, "Print settings").catch((err) => {
-          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke uploade print settings", "error");
+        uploadSlicerFile("process", els.slicerProcessInput, "print-settings profiler").catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke uploade print-settings profiler", "error");
         });
       });
     }
     if (els.slicerProcessDeleteBtn) {
       els.slicerProcessDeleteBtn.addEventListener("click", () => {
-        deleteSlicerFile("process", "print settings").catch((err) => {
-          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke slette print settings", "error");
+        deleteSlicerFile("process", "print-settings profiler").catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke slette print-settings profiler", "error");
         });
       });
     }
 
     if (els.slicerFilamentUploadBtn) {
       els.slicerFilamentUploadBtn.addEventListener("click", () => {
-        uploadSlicerFile("filament", els.slicerFilamentInput, "Filament profil").catch((err) => {
-          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke uploade filament profil", "error");
+        uploadSlicerFile("filament", els.slicerFilamentInput, "filament-profiler").catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke uploade filament-profiler", "error");
         });
       });
     }
     if (els.slicerFilamentDeleteBtn) {
       els.slicerFilamentDeleteBtn.addEventListener("click", () => {
-        deleteSlicerFile("filament", "filament profil").catch((err) => {
-          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke slette filament profil", "error");
+        deleteSlicerFile("filament", "filament-profiler").catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke slette filament-profiler", "error");
         });
       });
     }
 
     if (els.slicerConfigUploadBtn) {
       els.slicerConfigUploadBtn.addEventListener("click", () => {
-        uploadSlicerFile("config", els.slicerConfigInput, "Config bundle").catch((err) => {
-          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke uploade config bundle", "error");
+        uploadSlicerFile("config", els.slicerConfigInput, "config-bundle").catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke uploade config-bundle", "error");
         });
       });
     }
     if (els.slicerConfigDeleteBtn) {
       els.slicerConfigDeleteBtn.addEventListener("click", () => {
-        deleteSlicerFile("config", "config bundle").catch((err) => {
-          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke slette config bundle", "error");
+        deleteSlicerFile("config", "config-bundle").catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || "Kunne ikke slette config-bundle", "error");
         });
       });
     }
+
+    bindSlicerDropZone(els.slicerMachineDropZone, els.slicerMachineInput, "machine", "printer-profiler");
+    bindSlicerDropZone(els.slicerProcessDropZone, els.slicerProcessInput, "process", "print-settings profiler");
+    bindSlicerDropZone(els.slicerFilamentDropZone, els.slicerFilamentInput, "filament", "filament-profiler");
+    bindSlicerDropZone(els.slicerConfigDropZone, els.slicerConfigInput, "config", "config-bundle");
   }
 
   async function init() {
