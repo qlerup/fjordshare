@@ -1726,6 +1726,8 @@ def _pick_profile_json(
 
             if compatible_candidates:
                 candidates = compatible_candidates
+            elif str(requested_name or "").strip():
+                candidates = []
 
     if expected_type == "filament":
         machine_tokens = _profile_json_tokens(machine_profile_json)
@@ -1767,6 +1769,8 @@ def _pick_profile_json(
 
             if compatible_candidates:
                 candidates = compatible_candidates
+            elif str(requested_name or "").strip():
+                candidates = []
 
     if not candidates:
         return str(files[0]) if fallback_first else ""
@@ -1946,6 +1950,46 @@ def _validate_selected_slice_profiles(
     return ""
 
 
+def _write_centered_stl_for_slicing(input_stl: Path, output_stl: Path) -> bool:
+    if str(input_stl.suffix or "").lower() != ".stl":
+        return False
+
+    try:
+        mesh = _load_mesh_for_thumbnail(input_stl)
+    except Exception:
+        return False
+
+    try:
+        bounds = mesh.bounds
+        if bounds is None or len(bounds) != 2:
+            return False
+
+        mins = [float(v) for v in bounds[0]]
+        maxs = [float(v) for v in bounds[1]]
+        if len(mins) != 3 or len(maxs) != 3:
+            return False
+
+        tx = -((mins[0] + maxs[0]) / 2.0)
+        ty = -((mins[1] + maxs[1]) / 2.0)
+        tz = -mins[2]
+
+        if abs(tx) < 1e-6 and abs(ty) < 1e-6 and abs(tz) < 1e-6:
+            return False
+
+        centered = mesh.copy()
+        centered.apply_translation([tx, ty, tz])
+
+        output_stl.parent.mkdir(parents=True, exist_ok=True)
+        centered.export(str(output_stl))
+        return output_stl.exists() and output_stl.is_file() and output_stl.stat().st_size > 0
+    except Exception:
+        try:
+            output_stl.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+
+
 def _slice_stl_to_gcode(
     input_stl: Path,
     output_gcode: Path,
@@ -1979,135 +2023,153 @@ def _slice_stl_to_gcode(
     if filament_profile_value:
         legacy_cmd.extend(["--filament-profile", filament_profile_value])
 
-    modern_profile_args = _build_modern_profile_args(
-        executable,
-        printer_profile_value,
-        print_profile_value,
-        filament_profile_value,
-        prefer_uploaded=True,
-    )
-    modern_base = [executable, "--slice", "0", *modern_profile_args]
+    slice_input_for_cli = input_stl
+    temp_slice_input = output_gcode.with_suffix(".slice_input.stl")
+    try:
+        if _write_centered_stl_for_slicing(input_stl, temp_slice_input):
+            slice_input_for_cli = temp_slice_input
+    except Exception:
+        slice_input_for_cli = input_stl
 
-    fallback_profile_args = _build_modern_profile_args(
-        executable,
-        printer_profile_value,
-        print_profile_value,
-        filament_profile_value,
-        prefer_uploaded=False,
-    )
-    fallback_base = [executable, "--slice", "0", *fallback_profile_args]
-
-    temp_3mf = output_gcode.with_suffix(".gcode.3mf")
-    attempts: list[tuple[str, list[str], str]] = [
-        (
-            "legacy-hyphen",
-            [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(input_stl)],
-            "gcode",
-        ),
-        (
-            "legacy-underscore",
-            [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(input_stl)],
-            "gcode",
-        ),
-        (
-            "modern-3mf-hyphen",
-            [*modern_base, "--export-3mf", str(temp_3mf), str(input_stl)],
-            "3mf",
-        ),
-        (
-            "modern-3mf-outputdir-hyphen",
-            [
-                *modern_base,
-                "--outputdir",
-                str(temp_3mf.parent),
-                "--export-3mf",
-                temp_3mf.name,
-                str(input_stl),
-            ],
-            "3mf",
-        ),
-        (
-            "modern-3mf-underscore",
-            [*modern_base, "--export_3mf", str(temp_3mf), str(input_stl)],
-            "3mf",
-        ),
-    ]
-
-    if BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK and fallback_profile_args != modern_profile_args:
-        attempts.extend(
-            [
-                (
-                    "modern-fallback-3mf-hyphen",
-                    [*fallback_base, "--export-3mf", str(temp_3mf), str(input_stl)],
-                    "3mf",
-                ),
-                (
-                    "modern-fallback-3mf-outputdir-hyphen",
-                    [
-                        *fallback_base,
-                        "--outputdir",
-                        str(temp_3mf.parent),
-                        "--export-3mf",
-                        temp_3mf.name,
-                        str(input_stl),
-                    ],
-                    "3mf",
-                ),
-            ]
+    try:
+        modern_profile_args = _build_modern_profile_args(
+            executable,
+            printer_profile_value,
+            print_profile_value,
+            filament_profile_value,
+            prefer_uploaded=True,
         )
+        modern_base = [executable, "--slice", "0", *modern_profile_args]
 
-    errors: list[str] = []
-    for label, cmd, mode in attempts:
-        try:
-            output_gcode.unlink(missing_ok=True)
-            temp_3mf.unlink(missing_ok=True)
-        except Exception:
-            pass
+        fallback_profile_args = _build_modern_profile_args(
+            executable,
+            printer_profile_value,
+            print_profile_value,
+            filament_profile_value,
+            prefer_uploaded=False,
+        )
+        fallback_base = [executable, "--slice", "0", *fallback_profile_args]
 
-        proc, details = _run_bambu_with_runtime_fallback(cmd, executable)
-        details = details.strip()
+        temp_3mf = output_gcode.with_suffix(".gcode.3mf")
+        attempts: list[tuple[str, list[str], str]] = [
+            (
+                "legacy-hyphen",
+                [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(slice_input_for_cli)],
+                "gcode",
+            ),
+            (
+                "legacy-underscore",
+                [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(slice_input_for_cli)],
+                "gcode",
+            ),
+            (
+                "modern-3mf-hyphen",
+                [*modern_base, "--export-3mf", str(temp_3mf), str(slice_input_for_cli)],
+                "3mf",
+            ),
+            (
+                "modern-3mf-outputdir-hyphen",
+                [
+                    *modern_base,
+                    "--outputdir",
+                    str(temp_3mf.parent),
+                    "--export-3mf",
+                    temp_3mf.name,
+                    str(slice_input_for_cli),
+                ],
+                "3mf",
+            ),
+            (
+                "modern-3mf-underscore",
+                [*modern_base, "--export_3mf", str(temp_3mf), str(slice_input_for_cli)],
+                "3mf",
+            ),
+        ]
 
-        if proc.returncode != 0:
-            details_lower = details.lower()
-            if "libsoup2 symbols detected" in details_lower and "libsoup3" in details_lower:
-                raise RuntimeError(
-                    "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
-                    "Genbyg image med seneste Dockerfile (matcher WebKit/JSC + libsoup automatisk)."
-                )
-            errors.append(f"{label}: {details[:350]}")
-            if "error while loading shared libraries" in details_lower:
-                break
-            continue
+        if BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK and fallback_profile_args != modern_profile_args:
+            attempts.extend(
+                [
+                    (
+                        "modern-fallback-3mf-hyphen",
+                        [*fallback_base, "--export-3mf", str(temp_3mf), str(slice_input_for_cli)],
+                        "3mf",
+                    ),
+                    (
+                        "modern-fallback-3mf-outputdir-hyphen",
+                        [
+                            *fallback_base,
+                            "--outputdir",
+                            str(temp_3mf.parent),
+                            "--export-3mf",
+                            temp_3mf.name,
+                            str(slice_input_for_cli),
+                        ],
+                        "3mf",
+                    ),
+                ]
+            )
 
-        if mode == "gcode":
-            if output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0:
-                return
-            errors.append(f"{label}: kommandoen kørte men lavede ingen G-code output")
-            continue
-
-        if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
+        errors: list[str] = []
+        for label, cmd, mode in attempts:
             try:
+                output_gcode.unlink(missing_ok=True)
                 temp_3mf.unlink(missing_ok=True)
             except Exception:
                 pass
-            return
 
-        if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
-            errors.append(f"{label}: 3MF blev lavet men indeholdt ingen G-code")
-        else:
-            errors.append(f"{label}: kommandoen kørte men lavede ingen 3MF output")
+            proc, details = _run_bambu_with_runtime_fallback(cmd, executable)
+            details = details.strip()
 
-    if errors:
-        guidance = ""
-        if any("unable to create plate triangles" in err.lower() for err in errors):
-            guidance = (
-                " | Mangler muligvis machine/process/filament settings til modern CLI. "
-                "Sæt BAMBUSTUDIO_LOAD_SETTINGS og BAMBUSTUDIO_LOAD_FILAMENTS i .env."
-            )
-        raise RuntimeError(f"BambuStudio fejl: {(' | '.join(errors) + guidance)[:1000]}")
+            if proc.returncode != 0:
+                details_lower = details.lower()
+                if "libsoup2 symbols detected" in details_lower and "libsoup3" in details_lower:
+                    raise RuntimeError(
+                        "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
+                        "Genbyg image med seneste Dockerfile (matcher WebKit/JSC + libsoup automatisk)."
+                    )
+                errors.append(f"{label}: {details[:350]}")
+                if "error while loading shared libraries" in details_lower:
+                    break
+                continue
 
-    if not output_gcode.exists() or not output_gcode.is_file() or output_gcode.stat().st_size <= 0:
-        raise RuntimeError("BambuStudio lavede ingen output-fil")
+            if mode == "gcode":
+                if output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0:
+                    return
+                errors.append(f"{label}: kommandoen kørte men lavede ingen G-code output")
+                continue
+
+            if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
+                try:
+                    temp_3mf.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return
+
+            if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
+                errors.append(f"{label}: 3MF blev lavet men indeholdt ingen G-code")
+            else:
+                errors.append(f"{label}: kommandoen kørte men lavede ingen 3MF output")
+
+        if errors:
+            guidance = ""
+            errors_lower = [err.lower() for err in errors]
+            if any("unable to create plate triangles" in err for err in errors_lower):
+                guidance = (
+                    " | Mangler muligvis machine/process/filament settings til modern CLI. "
+                    "Sæt BAMBUSTUDIO_LOAD_SETTINGS og BAMBUSTUDIO_LOAD_FILAMENTS i .env."
+                )
+            if any(("nothing to be sliced" in err) or ("no object is fully in" in err) for err in errors_lower):
+                guidance += " | STL blev auto-centreret, men objektet er stadig udenfor pladen eller inkompatibelt med valgt profil."
+            raise RuntimeError(f"BambuStudio fejl: {(' | '.join(errors) + guidance)[:1000]}")
+
+        if not output_gcode.exists() or not output_gcode.is_file() or output_gcode.stat().st_size <= 0:
+            raise RuntimeError("BambuStudio lavede ingen output-fil")
+    finally:
+        if slice_input_for_cli != input_stl:
+            try:
+                temp_slice_input.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _archive_completed_slice_output(output_gcode: Path) -> Optional[Path]:
