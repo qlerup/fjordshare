@@ -74,6 +74,7 @@ THUMB_RENDER_STYLE_VERSION = "7"
 SLICABLE_3D_EXTENSIONS = {".stl"}
 BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
 BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
+BAMBUSTUDIO_PROFILE_ROOT = str(os.getenv("BAMBUSTUDIO_PROFILE_ROOT", "")).strip()
 BAMBUSTUDIO_PRINTER_PROFILES = str(os.getenv("BAMBUSTUDIO_PRINTER_PROFILES", "")).strip()
 BAMBUSTUDIO_PRINT_PROFILES = str(os.getenv("BAMBUSTUDIO_PRINT_PROFILES", "")).strip()
 BAMBUSTUDIO_FILAMENT_PROFILES = str(os.getenv("BAMBUSTUDIO_FILAMENT_PROFILES", "")).strip()
@@ -1025,9 +1026,20 @@ def _normalize_profile_token(value: str) -> str:
 
 def _find_bambu_profile_root(executable: str) -> Optional[Path]:
     candidates: list[Path] = [
+        Path("/opt/bambu-studio/appdir/usr/resources/profiles/BBL"),
         Path("/opt/bambu-studio/appdir/resources/profiles/BBL"),
         Path("/opt/bambu-studio/resources/profiles/BBL"),
     ]
+
+    env_profile_root = str(BAMBUSTUDIO_PROFILE_ROOT or "").strip()
+    if env_profile_root:
+        candidates.insert(0, Path(env_profile_root))
+
+    def _is_profile_root(path: Path) -> bool:
+        try:
+            return (path / "machine").is_dir() and (path / "process").is_dir() and (path / "filament").is_dir()
+        except Exception:
+            return False
 
     raw_executable = str(executable or "").strip()
     if raw_executable:
@@ -1040,8 +1052,11 @@ def _find_bambu_profile_root(executable: str) -> Optional[Path]:
 
         candidates.extend(
             [
+                exe_path.parent / "usr" / "resources" / "profiles" / "BBL",
                 exe_path.parent / "resources" / "profiles" / "BBL",
+                exe_path.parent.parent / "usr" / "resources" / "profiles" / "BBL",
                 exe_path.parent.parent / "resources" / "profiles" / "BBL",
+                exe_path.parent.parent.parent / "usr" / "resources" / "profiles" / "BBL",
                 exe_path.parent.parent.parent / "resources" / "profiles" / "BBL",
             ]
         )
@@ -1052,8 +1067,46 @@ def _find_bambu_profile_root(executable: str) -> Optional[Path]:
         if key in seen:
             continue
         seen.add(key)
-        if candidate.exists() and candidate.is_dir():
+        if candidate.exists() and candidate.is_dir() and _is_profile_root(candidate):
             return candidate
+
+    scan_roots: list[Path] = [Path("/opt/bambu-studio")]
+    if raw_executable:
+        scan_roots.extend(
+            [
+                Path(raw_executable).parent,
+                Path(raw_executable).parent.parent,
+                Path(raw_executable).parent.parent.parent,
+            ]
+        )
+
+    scanned: set[str] = set()
+    for scan_root in scan_roots:
+        key = str(scan_root)
+        if key in scanned:
+            continue
+        scanned.add(key)
+
+        try:
+            if not scan_root.exists() or not scan_root.is_dir():
+                continue
+        except Exception:
+            continue
+
+        try:
+            for found in scan_root.rglob("BBL"):
+                try:
+                    if found.name != "BBL":
+                        continue
+                    parent = found.parent.name.lower()
+                    if parent != "profiles":
+                        continue
+                    if _is_profile_root(found):
+                        return found
+                except Exception:
+                    continue
+        except Exception:
+            continue
 
     return None
 
@@ -1150,7 +1203,6 @@ def _slice_stl_to_gcode(
         filament_profile_value,
     )
     modern_base = [executable, "--slice", "0", *modern_profile_args]
-    modern_arrange_base = [*modern_base, "--orient", "--arrange", "1"]
 
     temp_3mf = output_gcode.with_suffix(".gcode.3mf")
     attempts: list[tuple[str, list[str], str]] = [
@@ -1170,14 +1222,9 @@ def _slice_stl_to_gcode(
             "3mf",
         ),
         (
-            "modern-3mf-arrange-hyphen",
-            [*modern_arrange_base, "--export-3mf", str(temp_3mf), str(input_stl)],
-            "3mf",
-        ),
-        (
             "modern-3mf-outputdir-hyphen",
             [
-                *modern_arrange_base,
+                *modern_base,
                 "--outputdir",
                 str(temp_3mf.parent),
                 "--export-3mf",
