@@ -55,12 +55,14 @@ except Exception:
 
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data")).resolve()
+BAMBU_DIR = DATA_DIR / "bambu"
 UPLOAD_ROOT = DATA_DIR / "uploads"
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 THUMBS_DIR = DATA_DIR / "thumbs"
 FILE_ATTACHMENTS_DIR = DATA_DIR / "file_attachments"
 DB_PATH = DATA_DIR / "fjordshare.db"
-SLICER_PROFILE_DIR = DATA_DIR / "bambu" / "profiles"
+SLICER_PROFILE_DIR = BAMBU_DIR / "profiles"
+BAMBU_SLICED_DIR = BAMBU_DIR / "sliced"
 SLICER_PROFILE_PRINTER_DIR = SLICER_PROFILE_DIR / "printer_profiles"
 SLICER_PROFILE_PRINT_SETTINGS_DIR = SLICER_PROFILE_DIR / "printer_print_settings"
 SLICER_PROFILE_FILAMENT_DIR = SLICER_PROFILE_DIR / "filament_profiles"
@@ -492,11 +494,13 @@ def _migrate_legacy_slicer_profile_files() -> None:
 
 def _ensure_storage_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    BAMBU_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
     TUS_TMP_DIR.mkdir(parents=True, exist_ok=True)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
     FILE_ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    BAMBU_SLICED_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_PRINTER_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_PRINT_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_FILAMENT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1704,6 +1708,22 @@ def _slice_stl_to_gcode(
         raise RuntimeError("BambuStudio lavede ingen output-fil")
 
 
+def _archive_completed_slice_output(output_gcode: Path) -> Optional[Path]:
+    try:
+        if not output_gcode.exists() or not output_gcode.is_file():
+            return None
+    except Exception:
+        return None
+
+    try:
+        BAMBU_SLICED_DIR.mkdir(parents=True, exist_ok=True)
+        archive_target = allocate_unique_target(BAMBU_SLICED_DIR, output_gcode.name)
+        shutil.copy2(str(output_gcode), str(archive_target))
+        return archive_target
+    except Exception:
+        return None
+
+
 def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     file_id = int(payload.get("file_id") or 0)
     requested_by = str(payload.get("requested_by") or "").strip()
@@ -1751,6 +1771,22 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             uploaded_by=creator,
             upload_client_id=None,
         )
+
+        archived_path = _archive_completed_slice_output(output_path)
+        if archived_path is not None:
+            try:
+                log_activity(
+                    kind="slice",
+                    action="archived",
+                    message=f"Sliced fil kopieret til bambu/sliced ({int(archived_path.stat().st_size)} bytes)",
+                    level="info",
+                    folder_path="bambu/sliced",
+                    target=str(archived_path.name),
+                    actor=requested_by or "system",
+                    file_id=file_id,
+                )
+            except Exception:
+                pass
 
         _set_file_slice_state(file_id, "ready", "", actor=requested_by or "system")
     except Exception as exc:
