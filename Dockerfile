@@ -97,47 +97,68 @@ RUN set -eux; \
     wk41_pkg="$(pick_first_available libwebkit2gtk-4.1-0t64 libwebkit2gtk-4.1-0 || true)"; \
     js60_pkg="$(pick_first_available libjavascriptcoregtk-6.0-1t64 libjavascriptcoregtk-6.0-1 || true)"; \
     wk60_pkg="$(pick_first_available libwebkitgtk-6.0-4t64 libwebkitgtk-6.0-4 || true)"; \
-    runtime_major=""; \
+    runtime_wk_major=""; \
+    runtime_js_major=""; \
     runtime_js_pkg=""; \
     runtime_wk_pkg=""; \
-    if [ -n "$js40_pkg" ] && [ -n "$wk40_pkg" ]; then \
-        runtime_major="4.0"; \
-        runtime_js_pkg="$js40_pkg"; \
+    if [ -n "$wk40_pkg" ]; then \
+        runtime_wk_major="4.0"; \
         runtime_wk_pkg="$wk40_pkg"; \
-    elif [ -n "$js41_pkg" ] && [ -n "$wk41_pkg" ]; then \
-        runtime_major="4.1"; \
-        runtime_js_pkg="$js41_pkg"; \
+    elif [ -n "$wk41_pkg" ]; then \
+        runtime_wk_major="4.1"; \
         runtime_wk_pkg="$wk41_pkg"; \
-    elif [ -n "$js60_pkg" ] && [ -n "$wk60_pkg" ]; then \
-        runtime_major="6.0"; \
-        runtime_js_pkg="$js60_pkg"; \
+    elif [ -n "$wk60_pkg" ]; then \
+        runtime_wk_major="6.0"; \
         runtime_wk_pkg="$wk60_pkg"; \
     else \
-        echo "Fejl: Ingen kompatibel WebKit/JSC runtime-par fundet i apt repo." >&2; \
+        echo "Fejl: Ingen kompatibel WebKit runtime fundet i apt repo." >&2; \
         exit 1; \
     fi; \
-    if [ "$runtime_major" = "4.0" ]; then \
+    if [ -n "$js40_pkg" ]; then \
+        runtime_js_major="4.0"; \
+        runtime_js_pkg="$js40_pkg"; \
+    elif [ "$runtime_wk_major" = "4.1" ] && [ -n "$js41_pkg" ]; then \
+        runtime_js_major="4.1"; \
+        runtime_js_pkg="$js41_pkg"; \
+    elif [ "$runtime_wk_major" = "6.0" ] && [ -n "$js60_pkg" ]; then \
+        runtime_js_major="6.0"; \
+        runtime_js_pkg="$js60_pkg"; \
+    elif [ -n "$js41_pkg" ]; then \
+        runtime_js_major="4.1"; \
+        runtime_js_pkg="$js41_pkg"; \
+    elif [ -n "$js60_pkg" ]; then \
+        runtime_js_major="6.0"; \
+        runtime_js_pkg="$js60_pkg"; \
+    else \
+        echo "Fejl: Ingen kompatibel JavaScriptCore runtime fundet i apt repo." >&2; \
+        exit 1; \
+    fi; \
+    if [ "$runtime_wk_major" = "4.0" ]; then \
         runtime_soup_pkg="$(pick_first_available libsoup2.4-1t64 libsoup2.4-1 || true)"; \
     else \
         runtime_soup_pkg="$(pick_first_available libsoup-3.0-0t64 libsoup-3.0-0 || true)"; \
     fi; \
     if [ -z "$runtime_soup_pkg" ]; then \
-        echo "Fejl: Kunne ikke finde passende libsoup runtime for WebKit $runtime_major" >&2; \
+        echo "Fejl: Kunne ikke finde passende libsoup runtime for WebKit $runtime_wk_major" >&2; \
         exit 1; \
     fi; \
     apt-get install -y --no-install-recommends "$runtime_js_pkg" "$runtime_wk_pkg" "$runtime_soup_pkg"; \
     ldconfig; \
-    if [ "$runtime_major" = "4.1" ]; then \
+    if [ "$runtime_js_major" = "4.1" ]; then \
         js_src_glob='/usr/lib/*/libjavascriptcoregtk-4.1.so.0'; \
-        wk_src_glob='/usr/lib/*/libwebkit2gtk-4.1.so.0'; \
-    elif [ "$runtime_major" = "6.0" ]; then \
+    elif [ "$runtime_js_major" = "6.0" ]; then \
         js_src_glob='/usr/lib/*/libjavascriptcoregtk-6.0.so.1'; \
-        wk_src_glob='/usr/lib/*/libwebkitgtk-6.0.so.4'; \
     else \
         js_src_glob=''; \
+    fi; \
+    if [ "$runtime_wk_major" = "4.1" ]; then \
+        wk_src_glob='/usr/lib/*/libwebkit2gtk-4.1.so.0'; \
+    elif [ "$runtime_wk_major" = "6.0" ]; then \
+        wk_src_glob='/usr/lib/*/libwebkitgtk-6.0.so.4'; \
+    else \
         wk_src_glob=''; \
     fi; \
-    if [ "$runtime_major" != "4.0" ]; then \
+    if [ "$runtime_js_major" != "4.0" ]; then \
         if ! ldconfig -p | grep -q 'libjavascriptcoregtk-4.0.so.18'; then \
             for src in $js_src_glob; do \
                 if [ -f "$src" ]; then \
@@ -146,6 +167,8 @@ RUN set -eux; \
                 fi; \
             done; \
         fi; \
+    fi; \
+    if [ "$runtime_wk_major" != "4.0" ]; then \
         if ! ldconfig -p | grep -q 'libwebkit2gtk-4.0.so.37'; then \
             for src in $wk_src_glob; do \
                 if [ -f "$src" ]; then \
