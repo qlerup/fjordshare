@@ -143,6 +143,8 @@
     sliceModalFileName: document.getElementById("sliceModalFileName"),
     sliceModalStatus: document.getElementById("sliceModalStatus"),
     slicePrinterSelect: document.getElementById("slicePrinterSelect"),
+    sliceBedWidthInput: document.getElementById("sliceBedWidthInput"),
+    sliceBedDepthInput: document.getElementById("sliceBedDepthInput"),
     slicePrintProfileSelect: document.getElementById("slicePrintProfileSelect"),
     sliceFilamentProfileSelect: document.getElementById("sliceFilamentProfileSelect"),
     slicePreviewCanvas: document.getElementById("slicePreviewCanvas"),
@@ -1440,18 +1442,6 @@
     return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   }
 
-  function stripSliceProfileCopySuffix(value) {
-    let text = String(value || "").trim();
-    if (!text) return "";
-    text = text.replace(/\s*[\-_/]\s*(copy|kopi)(?:\s*\d+)?\s*$/i, "");
-    text = text.replace(/\s*\((copy|kopi)(?:\s*\d+)?\)\s*$/i, "");
-    return text.trim();
-  }
-
-  function canonicalSliceProfileToken(value) {
-    return normalizeProfileToken(stripSliceProfileCopySuffix(value));
-  }
-
   function normalizeSliceBedSize(candidate) {
     if (!candidate || typeof candidate !== "object") return null;
     const width = Number(candidate.width_mm);
@@ -1483,43 +1473,31 @@
       depth_mm: Number(DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
     };
 
+    // 1) Prefer manual override from inputs when provided
+    const manualW = Number((els.sliceBedWidthInput && els.sliceBedWidthInput.value) || 0);
+    const manualD = Number((els.sliceBedDepthInput && els.sliceBedDepthInput.value) || 0);
+    if (Number.isFinite(manualW) && Number.isFinite(manualD) && manualW >= 40 && manualD >= 40) {
+      return {
+        width_mm: clampSliceBedSizeMm(manualW, parsedDefault.width_mm),
+        depth_mm: clampSliceBedSizeMm(manualD, parsedDefault.depth_mm),
+      };
+    }
+
     const beds = state.sliceProfiles && typeof state.sliceProfiles === "object" && state.sliceProfiles.printer_beds
       ? state.sliceProfiles.printer_beds
       : {};
     const selected = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
-    const selectedToken = canonicalSliceProfileToken(selected);
 
     const fromExact = selected ? normalizeSliceBedSize(beds[selected]) : null;
     if (fromExact) return fromExact;
 
     if (selected) {
-      const wanted = selectedToken;
+      const wanted = normalizeProfileToken(selected);
       if (wanted) {
         for (const [name, value] of Object.entries(beds)) {
-          if (canonicalSliceProfileToken(name) !== wanted) continue;
+          if (normalizeProfileToken(name) !== wanted) continue;
           const normalized = normalizeSliceBedSize(value);
           if (normalized) return normalized;
-        }
-
-        let bestMatch = null;
-        let bestScore = 0;
-        for (const [name, value] of Object.entries(beds)) {
-          const candidateToken = canonicalSliceProfileToken(name);
-          if (!candidateToken) continue;
-
-          let score = 0;
-          if (wanted.includes(candidateToken) || candidateToken.includes(wanted)) {
-            score = Math.min(wanted.length, candidateToken.length);
-          }
-          if (score <= bestScore) continue;
-
-          const normalized = normalizeSliceBedSize(value);
-          if (!normalized) continue;
-          bestMatch = normalized;
-          bestScore = score;
-        }
-        if (bestMatch && bestScore >= 6) {
-          return bestMatch;
         }
       }
     }
@@ -1794,6 +1772,14 @@
     const bed = resolveSelectedSliceBedSize();
     if (els.slicePreviewBed) {
       els.slicePreviewBed.textContent = `Plade: ${formatNumberCompact(bed.width_mm)} x ${formatNumberCompact(bed.depth_mm)} mm`;
+    }
+    if (els.sliceBedWidthInput) {
+      const w = clampSliceBedSizeMm(bed.width_mm, DEFAULT_SLICE_BED_SIZE_MM.width_mm);
+      if (String(els.sliceBedWidthInput.value || "") !== String(w)) els.sliceBedWidthInput.value = String(w);
+    }
+    if (els.sliceBedDepthInput) {
+      const d = clampSliceBedSizeMm(bed.depth_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm);
+      if (String(els.sliceBedDepthInput.value || "") !== String(d)) els.sliceBedDepthInput.value = String(d);
     }
     updateSlicePreviewBedSize(bed.width_mm, bed.depth_mm);
   }
@@ -2115,6 +2101,8 @@
     if (els.slicePreviewBed) {
       els.slicePreviewBed.textContent = `Plade: ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.width_mm)} x ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.depth_mm)} mm`;
     }
+    if (els.sliceBedWidthInput) els.sliceBedWidthInput.value = "";
+    if (els.sliceBedDepthInput) els.sliceBedDepthInput.value = "";
     setSlicePreviewFootprint("Model footprint: -");
     setSlicePreviewHeight("Model Z: -");
     showStatus(els.sliceModalStatus, "");
@@ -5548,6 +5536,24 @@
       els.slicePrinterSelect.addEventListener("change", () => {
         refreshSlicePreviewBedFromSelection();
       });
+    }
+    if (els.sliceBedWidthInput) {
+      const onManualBedChange = () => {
+        const w = clampSliceBedSizeMm(els.sliceBedWidthInput.value || DEFAULT_SLICE_BED_SIZE_MM.width_mm, DEFAULT_SLICE_BED_SIZE_MM.width_mm);
+        els.sliceBedWidthInput.value = String(w);
+        refreshSlicePreviewBedFromSelection();
+      };
+      els.sliceBedWidthInput.addEventListener("change", onManualBedChange);
+      els.sliceBedWidthInput.addEventListener("input", onManualBedChange);
+    }
+    if (els.sliceBedDepthInput) {
+      const onManualBedChange = () => {
+        const d = clampSliceBedSizeMm(els.sliceBedDepthInput.value || DEFAULT_SLICE_BED_SIZE_MM.depth_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm);
+        els.sliceBedDepthInput.value = String(d);
+        refreshSlicePreviewBedFromSelection();
+      };
+      els.sliceBedDepthInput.addEventListener("change", onManualBedChange);
+      els.sliceBedDepthInput.addEventListener("input", onManualBedChange);
     }
     const bindSliceAxisControls = (axis, rangeEl, minusBtn, plusBtn) => {
       if (rangeEl) {

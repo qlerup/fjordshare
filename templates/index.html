@@ -452,6 +452,15 @@
         <select id="slicePrinterSelect" class="select"></select>
       </div>
       <div class="slice-modal-field">
+        <label for="sliceBedWidthInput">Pladestørrelse (mm)</label>
+        <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;">
+          <input id="sliceBedWidthInput" class="input" type="number" min="40" max="2000" step="1" placeholder="Bredde (X)">
+          <span style="opacity:0.7;">×</span>
+          <input id="sliceBedDepthInput" class="input" type="number" min="40" max="2000" step="1" placeholder="Dybde (Y)">
+        </div>
+        <div class="hint">Udfyld for at tilsidesætte pladestørrelsen fra profilen.</div>
+      </div>
+      <div class="slice-modal-field">
         <label for="slicePrintProfileSelect">Printprofil</label>
         <select id="slicePrintProfileSelect" class="select"></select>
       </div>

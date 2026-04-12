@@ -1385,50 +1385,17 @@ def _extract_planar_size_mm(value: Any) -> Optional[tuple[float, float]]:
     if isinstance(value, dict):
         pair_keys = (
             ("width", "depth"),
-            ("width_mm", "depth_mm"),
             ("bed_width", "bed_depth"),
-            ("bed_size_x", "bed_size_y"),
-            ("bed_x", "bed_y"),
             ("x", "y"),
-            ("x_mm", "y_mm"),
             ("size_x", "size_y"),
-            ("size_x_mm", "size_y_mm"),
             ("max_x", "max_y"),
             ("machine_width", "machine_depth"),
             ("machine_max_x", "machine_max_y"),
-            ("plate_width", "plate_depth"),
-            ("printable_x", "printable_y"),
-            ("build_x", "build_y"),
         )
         for key_w, key_d in pair_keys:
             if key_w not in value and key_d not in value:
                 continue
             result = _normalize_bed_size_pair(value.get(key_w), value.get(key_d))
-            if result:
-                return result
-
-        nested_priority_keys = (
-            "size",
-            "dimensions",
-            "dimension",
-            "plate",
-            "bed",
-            "area",
-            "shape",
-            "printable_area",
-            "printable_shape",
-            "build_volume",
-            "work_area",
-        )
-        for key in nested_priority_keys:
-            if key not in value:
-                continue
-            result = _extract_planar_size_mm(value.get(key))
-            if result:
-                return result
-
-        for nested_value in value.values():
-            result = _extract_planar_size_mm(nested_value)
             if result:
                 return result
         return None
@@ -1455,16 +1422,11 @@ def _extract_printer_bed_size_mm(payload: Optional[dict[str, Any]]) -> Optional[
 
     direct_pairs = (
         ("bed_width", "bed_depth"),
-        ("bed_size_x", "bed_size_y"),
-        ("bed_x", "bed_y"),
         ("machine_width", "machine_depth"),
         ("machine_max_x", "machine_max_y"),
-        ("printable_size_x", "printable_size_y"),
         ("max_print_x", "max_print_y"),
         ("printable_width", "printable_depth"),
         ("build_volume_x", "build_volume_y"),
-        ("plate_width", "plate_depth"),
-        ("work_area_x", "work_area_y"),
     )
     for key_w, key_d in direct_pairs:
         if key_w not in payload and key_d not in payload:
@@ -1475,8 +1437,6 @@ def _extract_printer_bed_size_mm(payload: Optional[dict[str, Any]]) -> Optional[
 
     composite_fields = (
         "bed_shape",
-        "bed_shape_mm",
-        "plate_shape",
         "printable_area",
         "printable_shape",
         "machine_size",

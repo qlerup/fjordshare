@@ -78,12 +78,6 @@ Profiler læses primært fra `BAMBUSTUDIO_CONFIG_PATH`; hvis ingen kan læses, b
 
 Appen kan kun slice med de profiler, som BambuStudio får via en konfigurationsfil (`BAMBUSTUDIO_CONFIG_PATH`). Den læser ikke profiler direkte fra din Bambu-konto/cloud.
 
-Bemærk om plate-size i UI:
-
-- Plate/bed størrelse vises ud fra machine-profilens JSON felter.
-- Nogle profiler gemmer størrelsen i nested felter (fx shape/area/dimensions) i stedet for simple `bed_width`/`bed_depth`.
-- FjordShare forsøger derfor nu at auto-detektere både simple og nested varianter, men hvis en profil ikke indeholder en brugbar størrelse, falder UI tilbage til standard 256x256 mm.
-
 Sådan får du dine egne profiler ind:
 
 1. Åbn BambuStudio på din PC.
