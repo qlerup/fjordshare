@@ -1416,6 +1416,39 @@ input[type="checkbox"] {
   color: #dbe7ff;
 }
 
+.slicer-profile-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  margin-top: 10px;
+}
+
+.slicer-profile-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--panel-2);
+  display: grid;
+  gap: 8px;
+}
+
+.slicer-profile-card h4 {
+  margin: 0;
+  font-size: 0.98rem;
+}
+
+.slicer-profile-card .table td:last-child,
+.slicer-profile-card .table th:last-child {
+  width: 84px;
+  white-space: nowrap;
+}
+
+.slicer-upload-modal-card {
+  width: min(760px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+}
+
 .file-info-attach-empty {
   border: 1px solid var(--border);
   border-radius: 10px;

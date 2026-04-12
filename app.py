@@ -5684,15 +5684,38 @@ def api_settings_slicer_profiles():
 
         target_dir = dirs[kind]
         allowed_exts = _slicer_profile_allowed_exts(kind)
+        requested_name = str(request.args.get("filename") or "").strip()
         deleted_count = 0
         deleted_files: list[str] = []
+        delete_mode = "all"
 
         try:
-            for file_path in _list_slicer_profile_files(target_dir, allowed_exts):
-                file_path.unlink(missing_ok=True)
-                deleted_count += 1
-                if len(deleted_files) < 25:
-                    deleted_files.append(file_path.name)
+            if requested_name:
+                delete_mode = "single"
+                safe_name = sanitize_filename(requested_name)
+                basename = Path(requested_name).name
+                if not safe_name or safe_name != requested_name or basename != requested_name:
+                    return jsonify({"ok": False, "error": "Ugyldigt filnavn"}), 400
+
+                ext = Path(safe_name).suffix.lower()
+                if allowed_exts and ext not in allowed_exts:
+                    return jsonify({"ok": False, "error": "Filtype er ikke tilladt for denne profiltype"}), 400
+
+                target_root = target_dir.resolve()
+                target_file = (target_root / safe_name).resolve()
+                if target_file.parent != target_root:
+                    return jsonify({"ok": False, "error": "Ugyldig filsti"}), 400
+
+                if target_file.exists() and target_file.is_file():
+                    target_file.unlink(missing_ok=True)
+                    deleted_count = 1
+                    deleted_files.append(safe_name)
+            else:
+                for file_path in _list_slicer_profile_files(target_dir, allowed_exts):
+                    file_path.unlink(missing_ok=True)
+                    deleted_count += 1
+                    if len(deleted_files) < 25:
+                        deleted_files.append(file_path.name)
         except Exception as exc:
             return jsonify({"ok": False, "error": f"Kunne ikke slette profilfiler: {exc}"}), 500
 
@@ -5700,7 +5723,11 @@ def api_settings_slicer_profiles():
             log_activity(
                 kind="slice",
                 action="config-delete",
-                message=f"Slicer profiler slettet ({kind}, {deleted_count} filer)",
+                message=(
+                    f"Slicer profil slettet ({kind}, {deleted_files[0]})"
+                    if delete_mode == "single"
+                    else f"Slicer profiler slettet ({kind}, {deleted_count} filer)"
+                ),
                 level="info",
                 target=kind,
                 actor=str(current_user.username or ""),
@@ -5713,6 +5740,8 @@ def api_settings_slicer_profiles():
                     "deleted_count": deleted_count,
                     "deleted_files": deleted_files,
                     "kind": kind,
+                    "delete_mode": delete_mode,
+                    "filename": requested_name,
                 }
             )
         )

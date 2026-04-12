@@ -296,47 +296,96 @@
         </div>
 
         <div class="panel">
-          <h3>Printer profil (machine.json)</h3>
-          <div id="slicerMachineDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere printer-profiler hertil, eller klik for at vælge filer.</div>
           <div class="toolbar">
-            <input id="slicerMachineInput" class="input" type="file" accept=".json,application/json" multiple>
-            <button id="slicerMachineUploadBtn" class="btn primary" type="button">Upload</button>
-            <button id="slicerMachineDeleteBtn" class="btn danger" type="button">Slet alle</button>
+            <h3>Profil uploads</h3>
           </div>
-          <div id="slicerMachineMeta" class="hint">Ingen filer uploadet.</div>
-        </div>
+          <p class="hint">Hver profiltype har sin egen upload-knap. Klik på knappen for at åbne en modal med drag-and-drop upload.</p>
 
-        <div class="panel">
-          <h3>Print settings (process.json)</h3>
-          <div id="slicerProcessDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere print-settings profiler hertil, eller klik for at vælge filer.</div>
-          <div class="toolbar">
-            <input id="slicerProcessInput" class="input" type="file" accept=".json,application/json" multiple>
-            <button id="slicerProcessUploadBtn" class="btn primary" type="button">Upload</button>
-            <button id="slicerProcessDeleteBtn" class="btn danger" type="button">Slet alle</button>
-          </div>
-          <div id="slicerProcessMeta" class="hint">Ingen filer uploadet.</div>
-        </div>
+          <div class="slicer-profile-grid">
+            <div class="slicer-profile-card">
+              <div class="toolbar">
+                <h4>Printer profil (machine.json)</h4>
+                <button id="slicerMachineOpenUploadBtn" class="btn small primary" type="button">Upload filer</button>
+              </div>
+              <p id="slicerMachineSummary" class="hint">Ingen filer uploadet.</p>
+              <table class="table compact">
+                <thead>
+                  <tr>
+                    <th>Fil</th>
+                    <th>Størrelse</th>
+                    <th>Uploadet</th>
+                    <th>Handling</th>
+                  </tr>
+                </thead>
+                <tbody id="slicerMachineTableBody">
+                  <tr><td colspan="4" class="hint">Ingen filer uploadet.</td></tr>
+                </tbody>
+              </table>
+            </div>
 
-        <div class="panel">
-          <h3>Filament profil (filament.json)</h3>
-          <div id="slicerFilamentDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere filament-profiler hertil, eller klik for at vælge filer.</div>
-          <div class="toolbar">
-            <input id="slicerFilamentInput" class="input" type="file" accept=".json,application/json" multiple>
-            <button id="slicerFilamentUploadBtn" class="btn primary" type="button">Upload</button>
-            <button id="slicerFilamentDeleteBtn" class="btn danger" type="button">Slet alle</button>
-          </div>
-          <div id="slicerFilamentMeta" class="hint">Ingen filer uploadet.</div>
-        </div>
+            <div class="slicer-profile-card">
+              <div class="toolbar">
+                <h4>Print settings (process.json)</h4>
+                <button id="slicerProcessOpenUploadBtn" class="btn small primary" type="button">Upload filer</button>
+              </div>
+              <p id="slicerProcessSummary" class="hint">Ingen filer uploadet.</p>
+              <table class="table compact">
+                <thead>
+                  <tr>
+                    <th>Fil</th>
+                    <th>Størrelse</th>
+                    <th>Uploadet</th>
+                    <th>Handling</th>
+                  </tr>
+                </thead>
+                <tbody id="slicerProcessTableBody">
+                  <tr><td colspan="4" class="hint">Ingen filer uploadet.</td></tr>
+                </tbody>
+              </table>
+            </div>
 
-        <div class="panel">
-          <h3>Konfigurationsbundle (INI/CFG)</h3>
-          <div id="slicerConfigDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk en eller flere config-filer hertil, eller klik for at vælge filer.</div>
-          <div class="toolbar">
-            <input id="slicerConfigInput" class="input" type="file" accept=".ini,.cfg,.conf,.txt,text/plain" multiple>
-            <button id="slicerConfigUploadBtn" class="btn primary" type="button">Upload</button>
-            <button id="slicerConfigDeleteBtn" class="btn danger" type="button">Slet alle</button>
+            <div class="slicer-profile-card">
+              <div class="toolbar">
+                <h4>Filament profil (filament.json)</h4>
+                <button id="slicerFilamentOpenUploadBtn" class="btn small primary" type="button">Upload filer</button>
+              </div>
+              <p id="slicerFilamentSummary" class="hint">Ingen filer uploadet.</p>
+              <table class="table compact">
+                <thead>
+                  <tr>
+                    <th>Fil</th>
+                    <th>Størrelse</th>
+                    <th>Uploadet</th>
+                    <th>Handling</th>
+                  </tr>
+                </thead>
+                <tbody id="slicerFilamentTableBody">
+                  <tr><td colspan="4" class="hint">Ingen filer uploadet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="slicer-profile-card">
+              <div class="toolbar">
+                <h4>Konfigurationsbundle (INI/CFG)</h4>
+                <button id="slicerConfigOpenUploadBtn" class="btn small primary" type="button">Upload filer</button>
+              </div>
+              <p id="slicerConfigSummary" class="hint">Ingen filer uploadet.</p>
+              <table class="table compact">
+                <thead>
+                  <tr>
+                    <th>Fil</th>
+                    <th>Størrelse</th>
+                    <th>Uploadet</th>
+                    <th>Handling</th>
+                  </tr>
+                </thead>
+                <tbody id="slicerConfigTableBody">
+                  <tr><td colspan="4" class="hint">Ingen filer uploadet.</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div id="slicerConfigMeta" class="hint">Ingen filer uploadet.</div>
         </div>
       </div>
     </section>
@@ -403,6 +452,26 @@
       <input id="shareResultLink" class="input" type="text" readonly>
       <button id="copyShareLinkBtn" class="btn" type="button">Kopier</button>
     </div>
+  </div>
+</div>
+
+<div id="slicerUploadModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card slicer-upload-modal-card">
+    <div class="toolbar">
+      <h3 id="slicerUploadModalTitle">Upload slicer-profil</h3>
+      <button id="slicerUploadCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <p id="slicerUploadModalHint" class="hint">Træk filer ind i feltet, eller vælg filer manuelt.</p>
+    <div id="slicerUploadDropZone" class="slicer-dropzone" role="button" tabindex="0">Træk filer hertil, eller klik for at vælge.</div>
+    <input id="slicerUploadInput" class="hidden" type="file" multiple>
+    <div class="toolbar">
+      <button id="slicerUploadPickBtn" class="btn" type="button">Vælg filer</button>
+      <button id="slicerUploadConfirmBtn" class="btn primary" type="button">Upload valgte filer</button>
+      <button id="slicerUploadCancelBtn" class="btn" type="button">Annuller</button>
+    </div>
+    <div id="slicerUploadSelectedFiles" class="hint">Ingen filer valgt.</div>
+    <div id="slicerUploadModalStatus" class="status hidden"></div>
   </div>
 </div>
 
