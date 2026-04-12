@@ -4,6 +4,7 @@ import base64
 import configparser
 import hashlib
 import json
+import math
 import mimetypes
 import os
 import queue as queue_mod
@@ -1319,6 +1320,211 @@ def _list_profile_names_from_dir(profile_dir: Path) -> list[str]:
     return names
 
 
+def _extract_float_numbers(value: Any, max_items: int = 64) -> list[float]:
+    if max_items <= 0:
+        return []
+
+    out: list[float] = []
+
+    def _append_number(num: Any) -> None:
+        try:
+            parsed = float(num)
+        except Exception:
+            return
+        if not math.isfinite(parsed):
+            return
+        out.append(parsed)
+
+    if isinstance(value, bool):
+        return out
+
+    if isinstance(value, (int, float)):
+        _append_number(value)
+        return out[:max_items]
+
+    if isinstance(value, str):
+        for match in re.finditer(r"[-+]?\d+(?:\.\d+)?", value):
+            _append_number(match.group(0))
+            if len(out) >= max_items:
+                break
+        return out[:max_items]
+
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if len(out) >= max_items:
+                break
+            out.extend(_extract_float_numbers(item, max_items=max_items - len(out)))
+        return out[:max_items]
+
+    return out
+
+
+def _normalize_bed_size_pair(width_mm: Any, depth_mm: Any) -> Optional[tuple[float, float]]:
+    numbers_w = _extract_float_numbers(width_mm, max_items=1)
+    numbers_d = _extract_float_numbers(depth_mm, max_items=1)
+    if not numbers_w or not numbers_d:
+        return None
+
+    width = abs(float(numbers_w[0]))
+    depth = abs(float(numbers_d[0]))
+    if not math.isfinite(width) or not math.isfinite(depth):
+        return None
+
+    if width < 40 or depth < 40:
+        return None
+    if width > 2000 or depth > 2000:
+        return None
+
+    return (round(width, 3), round(depth, 3))
+
+
+def _extract_planar_size_mm(value: Any) -> Optional[tuple[float, float]]:
+    if value is None:
+        return None
+
+    if isinstance(value, dict):
+        pair_keys = (
+            ("width", "depth"),
+            ("bed_width", "bed_depth"),
+            ("x", "y"),
+            ("size_x", "size_y"),
+            ("max_x", "max_y"),
+            ("machine_width", "machine_depth"),
+            ("machine_max_x", "machine_max_y"),
+        )
+        for key_w, key_d in pair_keys:
+            if key_w not in value and key_d not in value:
+                continue
+            result = _normalize_bed_size_pair(value.get(key_w), value.get(key_d))
+            if result:
+                return result
+        return None
+
+    numbers = _extract_float_numbers(value, max_items=200)
+    if len(numbers) < 2:
+        return None
+
+    if len(numbers) >= 4 and len(numbers) % 2 == 0:
+        xs = numbers[0::2]
+        ys = numbers[1::2]
+        width = max(xs) - min(xs)
+        depth = max(ys) - min(ys)
+        result = _normalize_bed_size_pair(width, depth)
+        if result:
+            return result
+
+    return _normalize_bed_size_pair(numbers[0], numbers[1])
+
+
+def _extract_printer_bed_size_mm(payload: Optional[dict[str, Any]]) -> Optional[tuple[float, float]]:
+    if payload is None:
+        return None
+
+    direct_pairs = (
+        ("bed_width", "bed_depth"),
+        ("machine_width", "machine_depth"),
+        ("machine_max_x", "machine_max_y"),
+        ("max_print_x", "max_print_y"),
+        ("printable_width", "printable_depth"),
+        ("build_volume_x", "build_volume_y"),
+    )
+    for key_w, key_d in direct_pairs:
+        if key_w not in payload and key_d not in payload:
+            continue
+        result = _normalize_bed_size_pair(payload.get(key_w), payload.get(key_d))
+        if result:
+            return result
+
+    composite_fields = (
+        "bed_shape",
+        "printable_area",
+        "printable_shape",
+        "machine_size",
+        "machine_size_mm",
+        "build_volume",
+        "plate_size",
+        "max_print_size",
+        "work_area",
+    )
+    for key in composite_fields:
+        if key not in payload:
+            continue
+        result = _extract_planar_size_mm(payload.get(key))
+        if result:
+            return result
+
+    for container_key in ("bed", "plate", "machine", "volume", "printable"):
+        container = payload.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        result = _extract_planar_size_mm(container)
+        if result:
+            return result
+
+    return None
+
+
+def _collect_printer_profile_bed_sizes(profile_root: str = "") -> dict[str, dict[str, float]]:
+    profile_dirs: list[tuple[str, Path]] = []
+
+    if SLICER_PROFILE_PRINTER_DIR.exists() and SLICER_PROFILE_PRINTER_DIR.is_dir():
+        profile_dirs.append(("uploaded", SLICER_PROFILE_PRINTER_DIR))
+
+    env_profile_root = str(BAMBUSTUDIO_PROFILE_ROOT or "").strip()
+    if env_profile_root:
+        env_machine_dir = Path(env_profile_root) / "machine"
+        if env_machine_dir.exists() and env_machine_dir.is_dir():
+            profile_dirs.append(("profile_root", env_machine_dir))
+
+    root_value = str(profile_root or "").strip()
+    if root_value:
+        discovered_machine_dir = Path(root_value) / "machine"
+        if discovered_machine_dir.exists() and discovered_machine_dir.is_dir():
+            profile_dirs.append(("discovered", discovered_machine_dir))
+
+    beds: dict[str, dict[str, float]] = {}
+    beds_source: dict[str, str] = {}
+
+    for source, machine_dir in profile_dirs:
+        files = _list_slicer_profile_files(machine_dir, {".json"})
+        for profile_path in files:
+            payload = _read_profile_json_payload(profile_path)
+            if not _profile_payload_is_usable(payload, "machine"):
+                continue
+
+            bed_size = _extract_printer_bed_size_mm(payload)
+            if not bed_size:
+                continue
+
+            names: list[str] = []
+            if payload is not None:
+                names.extend(_profile_json_name_candidates(payload))
+            stem_name = str(profile_path.stem or "").strip()
+            if stem_name:
+                names.append(stem_name)
+
+            unique_names = _dedupe_preserve_order(names)
+            if not unique_names:
+                continue
+
+            for name in unique_names:
+                normalized_name = _normalize_profile_token(name)
+                if not normalized_name:
+                    continue
+
+                existing_source = beds_source.get(normalized_name, "")
+                if existing_source == "uploaded" and source != "uploaded":
+                    continue
+
+                beds[name] = {
+                    "width_mm": float(bed_size[0]),
+                    "depth_mm": float(bed_size[1]),
+                }
+                beds_source[normalized_name] = source
+
+    return beds
+
+
 def _read_bambustudio_profiles() -> dict:
     printers: list[str] = []
     print_profiles: list[str] = []
@@ -1389,6 +1595,8 @@ def _read_bambustudio_profiles() -> dict:
         except Exception:
             pass
 
+    printer_beds = _collect_printer_profile_bed_sizes(profile_root=profile_root)
+
     return {
         "source": source,
         "config_path": config_path_raw,
@@ -1397,6 +1605,7 @@ def _read_bambustudio_profiles() -> dict:
         "printers": _dedupe_preserve_order(printers),
         "print_profiles": _dedupe_preserve_order(print_profiles),
         "filament_profiles": _dedupe_preserve_order(filament_profiles),
+        "printer_beds": printer_beds,
     }
 
 
@@ -1950,7 +2159,7 @@ def _validate_selected_slice_profiles(
     return ""
 
 
-def _write_centered_stl_for_slicing(input_stl: Path, output_stl: Path) -> bool:
+def _write_centered_stl_for_slicing(input_stl: Path, output_stl: Path, rotation_z_degrees: float = 0.0) -> bool:
     if str(input_stl.suffix or "").lower() != ".stl":
         return False
 
@@ -1960,7 +2169,26 @@ def _write_centered_stl_for_slicing(input_stl: Path, output_stl: Path) -> bool:
         return False
 
     try:
-        bounds = mesh.bounds
+        centered = mesh.copy()
+
+        rotation_value = float(rotation_z_degrees or 0.0)
+        if not math.isfinite(rotation_value):
+            rotation_value = 0.0
+        rotation_value = rotation_value % 360.0
+
+        if abs(rotation_value) >= 1e-6:
+            angle = math.radians(rotation_value)
+            cos_v = math.cos(angle)
+            sin_v = math.sin(angle)
+            rotation_matrix = [
+                [cos_v, -sin_v, 0.0, 0.0],
+                [sin_v, cos_v, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+            centered.apply_transform(rotation_matrix)
+
+        bounds = centered.bounds
         if bounds is None or len(bounds) != 2:
             return False
 
@@ -1973,10 +2201,9 @@ def _write_centered_stl_for_slicing(input_stl: Path, output_stl: Path) -> bool:
         ty = -((mins[1] + maxs[1]) / 2.0)
         tz = -mins[2]
 
-        if abs(tx) < 1e-6 and abs(ty) < 1e-6 and abs(tz) < 1e-6:
+        if abs(tx) < 1e-6 and abs(ty) < 1e-6 and abs(tz) < 1e-6 and abs(rotation_value) < 1e-6:
             return False
 
-        centered = mesh.copy()
         centered.apply_translation([tx, ty, tz])
 
         output_stl.parent.mkdir(parents=True, exist_ok=True)
@@ -1996,6 +2223,7 @@ def _slice_stl_to_gcode(
     printer_profile: str = "",
     print_profile: str = "",
     filament_profile: str = "",
+    rotation_z_degrees: float = 0.0,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
@@ -2026,7 +2254,7 @@ def _slice_stl_to_gcode(
     slice_input_for_cli = input_stl
     temp_slice_input = output_gcode.with_suffix(".slice_input.stl")
     try:
-        if _write_centered_stl_for_slicing(input_stl, temp_slice_input):
+        if _write_centered_stl_for_slicing(input_stl, temp_slice_input, rotation_z_degrees=rotation_z_degrees):
             slice_input_for_cli = temp_slice_input
     except Exception:
         slice_input_for_cli = input_stl
@@ -2194,6 +2422,13 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     printer_profile = str(payload.get("printer_profile") or "").strip()
     print_profile = str(payload.get("print_profile") or "").strip()
     filament_profile = str(payload.get("filament_profile") or "").strip()
+    try:
+        rotation_z_degrees = float(payload.get("rotation_z_degrees") or 0.0)
+    except Exception:
+        rotation_z_degrees = 0.0
+    if not math.isfinite(rotation_z_degrees):
+        rotation_z_degrees = 0.0
+    rotation_z_degrees = round(rotation_z_degrees % 360.0, 3)
     if file_id <= 0:
         return
 
@@ -2225,6 +2460,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             printer_profile=printer_profile,
             print_profile=print_profile,
             filament_profile=filament_profile,
+            rotation_z_degrees=rotation_z_degrees,
         )
 
         creator = requested_by or str(row["uploaded_by"] or "slicer")
@@ -2300,6 +2536,7 @@ def enqueue_slice_job(
     printer_profile: str = "",
     print_profile: str = "",
     filament_profile: str = "",
+    rotation_z_degrees: float = 0.0,
 ) -> bool:
     fid = int(file_id)
     with SLICE_QUEUE_LOCK:
@@ -2314,6 +2551,7 @@ def enqueue_slice_job(
             "printer_profile": str(printer_profile or "").strip(),
             "print_profile": str(print_profile or "").strip(),
             "filament_profile": str(filament_profile or "").strip(),
+            "rotation_z_degrees": float(rotation_z_degrees or 0.0),
         }
     )
     return True
@@ -4346,6 +4584,7 @@ def api_slice_profiles():
                 "printers": data.get("printers", []),
                 "print_profiles": data.get("print_profiles", []),
                 "filament_profiles": data.get("filament_profiles", []),
+                "printer_beds": data.get("printer_beds", {}),
             },
             "source": str(data.get("source") or ""),
             "config_path": str(data.get("config_path") or ""),
@@ -4365,6 +4604,13 @@ def api_file_slice(file_id: int):
     printer_profile = str(body.get("printer_profile") or "").strip()[:200]
     print_profile = str(body.get("print_profile") or "").strip()[:200]
     filament_profile = str(body.get("filament_profile") or "").strip()[:200]
+    try:
+        rotation_z_degrees = float(body.get("rotation_z_degrees") or 0.0)
+    except Exception:
+        rotation_z_degrees = 0.0
+    if not math.isfinite(rotation_z_degrees):
+        rotation_z_degrees = 0.0
+    rotation_z_degrees = round(rotation_z_degrees % 360.0, 3)
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -4403,6 +4649,8 @@ def api_file_slice(file_id: int):
         profile_details.append(f"print={print_profile}")
     if filament_profile:
         profile_details.append(f"filament={filament_profile}")
+    if abs(rotation_z_degrees) >= 1e-6:
+        profile_details.append(f"rotation_z={rotation_z_degrees}deg")
     profile_txt = ", ".join(profile_details) if profile_details else "default profiler"
     log_activity(
         kind="slice",
@@ -4422,6 +4670,7 @@ def api_file_slice(file_id: int):
         printer_profile=printer_profile,
         print_profile=print_profile,
         filament_profile=filament_profile,
+        rotation_z_degrees=rotation_z_degrees,
     )
     return jsonify(
         {
@@ -4431,6 +4680,7 @@ def api_file_slice(file_id: int):
                 "printer_profile": printer_profile,
                 "print_profile": print_profile,
                 "filament_profile": filament_profile,
+                "rotation_z_degrees": rotation_z_degrees,
             },
         }
     )

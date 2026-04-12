@@ -395,6 +395,25 @@
 
     <div id="sliceModalFileName" class="metadata-current-file">-</div>
 
+    <div class="slice-preview-wrap">
+      <div class="slice-preview-canvas-wrap">
+        <canvas id="slicePreviewCanvas" class="slice-preview-canvas" aria-label="Printplade preview"></canvas>
+      </div>
+      <div class="slice-preview-meta">
+        <div id="slicePreviewBed" class="slice-preview-row">Plade: 256 x 256 mm</div>
+        <div id="slicePreviewFootprint" class="slice-preview-row">Model footprint: -</div>
+      </div>
+      <div class="slice-rotate-controls">
+        <label for="sliceRotateRange">Rotation</label>
+        <div class="slice-rotate-buttons">
+          <button id="sliceRotateLeftBtn" class="btn" type="button">-45 deg</button>
+          <input id="sliceRotateRange" type="range" min="0" max="359" step="1" value="0">
+          <button id="sliceRotateRightBtn" class="btn" type="button">+45 deg</button>
+        </div>
+        <div id="sliceRotateValue" class="hint">0 deg</div>
+      </div>
+    </div>
+
     <div class="slice-modal-grid">
       <div class="slice-modal-field">
         <label for="slicePrinterSelect">Printer</label>

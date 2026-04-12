@@ -31,6 +31,13 @@
       print_profile: "",
       filament_profile: "",
     },
+    sliceStatusWasPending: false,
+    sliceStatusHoldUntil: 0,
+    sliceStatusHideTimer: null,
+    sliceStatusFadePulse: 0,
+    topStatusFadeTimer: null,
+    slicePreview: null,
+    slicePreviewLoadToken: 0,
     infoDrawerHideTimer: null,
     selectMode: false,
     selectedFolderPaths: new Set(),
@@ -134,6 +141,13 @@
     slicePrinterSelect: document.getElementById("slicePrinterSelect"),
     slicePrintProfileSelect: document.getElementById("slicePrintProfileSelect"),
     sliceFilamentProfileSelect: document.getElementById("sliceFilamentProfileSelect"),
+    slicePreviewCanvas: document.getElementById("slicePreviewCanvas"),
+    slicePreviewBed: document.getElementById("slicePreviewBed"),
+    slicePreviewFootprint: document.getElementById("slicePreviewFootprint"),
+    sliceRotateRange: document.getElementById("sliceRotateRange"),
+    sliceRotateValue: document.getElementById("sliceRotateValue"),
+    sliceRotateLeftBtn: document.getElementById("sliceRotateLeftBtn"),
+    sliceRotateRightBtn: document.getElementById("sliceRotateRightBtn"),
     metadataModal: document.getElementById("metadataModal"),
     metadataStepCounter: document.getElementById("metadataStepCounter"),
     metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
@@ -599,6 +613,7 @@
   const SCALE_CAN_HEIGHT_MM = 122;
   const SCALE_CAN_DIAMETER_MM = 66;
   const PRESENTATION_TABLE_SIZE_MM = 600;
+  const DEFAULT_SLICE_BED_SIZE_MM = Object.freeze({ width_mm: 256, depth_mm: 256 });
   const GLTF_UNIT_CONTEXT = Object.freeze({
     unitKey: "m",
     unitLabel: "m",
@@ -887,7 +902,7 @@
       closeFileInfoDrawer();
     }
     if (els.thumbTopStatus) {
-      if (target !== "files") els.thumbTopStatus.classList.add("hidden");
+      if (target !== "files") setThumbTopStatusVisible(false, false);
       else updateThumbTopStatus();
     }
   }
@@ -1397,6 +1412,421 @@
     selectEl.value = hasOption ? wanted : "";
   }
 
+  function normalizeProfileToken(value) {
+    return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+
+  function normalizeSliceBedSize(candidate) {
+    if (!candidate || typeof candidate !== "object") return null;
+    const width = Number(candidate.width_mm);
+    const depth = Number(candidate.depth_mm);
+    if (!Number.isFinite(width) || !Number.isFinite(depth)) return null;
+    if (width <= 0 || depth <= 0) return null;
+    return {
+      width_mm: Math.max(40, Math.min(2000, width)),
+      depth_mm: Math.max(40, Math.min(2000, depth)),
+    };
+  }
+
+  function parseSlicePrinterBeds(rawBeds) {
+    if (!rawBeds || typeof rawBeds !== "object") return {};
+    const out = {};
+    Object.entries(rawBeds).forEach(([name, value]) => {
+      const key = String(name || "").trim();
+      if (!key) return;
+      const normalized = normalizeSliceBedSize(value);
+      if (!normalized) return;
+      out[key] = normalized;
+    });
+    return out;
+  }
+
+  function resolveSelectedSliceBedSize() {
+    const parsedDefault = {
+      width_mm: Number(DEFAULT_SLICE_BED_SIZE_MM.width_mm),
+      depth_mm: Number(DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
+    };
+
+    const beds = state.sliceProfiles && typeof state.sliceProfiles === "object" && state.sliceProfiles.printer_beds
+      ? state.sliceProfiles.printer_beds
+      : {};
+    const selected = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
+
+    const fromExact = selected ? normalizeSliceBedSize(beds[selected]) : null;
+    if (fromExact) return fromExact;
+
+    if (selected) {
+      const wanted = normalizeProfileToken(selected);
+      if (wanted) {
+        for (const [name, value] of Object.entries(beds)) {
+          if (normalizeProfileToken(name) !== wanted) continue;
+          const normalized = normalizeSliceBedSize(value);
+          if (normalized) return normalized;
+        }
+      }
+    }
+
+    for (const value of Object.values(beds)) {
+      const normalized = normalizeSliceBedSize(value);
+      if (normalized) return normalized;
+    }
+
+    return parsedDefault;
+  }
+
+  function normalizeSliceRotationDeg(value) {
+    const numeric = Number(value || 0);
+    if (!Number.isFinite(numeric)) return 0;
+    const rounded = Math.round(numeric);
+    return ((rounded % 360) + 360) % 360;
+  }
+
+  function currentSliceRotationDeg() {
+    return normalizeSliceRotationDeg((els.sliceRotateRange && els.sliceRotateRange.value) || 0);
+  }
+
+  function setSliceRotateValueText(rotationDeg) {
+    if (!els.sliceRotateValue) return;
+    els.sliceRotateValue.textContent = `${normalizeSliceRotationDeg(rotationDeg)} deg`;
+  }
+
+  function setSlicePreviewFootprint(text, kind = "") {
+    if (!els.slicePreviewFootprint) return;
+    els.slicePreviewFootprint.textContent = String(text || "Model footprint: -");
+    els.slicePreviewFootprint.classList.remove("ok", "error");
+    if (kind === "ok" || kind === "error") {
+      els.slicePreviewFootprint.classList.add(kind);
+    }
+  }
+
+  function disposeSlicePreviewObject(root) {
+    if (!root) return;
+    if (typeof root.traverse !== "function") return;
+    root.traverse((node) => {
+      if (!node) return;
+      if (node.geometry && typeof node.geometry.dispose === "function") {
+        node.geometry.dispose();
+      }
+      if (!node.material) return;
+      const materials = Array.isArray(node.material) ? node.material : [node.material];
+      materials.forEach((material) => {
+        if (material && typeof material.dispose === "function") {
+          material.dispose();
+        }
+      });
+    });
+  }
+
+  function renderSlicePreview() {
+    const preview = state.slicePreview;
+    if (!preview || !preview.renderer || !preview.scene || !preview.camera) return;
+    preview.renderer.render(preview.scene, preview.camera);
+  }
+
+  function resizeSlicePreview(preview = state.slicePreview) {
+    if (!preview || !preview.renderer || !preview.camera || !preview.canvas) return;
+    const rect = preview.canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width || preview.canvas.clientWidth || 1));
+    const height = Math.max(1, Math.floor(rect.height || preview.canvas.clientHeight || 1));
+    preview.renderer.setSize(width, height, false);
+
+    const aspect = width / height;
+    const halfBase = Math.max(8, Number(preview.halfBase || 180));
+    preview.camera.left = -halfBase * aspect;
+    preview.camera.right = halfBase * aspect;
+    preview.camera.top = halfBase;
+    preview.camera.bottom = -halfBase;
+    preview.camera.near = 0.1;
+    preview.camera.far = halfBase * 40;
+    preview.camera.position.set(0, 0, halfBase * 10);
+    preview.camera.lookAt(0, 0, 0);
+    preview.camera.updateProjectionMatrix();
+    renderSlicePreview();
+  }
+
+  function updateSlicePreviewFootprint() {
+    const preview = state.slicePreview;
+    if (!preview || !preview.modelGroup || !preview.THREE) {
+      setSlicePreviewFootprint("Model footprint: -");
+      return;
+    }
+
+    const box = new preview.THREE.Box3().setFromObject(preview.modelGroup);
+    if (!box || box.isEmpty()) {
+      setSlicePreviewFootprint("Model footprint: -");
+      return;
+    }
+
+    const widthMm = Math.max(0, Number(box.max.x) - Number(box.min.x));
+    const depthMm = Math.max(0, Number(box.max.y) - Number(box.min.y));
+    const fits = widthMm <= (preview.bedWidthMm + 0.05) && depthMm <= (preview.bedDepthMm + 0.05);
+
+    setSlicePreviewFootprint(
+      `Model footprint: ${formatNumberCompact(widthMm)} x ${formatNumberCompact(depthMm)} mm (${fits ? "fits" : "outside bed"})`,
+      fits ? "ok" : "error"
+    );
+
+    if (preview.bedMesh && preview.bedMesh.material && preview.bedMesh.material.color) {
+      preview.bedMesh.material.color.setHex(fits ? 0x203949 : 0x4e2329);
+    }
+  }
+
+  function updateSlicePreviewBedSize(widthMm, depthMm) {
+    const preview = state.slicePreview;
+    if (!preview || !preview.THREE || !preview.bedMesh || !preview.bedOutline) return;
+
+    const width = Math.max(40, Number(widthMm || DEFAULT_SLICE_BED_SIZE_MM.width_mm));
+    const depth = Math.max(40, Number(depthMm || DEFAULT_SLICE_BED_SIZE_MM.depth_mm));
+
+    preview.bedWidthMm = width;
+    preview.bedDepthMm = depth;
+    preview.halfBase = Math.max(width, depth) * 0.66;
+
+    if (preview.bedMesh.geometry && typeof preview.bedMesh.geometry.dispose === "function") {
+      preview.bedMesh.geometry.dispose();
+    }
+    preview.bedMesh.geometry = new preview.THREE.PlaneGeometry(width, depth);
+
+    if (preview.bedOutline.geometry && typeof preview.bedOutline.geometry.dispose === "function") {
+      preview.bedOutline.geometry.dispose();
+    }
+    preview.bedOutline.geometry = new preview.THREE.EdgesGeometry(preview.bedMesh.geometry);
+
+    resizeSlicePreview(preview);
+    updateSlicePreviewFootprint();
+    renderSlicePreview();
+  }
+
+  function refreshSlicePreviewBedFromSelection() {
+    const bed = resolveSelectedSliceBedSize();
+    if (els.slicePreviewBed) {
+      els.slicePreviewBed.textContent = `Plade: ${formatNumberCompact(bed.width_mm)} x ${formatNumberCompact(bed.depth_mm)} mm`;
+    }
+    updateSlicePreviewBedSize(bed.width_mm, bed.depth_mm);
+  }
+
+  function clearSlicePreview() {
+    const preview = state.slicePreview;
+    if (!preview) return;
+
+    if (preview.resizeObserver && preview.canvas) {
+      try {
+        preview.resizeObserver.unobserve(preview.canvas);
+      } catch (_err) {}
+    }
+    if (preview.resizeObserver && typeof preview.resizeObserver.disconnect === "function") {
+      try {
+        preview.resizeObserver.disconnect();
+      } catch (_err) {}
+    }
+    if (preview.onResize) {
+      window.removeEventListener("resize", preview.onResize);
+    }
+
+    if (preview.scene && preview.modelGroup) {
+      preview.scene.remove(preview.modelGroup);
+      disposeSlicePreviewObject(preview.modelGroup);
+      preview.modelGroup = null;
+    }
+
+    if (preview.bedOutline && preview.scene) {
+      preview.scene.remove(preview.bedOutline);
+      if (preview.bedOutline.geometry && typeof preview.bedOutline.geometry.dispose === "function") {
+        preview.bedOutline.geometry.dispose();
+      }
+      if (preview.bedOutline.material && typeof preview.bedOutline.material.dispose === "function") {
+        preview.bedOutline.material.dispose();
+      }
+    }
+
+    if (preview.bedMesh && preview.scene) {
+      preview.scene.remove(preview.bedMesh);
+      if (preview.bedMesh.geometry && typeof preview.bedMesh.geometry.dispose === "function") {
+        preview.bedMesh.geometry.dispose();
+      }
+      if (preview.bedMesh.material && typeof preview.bedMesh.material.dispose === "function") {
+        preview.bedMesh.material.dispose();
+      }
+    }
+
+    if (preview.renderer && typeof preview.renderer.dispose === "function") {
+      preview.renderer.dispose();
+    }
+
+    state.slicePreview = null;
+  }
+
+  async function ensureSlicePreviewRenderer() {
+    if (state.slicePreview) return state.slicePreview;
+    if (!els.slicePreviewCanvas) return null;
+
+    const modules = await ensureThreeModules();
+    const { THREE } = modules;
+    const canvas = els.slicePreviewCanvas;
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setClearColor(0x000000, 0);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.OrthographicCamera(-180, 180, 180, -180, 0.1, 7200);
+    camera.position.set(0, 0, 1800);
+    camera.lookAt(0, 0, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.82));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+    dir.position.set(220, 220, 460);
+    scene.add(dir);
+
+    const bedMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(DEFAULT_SLICE_BED_SIZE_MM.width_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
+      new THREE.MeshStandardMaterial({
+        color: 0x203949,
+        roughness: 0.88,
+        metalness: 0.04,
+        transparent: true,
+        opacity: 0.95,
+      })
+    );
+    scene.add(bedMesh);
+
+    const bedOutline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(bedMesh.geometry),
+      new THREE.LineBasicMaterial({ color: 0x7ea2d6, transparent: true, opacity: 0.68 })
+    );
+    bedOutline.position.z = 0.2;
+    scene.add(bedOutline);
+
+    const preview = {
+      THREE,
+      renderer,
+      scene,
+      camera,
+      canvas,
+      bedMesh,
+      bedOutline,
+      modelGroup: null,
+      bedWidthMm: Number(DEFAULT_SLICE_BED_SIZE_MM.width_mm),
+      bedDepthMm: Number(DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
+      halfBase: Math.max(DEFAULT_SLICE_BED_SIZE_MM.width_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm) * 0.66,
+      onResize: null,
+      resizeObserver: null,
+    };
+
+    preview.onResize = () => resizeSlicePreview(preview);
+    window.addEventListener("resize", preview.onResize);
+
+    if (typeof ResizeObserver !== "undefined") {
+      try {
+        preview.resizeObserver = new ResizeObserver(() => resizeSlicePreview(preview));
+        preview.resizeObserver.observe(canvas);
+      } catch (_err) {
+        preview.resizeObserver = null;
+      }
+    }
+
+    state.slicePreview = preview;
+    resizeSlicePreview(preview);
+    return preview;
+  }
+
+  function setSliceModalRotation(rotationDeg) {
+    const normalized = normalizeSliceRotationDeg(rotationDeg);
+    if (els.sliceRotateRange) {
+      els.sliceRotateRange.value = String(normalized);
+    }
+    setSliceRotateValueText(normalized);
+
+    const preview = state.slicePreview;
+    if (preview && preview.modelGroup) {
+      preview.modelGroup.rotation.z = (normalized * Math.PI) / 180;
+      updateSlicePreviewFootprint();
+      renderSlicePreview();
+    }
+  }
+
+  async function loadSlicePreviewModel(file) {
+    const preview = await ensureSlicePreviewRenderer();
+    if (!preview || !file) return;
+
+    if (preview.modelGroup) {
+      preview.scene.remove(preview.modelGroup);
+      disposeSlicePreviewObject(preview.modelGroup);
+      preview.modelGroup = null;
+    }
+
+    const ext = String(file.ext || "").toLowerCase();
+    if (ext !== ".stl") {
+      setSlicePreviewFootprint("Model footprint: Preview understotter STL filer", "error");
+      renderSlicePreview();
+      return;
+    }
+
+    const modelUrl = String(file.content_url || "").trim();
+    if (!modelUrl) {
+      setSlicePreviewFootprint("Model footprint: Kunne ikke finde STL", "error");
+      renderSlicePreview();
+      return;
+    }
+
+    state.slicePreviewLoadToken += 1;
+    const loadToken = state.slicePreviewLoadToken;
+    const modules = await ensureThreeModules();
+    const { THREE, STLLoader } = modules;
+
+    setSlicePreviewFootprint("Model footprint: Indlaeser model...");
+
+    const geometry = await new Promise((resolve, reject) => {
+      const loader = new STLLoader();
+      loader.load(modelUrl, resolve, undefined, reject);
+    });
+
+    if (loadToken !== state.slicePreviewLoadToken || !state.slicePreview) {
+      if (geometry && typeof geometry.dispose === "function") geometry.dispose();
+      return;
+    }
+
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    const box = geometry.boundingBox;
+    if (!box) {
+      if (typeof geometry.dispose === "function") geometry.dispose();
+      throw new Error("Ingen STL geometri i filen");
+    }
+
+    const centerX = (Number(box.min.x) + Number(box.max.x)) / 2;
+    const centerY = (Number(box.min.y) + Number(box.max.y)) / 2;
+    geometry.translate(-centerX, -centerY, -Number(box.min.z));
+
+    const mesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({ color: 0x8ec5ff, roughness: 0.65, metalness: 0.14 })
+    );
+    mesh.position.z = 0.8;
+
+    const outline = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geometry),
+      new THREE.LineBasicMaterial({ color: 0xe6f3ff, transparent: true, opacity: 0.58 })
+    );
+    outline.position.z = 0.86;
+
+    const modelGroup = new THREE.Group();
+    modelGroup.add(mesh);
+    modelGroup.add(outline);
+    preview.scene.add(modelGroup);
+    preview.modelGroup = modelGroup;
+
+    setSliceModalRotation(currentSliceRotationDeg());
+    renderSlicePreview();
+  }
+
+  async function setupSliceModalPreview(file) {
+    if (!els.slicePreviewCanvas) return;
+    await ensureSlicePreviewRenderer();
+    refreshSlicePreviewBedFromSelection();
+    await loadSlicePreviewModel(file);
+  }
+
   async function loadSliceProfiles(force = false) {
     if (!force && state.sliceProfiles && typeof state.sliceProfiles === "object") {
       return state.sliceProfiles;
@@ -1407,6 +1837,7 @@
       printers: toStringList(profiles.printers),
       print_profiles: toStringList(profiles.print_profiles),
       filament_profiles: toStringList(profiles.filament_profiles),
+      printer_beds: parseSlicePrinterBeds(profiles.printer_beds),
       parse_error: String(data.parse_error || ""),
       source: String(data.source || ""),
       config_path: String(data.config_path || ""),
@@ -1415,7 +1846,15 @@
   }
 
   function closeSliceModal() {
+    state.slicePreviewLoadToken += 1;
+    clearSlicePreview();
     state.currentSliceFileId = 0;
+    if (els.sliceRotateRange) els.sliceRotateRange.value = "0";
+    setSliceRotateValueText(0);
+    if (els.slicePreviewBed) {
+      els.slicePreviewBed.textContent = `Plade: ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.width_mm)} x ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.depth_mm)} mm`;
+    }
+    setSlicePreviewFootprint("Model footprint: -");
     showStatus(els.sliceModalStatus, "");
     if (els.sliceModal) els.sliceModal.classList.add("hidden");
   }
@@ -1427,6 +1866,9 @@
     state.currentSliceFileId = Number(file.id || 0);
     if (els.sliceModalFileName) els.sliceModalFileName.textContent = String(file.filename || "-");
     if (els.sliceModal) els.sliceModal.classList.remove("hidden");
+    if (els.sliceRotateRange) els.sliceRotateRange.value = "0";
+    setSliceModalRotation(0);
+    setSlicePreviewFootprint("Model footprint: Klargor preview...");
     if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = true;
     showStatus(els.sliceModalStatus, "Henter slice-profiler...", "ok");
 
@@ -1439,6 +1881,7 @@
       setSliceSelectValue(els.slicePrinterSelect, state.lastSliceSelection.printer_profile);
       setSliceSelectValue(els.slicePrintProfileSelect, state.lastSliceSelection.print_profile);
       setSliceSelectValue(els.sliceFilamentProfileSelect, state.lastSliceSelection.filament_profile);
+      refreshSlicePreviewBedFromSelection();
 
       if (profiles.parse_error) {
         showStatus(els.sliceModalStatus, `Profil-læsning: ${profiles.parse_error}`, "error");
@@ -1457,17 +1900,24 @@
       renderSliceSelect(els.sliceFilamentProfileSelect, [], "Auto / fra config");
       showStatus(els.sliceModalStatus, err.message || "Kunne ikke hente slice-profiler", "error");
       if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
+      refreshSlicePreviewBedFromSelection();
     }
+
+    setupSliceModalPreview(file).catch((err) => {
+      setSlicePreviewFootprint(`Model footprint: Preview fejl (${String((err && err.message) || err || "ukendt")})`, "error");
+    });
   }
 
   function selectedSliceProfiles() {
     const printer_profile = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
     const print_profile = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim();
     const filament_profile = String((els.sliceFilamentProfileSelect && els.sliceFilamentProfileSelect.value) || "").trim();
+    const rotation_z_degrees = currentSliceRotationDeg();
     return {
       printer_profile,
       print_profile,
       filament_profile,
+      rotation_z_degrees,
     };
   }
 
@@ -1695,9 +2145,11 @@
     const printerProfile = String(profiles.printer_profile || "").trim();
     const printProfile = String(profiles.print_profile || "").trim();
     const filamentProfile = String(profiles.filament_profile || "").trim();
+    const rotationZ = normalizeSliceRotationDeg(profiles.rotation_z_degrees);
     if (printerProfile) body.printer_profile = printerProfile;
     if (printProfile) body.print_profile = printProfile;
     if (filamentProfile) body.filament_profile = filamentProfile;
+    body.rotation_z_degrees = rotationZ;
     const options = { method: "POST" };
     if (Object.keys(body).length) options.body = body;
     const data = await api(`/api/files/${id}/slice`, options);
@@ -1835,24 +2287,87 @@
     return { total, queued, processing, ready, error, pending, done, progress };
   }
 
+  function clearSliceStatusHideTimer() {
+    if (!state.sliceStatusHideTimer) return;
+    window.clearTimeout(state.sliceStatusHideTimer);
+    state.sliceStatusHideTimer = null;
+  }
+
+  function clearTopStatusFadeTimer() {
+    if (!state.topStatusFadeTimer) return;
+    window.clearTimeout(state.topStatusFadeTimer);
+    state.topStatusFadeTimer = null;
+  }
+
+  function setThumbTopStatusVisible(visible, fade = false) {
+    if (!els.thumbTopStatus) return;
+    if (visible) {
+      clearTopStatusFadeTimer();
+      els.thumbTopStatus.classList.remove("hidden", "fading");
+      return;
+    }
+
+    if (fade && !els.thumbTopStatus.classList.contains("hidden")) {
+      clearTopStatusFadeTimer();
+      els.thumbTopStatus.classList.add("fading");
+      state.topStatusFadeTimer = window.setTimeout(() => {
+        if (!els.thumbTopStatus) return;
+        els.thumbTopStatus.classList.add("hidden");
+        els.thumbTopStatus.classList.remove("fading");
+        state.topStatusFadeTimer = null;
+      }, 260);
+      return;
+    }
+
+    clearTopStatusFadeTimer();
+    els.thumbTopStatus.classList.add("hidden");
+    els.thumbTopStatus.classList.remove("fading");
+  }
+
   function updateThumbTopStatus() {
     if (!els.thumbTopStatus || !els.thumbTopStatusLabel || !els.thumbTopStatusBar) return;
     const stats = thumbQueueStats();
     const zipStats = zipQueueStats();
     const sliceStats = sliceQueueStats();
+
+    const now = Date.now();
+    if (sliceStats.pending > 0) {
+      state.sliceStatusWasPending = true;
+      state.sliceStatusHoldUntil = 0;
+      clearSliceStatusHideTimer();
+    } else if (state.sliceStatusWasPending) {
+      state.sliceStatusWasPending = false;
+      state.sliceStatusHoldUntil = now + 10000;
+      clearSliceStatusHideTimer();
+      state.sliceStatusHideTimer = window.setTimeout(() => {
+        state.sliceStatusHoldUntil = 0;
+        state.sliceStatusHideTimer = null;
+        state.sliceStatusFadePulse = Date.now();
+        updateThumbTopStatus();
+      }, 10040);
+    }
+
+    const sliceHoldActive = Number(state.sliceStatusHoldUntil || 0) > now;
+    const showSliceStatus = sliceStats.pending > 0 || sliceHoldActive;
     const shouldShow = stats.pending > 0
       || stats.error > 0
       || zipStats.pending > 0
       || zipStats.error > 0
-      || sliceStats.pending > 0
-      || sliceStats.error > 0;
-    els.thumbTopStatus.classList.toggle("hidden", !shouldShow);
+      || showSliceStatus;
+
     if (!shouldShow) {
+      const shouldFadeHide = Number(state.sliceStatusFadePulse || 0) > 0
+        && (now - Number(state.sliceStatusFadePulse || 0)) <= 1200;
+      setThumbTopStatusVisible(false, shouldFadeHide);
+      state.sliceStatusFadePulse = 0;
       els.thumbTopStatusLabel.textContent = "Thumbnails: Klar";
       els.thumbTopStatusBar.classList.remove("indeterminate");
       els.thumbTopStatusBar.style.width = "0%";
       return;
     }
+
+    state.sliceStatusFadePulse = 0;
+    setThumbTopStatusVisible(true, false);
 
     const labels = [];
     if (zipStats.pending > 0 || zipStats.error > 0) {
@@ -1863,11 +2378,17 @@
       labels.push(zipLabel);
     }
 
-    if (sliceStats.pending > 0 || sliceStats.error > 0) {
+    if (showSliceStatus && sliceStats.total > 0) {
       let sliceLabel = `Slicing: ${sliceStats.ready}/${sliceStats.total} færdig`;
-      if (sliceStats.processing > 0) sliceLabel += ` · ${sliceStats.processing} behandler`;
-      if (sliceStats.queued > 0) sliceLabel += ` · ${sliceStats.queued} i kø`;
-      if (sliceStats.error > 0) sliceLabel += ` · fejl: ${sliceStats.error}`;
+      if (sliceStats.pending > 0) {
+        if (sliceStats.processing > 0) sliceLabel += ` · ${sliceStats.processing} behandler`;
+        if (sliceStats.queued > 0) sliceLabel += ` · ${sliceStats.queued} i kø`;
+        if (sliceStats.error > 0) sliceLabel += ` · fejl: ${sliceStats.error}`;
+      } else if (sliceStats.error > 0) {
+        sliceLabel += ` · fejl: ${sliceStats.error}`;
+      } else {
+        sliceLabel += " · klar";
+      }
       labels.push(sliceLabel);
     }
 
@@ -1887,13 +2408,13 @@
 
     const useIndeterminate = (stats.pending > 0 && stats.progress <= 0)
       || (zipStats.pending > 0 && zipStats.progress <= 0)
-      || (sliceStats.pending > 0 && sliceStats.progress <= 0);
+      || (showSliceStatus && sliceStats.pending > 0 && sliceStats.progress <= 0);
     els.thumbTopStatusBar.classList.toggle("indeterminate", useIndeterminate);
     if (!useIndeterminate) {
       const progressValues = [];
       if (stats.total > 0 && (stats.pending > 0 || stats.error > 0)) progressValues.push(stats.progress);
       if (zipStats.total > 0 && (zipStats.pending > 0 || zipStats.error > 0)) progressValues.push(zipStats.progress);
-      if (sliceStats.total > 0 && (sliceStats.pending > 0 || sliceStats.error > 0)) {
+      if (showSliceStatus && sliceStats.total > 0) {
         progressValues.push(sliceStats.progress);
       }
       const mergedProgress = progressValues.length
@@ -4720,6 +5241,29 @@
     }
     if (els.sliceModalCancelBtn) {
       els.sliceModalCancelBtn.addEventListener("click", closeSliceModal);
+    }
+    if (els.slicePrinterSelect) {
+      els.slicePrinterSelect.addEventListener("change", () => {
+        refreshSlicePreviewBedFromSelection();
+      });
+    }
+    if (els.sliceRotateRange) {
+      els.sliceRotateRange.addEventListener("input", () => {
+        setSliceModalRotation((els.sliceRotateRange && els.sliceRotateRange.value) || 0);
+      });
+      els.sliceRotateRange.addEventListener("change", () => {
+        setSliceModalRotation((els.sliceRotateRange && els.sliceRotateRange.value) || 0);
+      });
+    }
+    if (els.sliceRotateLeftBtn) {
+      els.sliceRotateLeftBtn.addEventListener("click", () => {
+        setSliceModalRotation(currentSliceRotationDeg() - 45);
+      });
+    }
+    if (els.sliceRotateRightBtn) {
+      els.sliceRotateRightBtn.addEventListener("click", () => {
+        setSliceModalRotation(currentSliceRotationDeg() + 45);
+      });
     }
     if (els.sliceModalStartBtn) {
       els.sliceModalStartBtn.addEventListener("click", () => {
