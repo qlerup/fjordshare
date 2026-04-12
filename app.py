@@ -305,6 +305,38 @@ def _normalize_uploaded_profile_json_bytes(payload: dict[str, Any], kind: str) -
     return (json.dumps(normalized, ensure_ascii=False, indent=4) + "\n").encode("utf-8")
 
 
+def _normalize_existing_uploaded_profile_json_files() -> None:
+    for kind, profile_dir in (
+        ("machine", SLICER_PROFILE_PRINTER_DIR),
+        ("process", SLICER_PROFILE_PRINT_SETTINGS_DIR),
+        ("filament", SLICER_PROFILE_FILAMENT_DIR),
+    ):
+        for profile_path in _list_slicer_profile_files(profile_dir, {".json"}):
+            temp_path = profile_path.with_suffix(f"{profile_path.suffix}.tmp")
+            try:
+                text = profile_path.read_text(encoding="utf-8-sig", errors="ignore")
+                payload = json.loads(text)
+                if not isinstance(payload, dict):
+                    continue
+
+                normalized_bytes = _normalize_uploaded_profile_json_bytes(payload, kind)
+                try:
+                    current_bytes = profile_path.read_bytes()
+                    if current_bytes == normalized_bytes:
+                        continue
+                except Exception:
+                    pass
+
+                with temp_path.open("wb") as fh:
+                    fh.write(normalized_bytes)
+                temp_path.replace(profile_path)
+            except Exception:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+
 def _json_profile_filename_from_payload_name(payload_name: str) -> str:
     raw = str(payload_name or "").strip()
     if not raw:
@@ -470,6 +502,7 @@ def _ensure_storage_dirs() -> None:
     SLICER_PROFILE_FILAMENT_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     _migrate_legacy_slicer_profile_files()
+    _normalize_existing_uploaded_profile_json_files()
 
 
 def _load_or_create_secret() -> str:
