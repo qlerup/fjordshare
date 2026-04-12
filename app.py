@@ -1213,6 +1213,39 @@ def _profile_json_name_candidates(payload: dict[str, Any]) -> list[str]:
     return _dedupe_preserve_order(names)
 
 
+def _string_values_from_any(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+
+    if isinstance(value, (list, tuple)):
+        out: list[str] = []
+        for item in value:
+            out.extend(_string_values_from_any(item))
+        return out
+
+    if isinstance(value, dict):
+        out: list[str] = []
+        for key in ("name", "id", "value", "setting_id", "printer_settings_id"):
+            out.extend(_string_values_from_any(value.get(key)))
+        return out
+
+    return []
+
+
+def _profile_tokens_overlap(tokens_a: Iterable[str], tokens_b: Iterable[str]) -> bool:
+    aa = [str(t or "").strip() for t in tokens_a if str(t or "").strip()]
+    bb = [str(t or "").strip() for t in tokens_b if str(t or "").strip()]
+    if not aa or not bb:
+        return False
+
+    for a in aa:
+        for b in bb:
+            if a == b or (a in b) or (b in a):
+                return True
+    return False
+
+
 def _profile_payload_is_usable(payload: Optional[dict[str, Any]], expected_type: str) -> bool:
     if payload is None:
         return not bool(expected_type)
@@ -1581,7 +1614,12 @@ def _find_bambu_profile_root(executable: str) -> Optional[Path]:
     return None
 
 
-def _pick_profile_json(profile_dir: Path, requested_name: str, fallback_first: bool = True) -> str:
+def _pick_profile_json(
+    profile_dir: Path,
+    requested_name: str,
+    fallback_first: bool = True,
+    machine_profile_json: str = "",
+) -> str:
     try:
         files = sorted((p for p in profile_dir.glob("*.json") if p.is_file()), key=lambda p: p.name.lower())
     except Exception:
@@ -1591,7 +1629,7 @@ def _pick_profile_json(profile_dir: Path, requested_name: str, fallback_first: b
         return ""
 
     expected_type = _expected_profile_type_for_dir(profile_dir)
-    candidates: list[tuple[Path, list[str]]] = []
+    candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
     for path in files:
         payload = _read_profile_json_payload(path)
         if not _profile_payload_is_usable(payload, expected_type):
@@ -1606,19 +1644,57 @@ def _pick_profile_json(profile_dir: Path, requested_name: str, fallback_first: b
         if not tokens:
             continue
 
-        candidates.append((path, tokens))
+        candidates.append((path, tokens, payload))
+
+    if expected_type == "process" and machine_profile_json:
+        machine_tokens: list[str] = []
+        try:
+            machine_path = Path(str(machine_profile_json))
+            machine_payload = _read_profile_json_payload(machine_path)
+            if machine_payload is not None:
+                machine_names = [*_profile_json_name_candidates(machine_payload), str(machine_path.stem or "")]
+            else:
+                machine_names = [str(machine_path.stem or "")]
+            machine_tokens = [
+                token
+                for token in _dedupe_preserve_order(_normalize_profile_token(name) for name in machine_names)
+                if token
+            ]
+        except Exception:
+            machine_tokens = []
+
+        if machine_tokens:
+            compatible_candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
+            for path, tokens, payload in candidates:
+                if payload is None:
+                    compatible_candidates.append((path, tokens, payload))
+                    continue
+
+                compatible_printers = _string_values_from_any(payload.get("compatible_printers"))
+                compatible_tokens = [
+                    token
+                    for token in _dedupe_preserve_order(_normalize_profile_token(name) for name in compatible_printers)
+                    if token
+                ]
+
+                # If no explicit compatibility list exists, keep candidate as-is.
+                if not compatible_tokens or _profile_tokens_overlap(compatible_tokens, machine_tokens):
+                    compatible_candidates.append((path, tokens, payload))
+
+            if compatible_candidates:
+                candidates = compatible_candidates
 
     if not candidates:
         return str(files[0]) if fallback_first else ""
 
     wanted = _normalize_profile_token(requested_name)
     if wanted:
-        exact = [path for path, tokens in candidates if wanted in tokens]
+        exact = [path for path, tokens, _payload in candidates if wanted in tokens]
         if exact:
             return str(exact[0])
 
         subset_matches: list[tuple[Path, int]] = []
-        for path, tokens in candidates:
+        for path, tokens, _payload in candidates:
             lengths = [len(token) for token in tokens if token in wanted]
             if lengths:
                 subset_matches.append((path, max(lengths)))
@@ -1627,7 +1703,7 @@ def _pick_profile_json(profile_dir: Path, requested_name: str, fallback_first: b
             return str(subset_matches[0][0])
 
         superset_matches: list[tuple[Path, int]] = []
-        for path, tokens in candidates:
+        for path, tokens, _payload in candidates:
             lengths = [len(token) for token in tokens if wanted in token]
             if lengths:
                 superset_matches.append((path, min(lengths)))
@@ -1668,7 +1744,12 @@ def _build_modern_profile_args(
 
         if prefer_uploaded:
             machine_json = _pick_profile_json(SLICER_PROFILE_PRINTER_DIR, printer_profile, fallback_first=False)
-            process_json = _pick_profile_json(SLICER_PROFILE_PRINT_SETTINGS_DIR, print_profile, fallback_first=False)
+            process_json = _pick_profile_json(
+                SLICER_PROFILE_PRINT_SETTINGS_DIR,
+                print_profile,
+                fallback_first=False,
+                machine_profile_json=machine_json,
+            )
 
         if (not machine_json) or (not process_json):
             discovered_profile_root = _find_bambu_profile_root(executable)
@@ -1676,7 +1757,11 @@ def _build_modern_profile_args(
                 if not machine_json:
                     machine_json = _pick_profile_json(discovered_profile_root / "machine", printer_profile)
                 if not process_json:
-                    process_json = _pick_profile_json(discovered_profile_root / "process", print_profile)
+                    process_json = _pick_profile_json(
+                        discovered_profile_root / "process",
+                        print_profile,
+                        machine_profile_json=machine_json,
+                    )
 
         if machine_json and process_json:
             args.extend(["--load-settings", f"{machine_json};{process_json}"])
