@@ -32,7 +32,6 @@ RUN set -eux; \
         libgstreamer1.0-0 \
         libglu1-mesa \
         libgtk-3-0 \
-        libjavascriptcoregtk-4.0-18t64 \
         libosmesa6 \
         libpangoft2-1.0-0 \
         libgl1 \
@@ -47,7 +46,6 @@ RUN set -eux; \
         libwayland-client0 \
         libwayland-cursor0 \
         libwayland-egl1 \
-        libwebkit2gtk-4.0-37t64 \
         libx11-6 \
         libx11-xcb1 \
         libxcb-cursor0 \
@@ -75,6 +73,25 @@ RUN set -eux; \
         libxrandr2 \
         libxrender1 \
         assimp-utils; \
+    optional_pkgs=""; \
+    for candidate in libjavascriptcoregtk-4.0-18t64 libjavascriptcoregtk-4.0-18; do \
+        if apt-cache show "$candidate" >/dev/null 2>&1; then \
+            optional_pkgs="$optional_pkgs $candidate"; \
+            break; \
+        fi; \
+    done; \
+    for candidate in libwebkit2gtk-4.0-37t64 libwebkit2gtk-4.0-37; do \
+        if apt-cache show "$candidate" >/dev/null 2>&1; then \
+            optional_pkgs="$optional_pkgs $candidate"; \
+            break; \
+        fi; \
+    done; \
+    optional_pkgs="$(printf '%s' "$optional_pkgs" | sed 's/^ *//;s/ *$//')"; \
+    if [ -n "$optional_pkgs" ]; then \
+        apt-get install -y --no-install-recommends $optional_pkgs; \
+    else \
+        echo "Advarsel: Ingen libwebkit2gtk/libjavascriptcoregtk runtime-pakker fundet i apt repo." >&2; \
+    fi; \
     mkdir -p /opt/bambu-studio; \
     appimage_url="${BAMBUSTUDIO_APPIMAGE_URL}"; \
     if [ -z "$appimage_url" ]; then \
@@ -101,11 +118,9 @@ RUN set -eux; \
     ./BambuStudio.AppImage --appimage-extract >/dev/null; \
     mv squashfs-root appdir; \
     check_targets=""; \
-    for target in /opt/bambu-studio/appdir/AppRun /opt/bambu-studio/appdir/bin/bambu-studio; do \
-        if [ -f "$target" ]; then \
-            check_targets="$check_targets $target"; \
-        fi; \
-    done; \
+    if [ -f /opt/bambu-studio/appdir/AppRun ]; then \
+        check_targets="/opt/bambu-studio/appdir/AppRun"; \
+    fi; \
     missing_libs=""; \
     if [ -n "$check_targets" ]; then \
         missing_libs="$(for target in $check_targets; do ldd "$target" 2>/dev/null | awk '/not found/{print $1}'; done | sort -u)"; \
