@@ -3497,6 +3497,127 @@ def _pair_visible_file_rows_with_slice_output(rows: list[sqlite3.Row]) -> list[t
     return paired
 
 
+def _parse_first_float_from_text(value: str) -> Optional[float]:
+    text = str(value or "")
+    match = re.search(r"[-+]?\d+(?:[\.,]\d+)?", text)
+    if not match:
+        return None
+
+    raw = str(match.group(0) or "").strip().replace(",", ".")
+    if not raw:
+        return None
+
+    try:
+        return float(raw)
+    except Exception:
+        return None
+
+
+def _parse_gcode_summary_from_path(gcode_path: Path) -> dict[str, Any]:
+    print_time_total = ""
+    filament_grams: Optional[float] = None
+    filament_cost_per_kg: Optional[float] = None
+    filament_cost_total: Optional[float] = None
+
+    try:
+        with gcode_path.open("r", encoding="utf-8", errors="ignore") as fh:
+            for line_no, raw_line in enumerate(fh):
+                if line_no > 4000:
+                    break
+
+                line = str(raw_line or "").strip()
+                if not line:
+                    continue
+
+                lowered = line.lower()
+                if "executable_block_start" in lowered:
+                    break
+
+                if not print_time_total:
+                    model_match = re.search(
+                        r"^;\s*model printing time\s*:\s*([^;]+?)(?:\s*;\s*total estimated time\s*:\s*([^;]+))?\s*$",
+                        line,
+                        flags=re.IGNORECASE,
+                    )
+                    if model_match:
+                        preferred = str(model_match.group(2) or "").strip()
+                        fallback = str(model_match.group(1) or "").strip()
+                        print_time_total = preferred or fallback
+
+                if not print_time_total:
+                    total_time_match = re.search(
+                        r"^;\s*total estimated time\s*:\s*(.+)$",
+                        line,
+                        flags=re.IGNORECASE,
+                    )
+                    if total_time_match:
+                        print_time_total = str(total_time_match.group(1) or "").strip()
+
+                if filament_grams is None:
+                    grams_match = re.search(
+                        r"^;\s*total filament weight\s*\[g\]\s*:\s*(.+)$",
+                        line,
+                        flags=re.IGNORECASE,
+                    )
+                    if grams_match:
+                        filament_grams = _parse_first_float_from_text(grams_match.group(1))
+
+                if filament_cost_total is None:
+                    total_cost_match = re.search(
+                        r"^;\s*total filament cost(?:\s*\[[^\]]+\])?\s*:\s*(.+)$",
+                        line,
+                        flags=re.IGNORECASE,
+                    )
+                    if total_cost_match:
+                        filament_cost_total = _parse_first_float_from_text(total_cost_match.group(1))
+
+                if filament_cost_per_kg is None:
+                    per_kg_match = re.search(
+                        r"^;\s*filament_cost\s*=\s*(.+)$",
+                        line,
+                        flags=re.IGNORECASE,
+                    )
+                    if per_kg_match:
+                        filament_cost_per_kg = _parse_first_float_from_text(per_kg_match.group(1))
+
+                if print_time_total and filament_grams is not None and filament_cost_total is not None:
+                    break
+    except Exception:
+        return {}
+
+    if filament_cost_total is None and filament_grams is not None and filament_cost_per_kg is not None:
+        try:
+            filament_cost_total = (float(filament_grams) / 1000.0) * float(filament_cost_per_kg)
+        except Exception:
+            filament_cost_total = None
+
+    summary: dict[str, Any] = {}
+    if print_time_total:
+        summary["print_time_total"] = print_time_total
+    if filament_grams is not None:
+        summary["filament_grams"] = round(float(filament_grams), 3)
+    if filament_cost_total is not None:
+        summary["filament_cost_kr"] = round(float(filament_cost_total), 2)
+
+    return summary
+
+
+def _extract_gcode_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    ext = str(row["ext"] or "").lower()
+    if not _is_slice_output_ext(ext):
+        return {}
+
+    try:
+        path = file_disk_path(row)
+    except Exception:
+        return {}
+
+    if not path.exists() or not path.is_file():
+        return {}
+
+    return _parse_gcode_summary_from_path(path)
+
+
 def _serialize_slice_output_row(row: sqlite3.Row, share_token: Optional[str] = None) -> dict[str, Any]:
     if share_token:
         content_url = url_for("api_share_file_content", token=share_token, file_id=int(row["id"]))
@@ -3504,6 +3625,8 @@ def _serialize_slice_output_row(row: sqlite3.Row, share_token: Optional[str] = N
     else:
         content_url = url_for("api_file_content", file_id=int(row["id"]))
         download_url = url_for("api_file_download", file_id=int(row["id"]))
+
+    summary = _extract_gcode_summary_from_row(row)
 
     return {
         "id": int(row["id"]),
@@ -3513,6 +3636,7 @@ def _serialize_slice_output_row(row: sqlite3.Row, share_token: Optional[str] = N
         "uploaded_at": str(row["uploaded_at"] or ""),
         "content_url": content_url,
         "download_url": download_url,
+        "summary": summary,
     }
 
 

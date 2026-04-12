@@ -107,6 +107,12 @@
     fileInfoSize: document.getElementById("fileInfoSize"),
     fileInfoUploadedAt: document.getElementById("fileInfoUploadedAt"),
     fileInfoUploadedBy: document.getElementById("fileInfoUploadedBy"),
+    fileInfoRowPrintTimeTotal: document.getElementById("fileInfoRowPrintTimeTotal"),
+    fileInfoPrintTimeTotal: document.getElementById("fileInfoPrintTimeTotal"),
+    fileInfoRowFilamentGrams: document.getElementById("fileInfoRowFilamentGrams"),
+    fileInfoFilamentGrams: document.getElementById("fileInfoFilamentGrams"),
+    fileInfoRowFilamentCost: document.getElementById("fileInfoRowFilamentCost"),
+    fileInfoFilamentCost: document.getElementById("fileInfoFilamentCost"),
     fileInfoNote: document.getElementById("fileInfoNote"),
     fileInfoQty: document.getElementById("fileInfoQty"),
     fileInfoAttachUploadBtn: document.getElementById("fileInfoAttachUploadBtn"),
@@ -621,6 +627,18 @@
     else if (abs >= 1) decimals = 2;
     else decimals = 3;
     return n.toFixed(decimals).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  }
+
+  function formatGrams(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "-";
+    return `${formatNumberCompact(n)} g`;
+  }
+
+  function formatKr(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "-";
+    return `${n.toLocaleString("da-DK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kr.`;
   }
 
   function extractUnitHintFromFilename(filename = "") {
@@ -1532,6 +1550,37 @@
     if (els.fileInfoSize) els.fileInfoSize.textContent = formatSize(file.file_size);
     if (els.fileInfoUploadedAt) els.fileInfoUploadedAt.textContent = formatDate(file.uploaded_at);
     if (els.fileInfoUploadedBy) els.fileInfoUploadedBy.textContent = String(file.uploaded_by || "-");
+    const sliceSummary =
+      file && file.slice_output && typeof file.slice_output === "object" && file.slice_output.summary && typeof file.slice_output.summary === "object"
+        ? file.slice_output.summary
+        : null;
+    const printTimeTotal = String((sliceSummary && sliceSummary.print_time_total) || "").trim();
+    const filamentGramsRaw = Number(sliceSummary && sliceSummary.filament_grams);
+    const filamentCostRaw = Number(sliceSummary && sliceSummary.filament_cost_kr);
+    const hasFilamentGrams = Number.isFinite(filamentGramsRaw);
+    const hasFilamentCost = Number.isFinite(filamentCostRaw);
+
+    if (els.fileInfoPrintTimeTotal) {
+      els.fileInfoPrintTimeTotal.textContent = printTimeTotal || "-";
+    }
+    if (els.fileInfoRowPrintTimeTotal) {
+      els.fileInfoRowPrintTimeTotal.classList.toggle("hidden", !printTimeTotal);
+    }
+
+    if (els.fileInfoFilamentGrams) {
+      els.fileInfoFilamentGrams.textContent = hasFilamentGrams ? formatGrams(filamentGramsRaw) : "-";
+    }
+    if (els.fileInfoRowFilamentGrams) {
+      els.fileInfoRowFilamentGrams.classList.toggle("hidden", !hasFilamentGrams);
+    }
+
+    if (els.fileInfoFilamentCost) {
+      els.fileInfoFilamentCost.textContent = hasFilamentCost ? formatKr(filamentCostRaw) : "-";
+    }
+    if (els.fileInfoRowFilamentCost) {
+      els.fileInfoRowFilamentCost.classList.toggle("hidden", !hasFilamentCost);
+    }
+
     if (els.fileInfoNote) els.fileInfoNote.value = String(file.note || "");
     if (els.fileInfoQty) els.fileInfoQty.value = String(Math.max(1, Number(file.quantity || 1) || 1));
     if (els.fileInfoDownloadLink) {
