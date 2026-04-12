@@ -185,6 +185,90 @@ def _slicer_profile_allowed_exts(kind: str) -> set[str]:
     return set()
 
 
+def _slicer_profile_name_keys(kind: str) -> tuple[str, ...]:
+    key = str(kind or "").strip().lower()
+    if key == "machine":
+        return ("printer_settings_id", "name", "inherits", "setting_id")
+    if key == "process":
+        return ("print_settings_id", "process_settings_id", "setting_id", "name", "inherits")
+    if key == "filament":
+        return ("filament_settings_id", "setting_id", "name", "inherits", "filament_id")
+    return ("name", "inherits", "setting_id")
+
+
+def _extract_slicer_profile_name_from_upload_json(upload: Any, kind: str) -> str:
+    stream = getattr(upload, "stream", None)
+    if stream is None:
+        return ""
+
+    pos = 0
+    text = ""
+    try:
+        pos = int(stream.tell())
+    except Exception:
+        pos = 0
+
+    try:
+        stream.seek(0)
+        raw = stream.read()
+        if isinstance(raw, bytes):
+            text = raw.decode("utf-8", errors="ignore")
+        else:
+            text = str(raw)
+    except Exception:
+        text = ""
+    finally:
+        try:
+            stream.seek(pos)
+        except Exception:
+            pass
+
+    if not text:
+        return ""
+
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return ""
+
+    if not isinstance(payload, dict):
+        return ""
+
+    for field in _slicer_profile_name_keys(kind):
+        value = payload.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _json_profile_filename_from_payload_name(payload_name: str) -> str:
+    raw = str(payload_name or "").strip()
+    if not raw:
+        return ""
+    parsed = Path(raw)
+    base = str(parsed.stem or raw).strip() if parsed.suffix.lower() == ".json" else raw
+    if not base:
+        return ""
+    name = sanitize_filename(f"{base}.json")
+    if str(Path(name).suffix or "").lower() != ".json":
+        name = sanitize_filename(f"{Path(name).stem}.json")
+    return name
+
+
+def _dedupe_filename_for_request(filename: str, used_names: set[str]) -> str:
+    ext = str(Path(filename).suffix or "")
+    if not ext:
+        ext = ".json"
+    base = str(Path(filename).stem or f"profil-{secrets.token_hex(3)}").strip() or f"profil-{secrets.token_hex(3)}"
+    candidate = sanitize_filename(f"{base}{ext}")
+    idx = 2
+    while candidate.lower() in used_names:
+        candidate = sanitize_filename(f"{base}-{idx}{ext}")
+        idx += 1
+    used_names.add(candidate.lower())
+    return candidate
+
+
 def _list_slicer_profile_files(profile_dir: Path, allowed_exts: Optional[set[str]] = None) -> list[Path]:
     try:
         files = [p for p in profile_dir.iterdir() if p.is_file()]
@@ -4044,7 +4128,8 @@ def api_settings_slicer_profiles():
         return jsonify({"ok": False, "error": "Vælg en fil først"}), 400
 
     allowed_exts = _slicer_profile_allowed_exts(kind)
-    validated: list[tuple[Any, str]] = []
+    validated: list[tuple[Any, str, str]] = []
+    used_target_names: set[str] = set()
 
     for upload in uploads:
         original_name = sanitize_filename(str(upload.filename or "profil"))
@@ -4061,14 +4146,22 @@ def api_settings_slicer_profiles():
         if size_guess > SLICER_PROFILE_MAX_BYTES:
             return jsonify({"ok": False, "error": f"Filen '{original_name}' er for stor (maks {SLICER_PROFILE_MAX_BYTES} bytes)"}), 400
 
-        validated.append((upload, original_name))
+        target_name = original_name
+        if kind in {"machine", "process", "filament"}:
+            extracted_name = _extract_slicer_profile_name_from_upload_json(upload, kind)
+            parsed_name = _json_profile_filename_from_payload_name(extracted_name)
+            if parsed_name:
+                target_name = parsed_name
+
+        target_name = _dedupe_filename_for_request(target_name, used_target_names)
+        validated.append((upload, original_name, target_name))
 
     target_dir = dirs[kind]
     target_dir.mkdir(parents=True, exist_ok=True)
     saved_names: list[str] = []
 
-    for upload, original_name in validated:
-        target = target_dir / original_name
+    for upload, original_name, target_name in validated:
+        target = target_dir / target_name
         temp_target = target.with_suffix(f"{target.suffix}.tmp")
 
         try:
@@ -4087,7 +4180,7 @@ def api_settings_slicer_profiles():
                     pass
                 return jsonify({"ok": False, "error": f"Filen '{original_name}' er for stor (maks {SLICER_PROFILE_MAX_BYTES} bytes)"}), 400
             temp_target.replace(target)
-            saved_names.append(original_name)
+            saved_names.append(target_name)
         except Exception as exc:
             try:
                 temp_target.unlink(missing_ok=True)
