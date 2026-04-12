@@ -107,7 +107,7 @@ ZIP_UPLOAD_MAX_FILES = int(str(os.getenv("ZIP_UPLOAD_MAX_FILES", "10000")) or "1
 ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES = int(str(os.getenv("ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES", str(2 * 1024 * 1024 * 1024))) or str(2 * 1024 * 1024 * 1024))
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
-UI_VERSION_MARKER = str(os.getenv("UI_VERSION_MARKER", "TMP-2026-04-12-04")).strip() or "TMP-2026-04-12-04"
+UI_VERSION_MARKER = str(os.getenv("UI_VERSION_MARKER", "TMP-2026-04-12-05")).strip() or "TMP-2026-04-12-05"
 ACTIVITY_LOG_LIMIT_DEFAULT = 200
 ACTIVITY_LOG_LIMIT_MAX = 1000
 ACTIVITY_KIND_LABELS = {
@@ -822,6 +822,20 @@ def _extract_profile_name_from_section(section_name: str, prefixes: tuple[str, .
     return ""
 
 
+def _list_profile_names_from_dir(profile_dir: Path) -> list[str]:
+    names: list[str] = []
+    try:
+        files = sorted((p for p in profile_dir.glob("*.json") if p.is_file()), key=lambda p: p.name.lower())
+    except Exception:
+        return names
+
+    for profile_file in files:
+        name = str(profile_file.stem or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
 def _read_bambustudio_profiles() -> dict:
     printers: list[str] = []
     print_profiles: list[str] = []
@@ -830,6 +844,7 @@ def _read_bambustudio_profiles() -> dict:
     parse_error = ""
     source = "env"
     config_path_raw = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
+    profile_root = ""
 
     if config_path_raw:
         source = "config"
@@ -861,9 +876,27 @@ def _read_bambustudio_profiles() -> dict:
     print_profiles.extend(_split_profile_env_list(BAMBUSTUDIO_PRINT_PROFILES))
     filament_profiles.extend(_split_profile_env_list(BAMBUSTUDIO_FILAMENT_PROFILES))
 
+    if not printers or not print_profiles or not filament_profiles:
+        try:
+            executable = _resolve_bambustudio_executable()
+            discovered_root = _find_bambu_profile_root(executable)
+            if discovered_root:
+                profile_root = str(discovered_root)
+                if not printers:
+                    printers.extend(_list_profile_names_from_dir(discovered_root / "machine"))
+                if not print_profiles:
+                    print_profiles.extend(_list_profile_names_from_dir(discovered_root / "process"))
+                if not filament_profiles:
+                    filament_profiles.extend(_list_profile_names_from_dir(discovered_root / "filament"))
+                if source == "env":
+                    source = "appimage"
+        except Exception:
+            pass
+
     return {
         "source": source,
         "config_path": config_path_raw,
+        "profile_root": profile_root,
         "parse_error": parse_error,
         "printers": _dedupe_preserve_order(printers),
         "print_profiles": _dedupe_preserve_order(print_profiles),
@@ -3206,6 +3239,7 @@ def api_slice_profiles():
             },
             "source": str(data.get("source") or ""),
             "config_path": str(data.get("config_path") or ""),
+            "profile_root": str(data.get("profile_root") or ""),
             "parse_error": str(data.get("parse_error") or ""),
         }
     )
