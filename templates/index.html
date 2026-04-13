@@ -575,34 +575,6 @@
         </div>
 
         <div class="slice-studio-card">
-          <div class="slice-studio-card-title">Rotation (ringe + værdier)</div>
-          <div class="slice-rotate-input-grid">
-            <div class="slice-modal-field">
-              <label for="sliceRotateXInput">X (deg)</label>
-              <input id="sliceRotateXInput" class="input" type="number" step="1" min="-180" max="180" value="0">
-              <div id="sliceRotateXValue" class="hint">0 deg</div>
-            </div>
-            <div class="slice-modal-field">
-              <label for="sliceRotateYInput">Y (deg)</label>
-              <input id="sliceRotateYInput" class="input" type="number" step="1" min="-180" max="180" value="0">
-              <div id="sliceRotateYValue" class="hint">0 deg</div>
-            </div>
-            <div class="slice-modal-field">
-              <label for="sliceRotateZInput">Z (deg)</label>
-              <input id="sliceRotateZInput" class="input" type="number" step="1" min="-180" max="180" value="0">
-              <div id="sliceRotateZValue" class="hint">0 deg</div>
-            </div>
-          </div>
-          <div class="slice-rotate-row-actions">
-            <button id="sliceToolResetRotationBtn" class="btn" type="button">Nulstil rotation</button>
-          </div>
-          <div class="slice-lift-controls">
-            <label>Tip</label>
-            <div class="hint">Vælg rotate-tool i topbaren for at rotere med 3D-ringe, ligesom i Bambu Studio.</div>
-          </div>
-        </div>
-
-        <div class="slice-studio-card">
           <div class="slice-studio-card-title">Process settings (redigér profil)</div>
           <div class="slice-process-settings-head">
             <input id="sliceProcessSettingsSearchInput" class="input" type="search" placeholder="Søg i settings...">
@@ -623,12 +595,49 @@
       </aside>
 
       <section class="slice-studio-stage">
-        <div class="slice-stage-toolbar">
-          <div class="slice-stage-tool-group">
-            <button id="sliceToolViewBtn" class="btn active" type="button">View</button>
-            <button id="sliceToolRotateBtn" class="btn" type="button">Rotate</button>
+        <div class="slice-stage-toolbar" role="toolbar" aria-label="Slicer værktøjer">
+          <div class="slice-stage-tool-strip" aria-label="Top værktøjsmenu">
+            <button id="sliceToolViewBtn" class="slice-stage-tool-btn active" type="button" title="View / orbit" aria-label="View / orbit" aria-pressed="true">
+              <span class="slice-stage-tool-glyph" aria-hidden="true">&#9711;</span>
+            </button>
+            <button id="sliceToolRotateBtn" class="slice-stage-tool-btn" type="button" title="Rotate" aria-label="Rotate" aria-pressed="false">
+              <span class="slice-stage-tool-glyph" aria-hidden="true">&#8635;</span>
+            </button>
+            <span class="slice-stage-tool-divider" aria-hidden="true"></span>
+            <button class="slice-stage-tool-btn ghost" type="button" title="Move (kommer snart)" aria-label="Move (kommer snart)" disabled>
+              <span class="slice-stage-tool-glyph" aria-hidden="true">&#10022;</span>
+            </button>
+            <button class="slice-stage-tool-btn ghost" type="button" title="Scale (kommer snart)" aria-label="Scale (kommer snart)" disabled>
+              <span class="slice-stage-tool-glyph" aria-hidden="true">&#9633;</span>
+            </button>
+            <button class="slice-stage-tool-btn ghost" type="button" title="Mirror (kommer snart)" aria-label="Mirror (kommer snart)" disabled>
+              <span class="slice-stage-tool-glyph" aria-hidden="true">&#9681;</span>
+            </button>
           </div>
-          <div class="slice-stage-tool-hint">Rotate viser ring-gizmo på modellen. View er fri orbit-kontrol.</div>
+
+          <div id="sliceRotateQuickPanel" class="slice-stage-rotate-panel hidden">
+            <div class="slice-stage-rotate-title">Rotate (absolute)</div>
+            <div class="slice-stage-rotate-grid">
+              <div class="slice-stage-rotate-col">
+                <label for="sliceRotateXInput">X</label>
+                <input id="sliceRotateXInput" class="input" type="number" step="1" min="-180" max="180" value="0">
+                <div id="sliceRotateXValue" class="hint">0 deg</div>
+              </div>
+              <div class="slice-stage-rotate-col">
+                <label for="sliceRotateYInput">Y</label>
+                <input id="sliceRotateYInput" class="input" type="number" step="1" min="-180" max="180" value="0">
+                <div id="sliceRotateYValue" class="hint">0 deg</div>
+              </div>
+              <div class="slice-stage-rotate-col">
+                <label for="sliceRotateZInput">Z</label>
+                <input id="sliceRotateZInput" class="input" type="number" step="1" min="-180" max="180" value="0">
+                <div id="sliceRotateZValue" class="hint">0 deg</div>
+              </div>
+            </div>
+            <button id="sliceToolResetRotationBtn" class="btn" type="button">Nulstil rotation</button>
+          </div>
+
+          <div id="sliceStageToolHint" class="slice-stage-tool-hint">Vælg Rotate i topbaren for at aktivere ring-gizmo.</div>
         </div>
         <div class="slice-preview-wrap">
           <div class="slice-preview-canvas-wrap">

@@ -1887,30 +1887,121 @@ input[type="checkbox"] {
 .slice-stage-toolbar {
   border: 1px solid #364051;
   border-radius: 12px;
-  padding: 8px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  padding: 10px;
+  display: grid;
   gap: 10px;
-  flex-wrap: wrap;
+  align-content: start;
   background: linear-gradient(180deg, rgba(29, 36, 50, 0.95), rgba(20, 26, 37, 0.98));
 }
 
-.slice-stage-tool-group {
+.slice-stage-tool-strip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid #3d4658;
+  border-radius: 10px;
+  padding: 4px;
+  gap: 4px;
+  background: linear-gradient(180deg, rgba(32, 39, 53, 0.94), rgba(23, 30, 42, 0.98));
+  overflow-x: auto;
 }
 
-.slice-stage-tool-group .btn {
+.slice-stage-tool-btn {
+  min-width: 34px;
+  height: 34px;
   border-radius: 8px;
-  padding: 5px 10px;
+  border: 1px solid #3d475a;
+  background: #1a2230;
+  color: #b4c2db;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.slice-stage-tool-group .btn.active {
-  border-color: rgba(56, 177, 105, 0.68);
-  background: rgba(30, 89, 58, 0.58);
-  color: #d4f4e2;
+.slice-stage-tool-btn:hover {
+  border-color: #557296;
+  background: #202b3d;
+  color: #d4dff2;
+}
+
+.slice-stage-tool-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(110, 167, 255, 0.4);
+}
+
+.slice-stage-tool-btn.active {
+  border-color: rgba(56, 177, 105, 0.72);
+  background: rgba(30, 89, 58, 0.68);
+  color: #e0f7ea;
+}
+
+.slice-stage-tool-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.slice-stage-tool-btn.ghost {
+  color: #94a3bf;
+}
+
+.slice-stage-tool-glyph {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.slice-stage-tool-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 1px 2px;
+  background: #3f4a5f;
+}
+
+.slice-stage-rotate-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid #364051;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: linear-gradient(180deg, rgba(21, 28, 40, 0.96), rgba(17, 22, 32, 0.99));
+}
+
+.slice-stage-rotate-title {
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+  color: #9aaccc;
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+.slice-stage-rotate-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(70px, 96px));
+  gap: 8px;
+}
+
+.slice-stage-rotate-col {
+  display: grid;
+  gap: 4px;
+}
+
+.slice-stage-rotate-col label {
+  font-size: 0.72rem;
+  color: #9cabca;
+}
+
+.slice-stage-rotate-col .input {
+  min-height: 30px;
+  height: 30px;
+  padding: 4px 8px;
+}
+
+.slice-stage-rotate-col .hint {
+  font-size: 0.72rem;
 }
 
 .slice-stage-tool-hint {
@@ -2265,20 +2356,19 @@ input[type="checkbox"] {
   }
 
   .slice-stage-toolbar {
-    flex-direction: column;
-    align-items: stretch;
+    padding: 8px;
   }
 
-  .slice-stage-tool-group {
-    justify-content: stretch;
+  .slice-stage-tool-strip {
+    width: 100%;
   }
 
-  .slice-stage-tool-group .btn {
-    flex: 1 1 0;
-  }
-
-  .slice-rotate-input-grid {
+  .slice-stage-rotate-grid {
     grid-template-columns: 1fr;
+  }
+
+  .slice-stage-rotate-panel .btn {
+    width: 100%;
   }
 
   .slice-process-settings-head {

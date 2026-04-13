@@ -171,6 +171,8 @@
     slicePreviewHeight: document.getElementById("slicePreviewHeight"),
     sliceToolViewBtn: document.getElementById("sliceToolViewBtn"),
     sliceToolRotateBtn: document.getElementById("sliceToolRotateBtn"),
+    sliceRotateQuickPanel: document.getElementById("sliceRotateQuickPanel"),
+    sliceStageToolHint: document.getElementById("sliceStageToolHint"),
     sliceToolResetRotationBtn: document.getElementById("sliceToolResetRotationBtn"),
     sliceRotateXInput: document.getElementById("sliceRotateXInput"),
     sliceRotateXValue: document.getElementById("sliceRotateXValue"),
@@ -2660,8 +2662,24 @@
 
   function updateSliceToolUi() {
     const mode = state.sliceActiveTool === "rotate" ? "rotate" : "view";
-    if (els.sliceToolViewBtn) els.sliceToolViewBtn.classList.toggle("active", mode === "view");
-    if (els.sliceToolRotateBtn) els.sliceToolRotateBtn.classList.toggle("active", mode === "rotate");
+    const viewActive = mode === "view";
+    const rotateActive = mode === "rotate";
+    if (els.sliceToolViewBtn) {
+      els.sliceToolViewBtn.classList.toggle("active", viewActive);
+      els.sliceToolViewBtn.setAttribute("aria-pressed", viewActive ? "true" : "false");
+    }
+    if (els.sliceToolRotateBtn) {
+      els.sliceToolRotateBtn.classList.toggle("active", rotateActive);
+      els.sliceToolRotateBtn.setAttribute("aria-pressed", rotateActive ? "true" : "false");
+    }
+    if (els.sliceRotateQuickPanel) {
+      els.sliceRotateQuickPanel.classList.toggle("hidden", !rotateActive);
+    }
+    if (els.sliceStageToolHint) {
+      els.sliceStageToolHint.textContent = rotateActive
+        ? "Rotate aktiv: træk i ringene på modellen eller skriv X/Y/Z manuelt."
+        : "View aktiv: fri orbit-kontrol. Klik Rotate i topmenuen for at starte rotation.";
+    }
   }
 
   function updateSliceTransformControlsAttachment() {
