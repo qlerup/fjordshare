@@ -2086,7 +2086,7 @@
     auto_circle_contour_hole_compensation: true,
     elephant_foot_compensation: 0.075,
     precise_z_height: false,
-    ironing_type: "top",
+    ironing_type: "none",
     ironing_pattern: "rectilinear",
     ironing_speed: 20,
     ironing_flow: 20,
@@ -2110,7 +2110,7 @@
     seam_position: ["aligned", "nearest", "rear", "random"],
     wall_generator: ["auto", "classic", "arachne"],
     order_of_walls: ["inner_outer", "outer_inner", "inner_outer_inner"],
-    ironing_type: ["none", "top", "all_top_surfaces"],
+    ironing_type: ["none", "top", "topmost_surface", "all_top_surfaces"],
     ironing_pattern: ["rectilinear", "concentric", "zig_zag"],
     ironing_flow: [10, 15, 20, 25, 30],
     smooth_coefficient: [100, 125, 150, 175, 200],
@@ -2261,6 +2261,82 @@
       : normalized;
   }
 
+  function sliceProcessSettingOptionLabel(key, optionValue) {
+    const canonical = canonicalSliceProcessKey(key);
+    const normalizedValue = normalizeSliceProcessKey(optionValue);
+
+    if (canonical === "ironing_type") {
+      if (normalizedValue === "none" || normalizedValue === "no_ironing") return "No ironing";
+      if (normalizedValue === "top" || normalizedValue === "top_surfaces") return "Top surfaces";
+      if (normalizedValue === "topmost" || normalizedValue === "topmost_surface" || normalizedValue === "topmost_surfaces") {
+        return "Topmost surface";
+      }
+      if (normalizedValue === "all_top_surfaces" || normalizedValue === "all_solid_layer" || normalizedValue === "all_solid_layers") {
+        return "All solid layer";
+      }
+    }
+
+    if (canonical === "ironing_pattern") {
+      if (normalizedValue === "rectilinear") return "Rectilinear";
+      if (normalizedValue === "concentric") return "Concentric";
+      if (normalizedValue === "zig_zag" || normalizedValue === "zigzag") return "Zig zag";
+    }
+
+    return sliceProcessValueToText(optionValue);
+  }
+
+  function sliceProcessCurrentValueByCanonicalKey(canonicalKey, base, overrides) {
+    const wanted = normalizeSliceProcessKey(canonicalKey);
+    if (!wanted) return undefined;
+
+    const baseMap = base && typeof base === "object" ? base : {};
+    const overridesMap = overrides && typeof overrides === "object" ? overrides : {};
+    const allKeys = Array.from(new Set([...Object.keys(baseMap), ...Object.keys(overridesMap)]));
+    for (const key of allKeys) {
+      if (canonicalSliceProcessKey(key) !== wanted) continue;
+      if (Object.prototype.hasOwnProperty.call(overridesMap, key)) {
+        return overridesMap[key];
+      }
+      return baseMap[key];
+    }
+    return undefined;
+  }
+
+  function isSliceProcessIroningDisabled(base, overrides) {
+    const ironingType = sliceProcessCurrentValueByCanonicalKey("ironing_type", base, overrides);
+    if (typeof ironingType === "boolean") return !ironingType;
+    if (typeof ironingType === "number") return ironingType <= 0;
+    if (typeof ironingType === "string") {
+      const key = normalizeSliceProcessKey(ironingType);
+      if (!key || key === "none" || key === "off" || key === "false" || key === "0" || key === "no_ironing") {
+        return true;
+      }
+      return false;
+    }
+
+    const enableIroning = sliceProcessCurrentValueByCanonicalKey("enable_ironing", base, overrides);
+    if (typeof enableIroning === "boolean") return !enableIroning;
+    if (typeof enableIroning === "number") return enableIroning <= 0;
+    if (typeof enableIroning === "string") {
+      const key = normalizeSliceProcessKey(enableIroning);
+      if (key === "0" || key === "false" || key === "off" || key === "no") return true;
+      if (key === "1" || key === "true" || key === "on" || key === "yes") return false;
+    }
+
+    return false;
+  }
+
+  function shouldRenderSliceProcessSettingEntry(entry, base, overrides) {
+    if (!entry || !entry.category) return true;
+    const sectionName = String(entry.category.section || "");
+    if (sectionName !== "Ironing") return true;
+
+    const canonical = canonicalSliceProcessKey(entry.key);
+    if (canonical === "ironing_type" || canonical === "enable_ironing") return true;
+
+    return !isSliceProcessIroningDisabled(base, overrides);
+  }
+
   function processKeyMatches(key, patterns) {
     return patterns.some((pattern) => pattern.test(key));
   }
@@ -2378,7 +2454,7 @@
       const optionsHtml = mergedOptions
         .map((optionValue) => {
           const attrValue = sliceProcessValueToAttr(optionValue);
-          const labelText = sliceProcessValueToText(optionValue) || "(tom)";
+          const labelText = sliceProcessSettingOptionLabel(key, optionValue) || "(tom)";
           const selected = sliceProcessValueEquals(currentValue, optionValue) ? " selected" : "";
           return `<option value="${esc(attrValue)}"${selected}>${esc(labelText)}</option>`;
         })
@@ -2464,6 +2540,7 @@
     const qualityFallbackToAll = activeTab === "quality" && allTabCount === 0 && categorizedAll.length > 0;
     const filtered = categorizedAll.filter((entry) => {
       if (!qualityFallbackToAll && entry.category.tab !== activeTab) return false;
+      if (!shouldRenderSliceProcessSettingEntry(entry, base, overrides)) return false;
       if (!search) return true;
       if (entry.key.toLowerCase().includes(search)) return true;
       if (entry.labelLower.includes(search)) return true;
