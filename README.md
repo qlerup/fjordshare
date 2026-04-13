@@ -1,20 +1,16 @@
 ﻿# FjordShare
 
-Ny Docker-app til fil-deling bygget som en letvægts søster til `fjordlens`.
+FjordShare er en letvægts fil- og slicer-webapp til NAS/Docker workflows.
+Projektet er bygget til hurtig deling af filer, metadata pr. printfil og Bambu Studio-baseret slicing direkte fra web-UI.
 
-## Implementeret i denne første store version
+## Hvad der er implementeret nu
 
-- Login og første opsætning (første bruger bliver admin)
-- Side-menu og web-UI med faner:
-  - Filer
-  - Indstillinger
-    Delinger, DNS og Brugere som underfaner
-- Oprettelse af brugere med kun:
-  - Brugernavn
-  - Kode
-- Automatisk oprettelse af hjemmemappe pr. bruger ved oprettelse
-- TUS resumable upload til alle filtyper
-- Manuel mappe-oprettelse i UI
+### Kernefunktioner
+
+- Login + første opsætning (første bruger bliver admin)
+- Mapper/filer i web-UI med sidepanel
+- TUS resumable upload (store filer / ustabilt net)
+- Opret mappe, omdøb, slet, metadata på filer
 - Deling af en eller flere mapper med rettigheder:
   - `view`
   - `upload`
@@ -23,18 +19,57 @@ Ny Docker-app til fil-deling bygget som en letvægts søster til `fjordlens`.
   - Udløb (dage/timer)
   - Kodebeskyttelse
   - Kræv besøgsnavn
-  - Brug ekstern DNS-base-url
-- Offentlig delingsside med:
-  - Filvisning
-  - Download
-  - Upload (hvis tilladt)
-  - Slet (hvis `manage`)
-- Metadata-flow efter multi-upload:
-  - Bemærkning pr. fil
-  - Antal pr. fil
-- 3D-understøttelse i browser:
-  - Baggrundsgenererede thumbnails i grid for `.glb`, `.gltf`, `.stl`, `.obj`, `.step`, `.stp`
-  - Åbning/rotation/zoom for `.glb`, `.gltf`, `.stl`, `.obj`
+  - Ekstern DNS base-url
+
+### 3D/preview
+
+- 3D thumbnails i fil-grid for `.glb`, `.gltf`, `.stl`, `.obj`, `.step`, `.stp`
+- 3D visning i browser for `.glb`, `.gltf`, `.stl`, `.obj`
+
+### Slicer-integration (Bambu Studio)
+
+- Slicing via Bambu Studio CLI fra backend
+- Ny “studio”-inspireret **Slice STL** modal med stor preview-scene
+- Rotation (X/Y/Z) med live preview og footprint/højde-info
+- Profilvalg i modal:
+  - Printer
+  - Printprofil
+  - Filamentprofil
+  - Support mode/type/style
+
+### Slicer-profiler i Indstillinger
+
+- Profilkort for:
+  - Printer profil (`machine.json`)
+  - Print settings (`process.json`)
+  - Filament profil (`filament.json`)
+  - Konfigurationsbundle (`ini/cfg/conf/txt`)
+- Upload kan ske på to måder:
+  - `Upload filer` knappen (modal)
+  - Drag-and-drop **direkte på profilkortet**
+
+### Printer pladestørrelser (bed mapping)
+
+- Tabel med:
+  - Printerprofil
+  - Producent
+  - Model
+  - X/Y (auto fra model)
+  - Kilde
+  - Handlinger
+- `Tilføj printer`, `Edit` (modal til manuel X/Y), `Slet`
+- Gem/Nulstil mapping
+- Slettede rækker gemmes som “skjulte”, så de ikke automatisk kommer igen ved refresh
+
+## Bambu presets i kode (bed sizes)
+
+Følgende Bambu presets er lagt ind til auto X/Y:
+
+- H2D / H2D Pro: `350 x 320`
+- A1 mini: `180 x 180`
+- A1: `256 x 256`
+- P1S / P1P: `256 x 256`
+- X1 / X1 Carbon / X1E: `256 x 256`
 
 ## Kør lokalt med Docker
 
@@ -48,75 +83,67 @@ docker compose up -d --build
 
 - `http://localhost:9090` (eller den port du sætter i `.env`)
 
-## STL slicing med BambuStudio
+## Vigtige miljøvariabler (.env)
 
-Slicing-funktionen bruger et eksternt program (BambuStudio) via kommandolinje. Der skal derfor ikke installeres ekstra Python-pakker for slicing.
-
-Docker-image build forsøger automatisk at hente en BambuStudio AppImage fra officielle releases og installerer en `bambu-studio` CLI-wrapper i containeren.
-
-Miljøvariabler i `.env`:
-
-- `BAMBUSTUDIO_APPIMAGE_URL` (valgfri build override, bruges hvis du vil pinne en bestemt AppImage)
+- `DATA_DIR`
 - `BAMBUSTUDIO_BIN` (default: `bambu-studio`)
-- `BAMBUSTUDIO_CONFIG_PATH` (valgfri sti til preset/config-fil)
-- `BAMBUSTUDIO_PROFILE_ROOT` (valgfri sti til Bambu profil-root med `machine/`, `process/`, `filament/`)
 - `BAMBUSTUDIO_TIMEOUT_SEC` (default: `1800`)
-- `BAMBUSTUDIO_PRINTER_PROFILES` (valgfri komma-separeret fallback-liste)
-- `BAMBUSTUDIO_PRINT_PROFILES` (valgfri komma-separeret fallback-liste)
-- `BAMBUSTUDIO_FILAMENT_PROFILES` (valgfri komma-separeret fallback-liste)
-- `BAMBUSTUDIO_LOAD_SETTINGS` (valgfri direkte `--load-settings`, fx `machine.json;process.json`)
-- `BAMBUSTUDIO_LOAD_FILAMENTS` (valgfri direkte `--load-filaments`, fx `filament.json`)
-- `BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK` (`1`/`0`, tillader fallback fra uploadede profiler til AppImage-profiler)
+- `BAMBUSTUDIO_CONFIG_PATH` (valgfri)
+- `BAMBUSTUDIO_PROFILE_ROOT` (valgfri)
+- `BAMBUSTUDIO_PRINTER_PROFILES` (valgfri fallback-liste)
+- `BAMBUSTUDIO_PRINT_PROFILES` (valgfri fallback-liste)
+- `BAMBUSTUDIO_FILAMENT_PROFILES` (valgfri fallback-liste)
+- `BAMBUSTUDIO_LOAD_SETTINGS` (valgfri direkte load)
+- `BAMBUSTUDIO_LOAD_FILAMENTS` (valgfri direkte load)
+- `BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK` (`1`/`0`)
+- `SLICER_PROFILE_MAX_BYTES`
 
-Hvis auto-detektion af release-asset fejler i build, så sæt `BAMBUSTUDIO_APPIMAGE_URL` i `.env` til en konkret AppImage URL og byg igen.
+## Bambu Studio presets fra lokal installation
 
-Når du klikker **Slice STL** i appen, åbnes nu en modal hvor du kan vælge:
+Hvis du vil hente standardprofiler direkte fra Bambu Studio på Windows, kan de typisk findes her:
 
-- Printer
-- Printprofil
-- Filamentprofil
+`C:\Program Files\Bambu Studio\resources\profiles\BBL`
 
-Profiler læses primært fra `BAMBUSTUDIO_CONFIG_PATH`; hvis ingen kan læses, bruges fallback-listerne fra env-variablerne ovenfor.
+Herunder ligger de normalt i:
 
-### Egne printer-, print- og filamentprofiler
+- `filament`
+- `machine`
+- `process`
 
-Appen kan kun slice med de profiler, som BambuStudio får via en konfigurationsfil (`BAMBUSTUDIO_CONFIG_PATH`). Den læser ikke profiler direkte fra din Bambu-konto/cloud.
+Disse filer kan uploades i de tilsvarende profilbokse i FjordShare under Indstillinger -> Slicer.
 
-Sådan får du dine egne profiler ind:
+## Plate assets til slicer-view
 
-1. Åbn BambuStudio på din PC.
-2. Vælg de presets du vil bruge (printer, process/print, filament).
-3. Eksportér en config-bundle/config-fil fra BambuStudio.
-4. Læg filen i din data-mappe på NAS, fx:
-  - host: `${DATA_DIR}/bambu/profiles/my-profile.ini`
-  - container: `/data/bambu/profiles/my-profile.ini`
-5. Sæt i `.env`:
-  - `BAMBUSTUDIO_CONFIG_PATH=/data/bambu/profiles/my-profile.ini`
-6. Rebuild/start:
-  - `docker compose up -d --build`
+Der er oprettet en versioneret mappe til model/pladefiler, så de kan følge med i repo/deploy:
 
-Hvis du vil have flere valg direkte i appen, kan du lave flere config-filer (én pr. setup), og vi kan udvide UI'et til at vælge mellem dem i en modal.
+- `static/slicer-plates/`
 
-### Fejl: "Unable to create plate triangles" / "Nothing to be sliced"
+Læg pladefiler her, så de er en del af installationen for andre.
+Når model->fil mapping er klar, kan UI skifte plade automatisk efter valgt printermodel.
 
-Hvis du får disse fejl i logs:
+## Useful Scripts
 
-1. Tjek at `docker-compose.yml` sender `BAMBUSTUDIO_LOAD_SETTINGS` og `BAMBUSTUDIO_LOAD_FILAMENTS` ind i containeren.
-2. Sæt variablerne i `.env` til gyldige profil-JSON filer hvis auto-valg ikke virker.
-3. Prøv slicing med `lift_z=0` og uden rotation for at udelukke at modellen ligger uden for build-pladen.
+Der ligger hjælpescripts i repoet her:
 
-## Data
+- `Useful Scripts/fjordshare-start.sh`
+- `Useful Scripts/fjordshare-force-update.sh`
+- `Useful Scripts/fjordshare-cleanup.sh`
+- `Useful Scripts/README.md`
+
+Formålet er drift/opdatering/cleanup af FjordShare deployment på NAS med Docker Compose.
+
+## Data paths
 
 Data gemmes i volumen mappet til `DATA_DIR`:
 
 - database: `/data/fjordshare.db`
 - uploadede filer: `/data/uploads`
-- genererede thumbnails (inkl. 3D): `/data/thumbs`
-- midlertidige TUS-filer: `/data/tus_uploads`
+- thumbnails: `/data/thumbs`
+- TUS temp: `/data/tus_uploads`
+- slicer profiler: `/data/bambu/profiles`
+- sliced output: `/data/bambu/sliced`
 
 ## Bemærk
 
-- Dette er en stærk første version af kerneflowet.
-- Næste naturlige trin er finere rettighedsstyring pr. bruger/mappe i UI samt flere preview-formater.
-
-
+- Hvis Bambu Studio release auto-detektion fejler ved build, pin AppImage URL i `.env` og rebuild.
+- `fjordshare-cleanup.sh` er destruktiv og bør bruges med omtanke.
