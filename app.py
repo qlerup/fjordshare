@@ -2864,7 +2864,7 @@ def _build_support_override_load_settings(
     nozzle_right_diameter: str = "",
     nozzle_left_flow: str = "",
     nozzle_right_flow: str = "",
-) -> tuple[str, Optional[Path], str]:
+) -> tuple[str, list[Path], str]:
     normalized_mode = _normalize_slice_support_mode(support_mode)
     normalized_type = _normalize_slice_support_type(support_type)
     normalized_style = _normalize_slice_support_style(support_style)
@@ -2889,7 +2889,7 @@ def _build_support_override_load_settings(
         and not normalized_nozzle_left_flow
         and not normalized_nozzle_right_flow
     ):
-        return "", None, ""
+        return "", [], ""
 
     machine_json, process_json, _filament_json = _resolve_selected_profile_jsons(
         executable,
@@ -2900,11 +2900,11 @@ def _build_support_override_load_settings(
     )
 
     if not machine_json or not process_json:
-        return "", None, "Profile-overrides kraever machine+process profiler (JSON)."
+        return "", [], "Profile-overrides kraever machine+process profiler (JSON)."
 
     process_payload = _read_profile_json_payload(Path(process_json))
     if not isinstance(process_payload, dict):
-        return "", None, "Kunne ikke laese valgt process-profil som JSON."
+        return "", [], "Kunne ikke laese valgt process-profil som JSON."
 
     selected_process_name = str(
         process_payload.get("print_settings_id")
@@ -2943,6 +2943,7 @@ def _build_support_override_load_settings(
     # in the loaded process payload (observed on H2D with nozzle_volume_type errors).
     template_settings, _template_options = _extract_effective_process_settings_from_payload(override_template_payload)
     machine_payload = _read_profile_json_payload(Path(machine_json)) if machine_json else None
+    patched_machine_payload = dict(machine_payload) if isinstance(machine_payload, dict) else None
 
     def _dedupe_numbers(values: Iterable[float], max_items: int = 8) -> list[float]:
         out: list[float] = []
@@ -3052,6 +3053,7 @@ def _build_support_override_load_settings(
         return _expand_values_for_extruders(diameter_values), _expand_values_for_extruders(flow_values)
 
     runtime_compat_changed = False
+    machine_runtime_changed = False
     user_nozzle_diameter_values, user_nozzle_flow_values = _compose_user_nozzle_values()
 
     def _process_settings_container() -> Optional[dict[str, Any]]:
@@ -3080,6 +3082,42 @@ def _build_support_override_load_settings(
             patched_payload[key] = value
             runtime_compat_changed = True
 
+    _MACHINE_SETTINGS_CONTAINER_KEYS = (
+        *_PROCESS_SETTINGS_CONTAINER_KEYS,
+        "machine_settings",
+        "printer_settings",
+        "machine",
+        "printer",
+    )
+
+    def _machine_settings_container() -> Optional[dict[str, Any]]:
+        if not isinstance(patched_machine_payload, dict):
+            return None
+        for container_key in _MACHINE_SETTINGS_CONTAINER_KEYS:
+            container = patched_machine_payload.get(container_key)
+            if isinstance(container, dict):
+                return container
+        return None
+
+    def _set_machine_runtime_value(key: str, value: Any) -> None:
+        nonlocal machine_runtime_changed
+        if not isinstance(patched_machine_payload, dict):
+            return
+        if value is None:
+            return
+        if isinstance(value, str) and not value.strip():
+            return
+
+        settings_container = _machine_settings_container()
+        if isinstance(settings_container, dict):
+            if key not in settings_container or settings_container.get(key) != value:
+                settings_container[key] = value
+                machine_runtime_changed = True
+
+        if key not in patched_machine_payload or patched_machine_payload.get(key) != value:
+            patched_machine_payload[key] = value
+            machine_runtime_changed = True
+
     for runtime_key in ("nozzle_volume_type", "different_extruder", "new_printer_name"):
         settings_container = _process_settings_container()
         has_runtime_key = runtime_key in patched_payload or (isinstance(settings_container, dict) and runtime_key in settings_container)
@@ -3095,24 +3133,40 @@ def _build_support_override_load_settings(
         if runtime_key in template_settings:
             _set_runtime_value(runtime_key, template_settings.get(runtime_key))
 
+    guessed_nozzle_value = ",".join(user_nozzle_diameter_values) if user_nozzle_diameter_values else ""
+    if not guessed_nozzle_value:
+        guessed_nozzle_value = _guess_nozzle_volume_type_value() or ""
+    if guessed_nozzle_value:
+        _set_machine_runtime_value("nozzle_volume_type", guessed_nozzle_value)
+
     if user_nozzle_diameter_values:
         diameter_csv = ",".join(user_nozzle_diameter_values)
         for key in ("nozzle_diameter", "nozzle_diameters", "nozzle_size", "nozzle_sizes"):
             _set_runtime_value(key, diameter_csv)
+            _set_machine_runtime_value(key, diameter_csv)
 
     if user_nozzle_flow_values:
         flow_csv = ",".join(user_nozzle_flow_values)
         _set_runtime_value("nozzle_flow_type", flow_csv)
         _set_runtime_value("nozzle_flow_types", flow_csv)
+        _set_machine_runtime_value("nozzle_flow_type", flow_csv)
+        _set_machine_runtime_value("nozzle_flow_types", flow_csv)
 
-    right_nozzle_requested = bool(normalized_nozzle_right_diameter or normalized_nozzle_right_flow)
-    if right_nozzle_requested or len(user_nozzle_diameter_values) > 1 or len(user_nozzle_flow_values) > 1:
+    distinct_diameters = {v for v in user_nozzle_diameter_values if str(v or "").strip()}
+    distinct_flows = {v for v in user_nozzle_flow_values if str(v or "").strip()}
+    should_force_different_extruder = len(distinct_diameters) > 1 or len(distinct_flows) > 1
+    if should_force_different_extruder:
         if "different_extruder" in patched_payload:
             desired = _profile_bool_setting_value(patched_payload.get("different_extruder"), True)
             _set_runtime_value("different_extruder", desired)
         elif "different_extruder" in template_settings:
             desired = _profile_bool_setting_value(template_settings.get("different_extruder"), True)
             _set_runtime_value("different_extruder", desired)
+
+        if isinstance(patched_machine_payload, dict):
+            current_machine_diff = patched_machine_payload.get("different_extruder")
+            desired_machine = _profile_bool_setting_value(current_machine_diff, True)
+            _set_machine_runtime_value("different_extruder", desired_machine)
 
     changed = False
     if runtime_compat_changed:
@@ -3180,22 +3234,46 @@ def _build_support_override_load_settings(
                 patched_payload[key] = next_value
                 changed = True
 
-    if not changed:
-        return f"{machine_json};{process_json}", None, ""
+    if not changed and not machine_runtime_changed:
+        return f"{machine_json};{process_json}", [], ""
 
-    temp_process = output_gcode.with_suffix(".slice_support_override.process.json")
-    try:
-        temp_process.parent.mkdir(parents=True, exist_ok=True)
-        normalized_bytes = _normalize_uploaded_profile_json_bytes(patched_payload, "process")
-        temp_process.write_bytes(normalized_bytes)
-    except Exception as exc:
+    temp_override_files: list[Path] = []
+    load_machine = machine_json
+    load_process = process_json
+
+    if machine_runtime_changed and isinstance(patched_machine_payload, dict):
+        temp_machine = output_gcode.with_suffix(".slice_support_override.machine.json")
         try:
-            temp_process.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return "", None, f"Kunne ikke skrive profile-override profil: {exc}"
+            temp_machine.parent.mkdir(parents=True, exist_ok=True)
+            machine_bytes = _normalize_uploaded_profile_json_bytes(patched_machine_payload, "machine")
+            temp_machine.write_bytes(machine_bytes)
+            temp_override_files.append(temp_machine)
+            load_machine = str(temp_machine)
+        except Exception as exc:
+            for temp_file in temp_override_files:
+                try:
+                    temp_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            return "", [], f"Kunne ikke skrive machine-override profil: {exc}"
 
-    return f"{machine_json};{temp_process}", temp_process, ""
+    if changed:
+        temp_process = output_gcode.with_suffix(".slice_support_override.process.json")
+        try:
+            temp_process.parent.mkdir(parents=True, exist_ok=True)
+            normalized_bytes = _normalize_uploaded_profile_json_bytes(patched_payload, "process")
+            temp_process.write_bytes(normalized_bytes)
+            temp_override_files.append(temp_process)
+            load_process = str(temp_process)
+        except Exception as exc:
+            for temp_file in temp_override_files:
+                try:
+                    temp_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            return "", [], f"Kunne ikke skrive profile-override profil: {exc}"
+
+    return f"{load_machine};{load_process}", temp_override_files, ""
 
 
 def _validate_selected_slice_profiles(
@@ -3570,7 +3648,7 @@ def _slice_stl_to_gcode(
     if support_override_requested:
         (
             support_load_settings_override,
-            support_override_file,
+            support_override_files,
             support_override_error,
         ) = _build_support_override_load_settings(
             executable,
@@ -3587,8 +3665,8 @@ def _slice_stl_to_gcode(
             normalized_nozzle_left_flow,
             normalized_nozzle_right_flow,
         )
-        if support_override_file is not None:
-            temp_profile_overrides.append(support_override_file)
+        if support_override_files:
+            temp_profile_overrides.extend(support_override_files)
         if support_override_error:
             raise RuntimeError(f"Support-override fejl: {support_override_error}")
 
@@ -3814,8 +3892,8 @@ def _slice_stl_to_gcode(
             guidance = ""
             errors_lower = [err.lower() for err in errors]
 
-            # Some Bambu multi-extruder builds reject temporary support override payloads
-            # with setup/nozzle errors; retry once without support override profile.
+            # Some Bambu multi-extruder builds reject explicit nozzle overrides
+            # with setup/nozzle errors; retry once without explicit nozzle values.
             should_retry_without_support_override = (
                 allow_support_override_fallback
                 and bool(support_load_settings_override)
@@ -3837,13 +3915,13 @@ def _slice_stl_to_gcode(
                         rotation_y_degrees=rotation_y_degrees,
                         rotation_z_degrees=rotation_z_degrees,
                         lift_z_mm=normalized_lift_z,
-                        support_mode="auto",
-                        support_type="",
-                        support_style="",
-                        nozzle_left_diameter=normalized_nozzle_left_diameter,
-                        nozzle_right_diameter=normalized_nozzle_right_diameter,
-                        nozzle_left_flow=normalized_nozzle_left_flow,
-                        nozzle_right_flow=normalized_nozzle_right_flow,
+                        support_mode=normalized_support_mode,
+                        support_type=normalized_support_type,
+                        support_style=normalized_support_style,
+                        nozzle_left_diameter="",
+                        nozzle_right_diameter="",
+                        nozzle_left_flow="",
+                        nozzle_right_flow="",
                         bed_width_mm=normalized_bed_width,
                         bed_depth_mm=normalized_bed_depth,
                         process_overrides=normalized_process_overrides,
@@ -3868,13 +3946,13 @@ def _slice_stl_to_gcode(
                                 rotation_y_degrees=rotation_y_degrees,
                                 rotation_z_degrees=rotation_z_degrees,
                                 lift_z_mm=normalized_lift_z,
-                                support_mode="auto",
-                                support_type="",
-                                support_style="",
-                                nozzle_left_diameter=normalized_nozzle_left_diameter,
-                                nozzle_right_diameter=normalized_nozzle_right_diameter,
-                                nozzle_left_flow=normalized_nozzle_left_flow,
-                                nozzle_right_flow=normalized_nozzle_right_flow,
+                                support_mode=normalized_support_mode,
+                                support_type=normalized_support_type,
+                                support_style=normalized_support_style,
+                                nozzle_left_diameter="",
+                                nozzle_right_diameter="",
+                                nozzle_left_flow="",
+                                nozzle_right_flow="",
                                 bed_width_mm=normalized_bed_width,
                                 bed_depth_mm=normalized_bed_depth,
                                 process_overrides=normalized_process_overrides,
