@@ -2728,6 +2728,31 @@ def _normalize_slice_support_style(value: Any) -> str:
     return normalized if normalized in {"", "default"} else ""
 
 
+def _normalize_slice_nozzle_diameter(value: Any) -> str:
+    raw = str(value or "").strip().replace(",", ".")
+    if not raw:
+        return ""
+    try:
+        parsed = float(raw)
+    except Exception:
+        return ""
+    if not math.isfinite(parsed) or parsed <= 0:
+        return ""
+    # Keep to common desktop FDM nozzle sizes used by Bambu profiles.
+    allowed = {0.2, 0.4, 0.6, 0.8, 1.0}
+    rounded = round(parsed, 1)
+    if rounded not in allowed:
+        return ""
+    return f"{rounded:.1f}"
+
+
+def _normalize_slice_nozzle_flow(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized == "normal":
+        normalized = "standard"
+    return normalized if normalized in {"", "standard", "high_flow"} else ""
+
+
 def _normalize_slice_process_overrides(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
@@ -2835,13 +2860,35 @@ def _build_support_override_load_settings(
     support_type: str,
     support_style: str,
     process_overrides: Optional[dict[str, Any]] = None,
+    nozzle_left_diameter: str = "",
+    nozzle_right_diameter: str = "",
+    nozzle_left_flow: str = "",
+    nozzle_right_flow: str = "",
 ) -> tuple[str, Optional[Path], str]:
     normalized_mode = _normalize_slice_support_mode(support_mode)
     normalized_type = _normalize_slice_support_type(support_type)
     normalized_style = _normalize_slice_support_style(support_style)
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
+    normalized_nozzle_left_diameter = _normalize_slice_nozzle_diameter(nozzle_left_diameter)
+    normalized_nozzle_right_diameter = _normalize_slice_nozzle_diameter(nozzle_right_diameter)
+    normalized_nozzle_left_flow = _normalize_slice_nozzle_flow(nozzle_left_flow)
+    normalized_nozzle_right_flow = _normalize_slice_nozzle_flow(nozzle_right_flow)
 
-    if normalized_mode == "auto" and not normalized_type and not normalized_style and not normalized_process_overrides:
+    if normalized_nozzle_right_diameter and not normalized_nozzle_left_diameter:
+        normalized_nozzle_left_diameter = normalized_nozzle_right_diameter
+    if normalized_nozzle_right_flow and not normalized_nozzle_left_flow:
+        normalized_nozzle_left_flow = normalized_nozzle_right_flow
+
+    if (
+        normalized_mode == "auto"
+        and not normalized_type
+        and not normalized_style
+        and not normalized_process_overrides
+        and not normalized_nozzle_left_diameter
+        and not normalized_nozzle_right_diameter
+        and not normalized_nozzle_left_flow
+        and not normalized_nozzle_right_flow
+    ):
         return "", None, ""
 
     machine_json, process_json, _filament_json = _resolve_selected_profile_jsons(
@@ -2916,6 +2963,37 @@ def _build_support_override_load_settings(
                 break
         return out
 
+    def _detect_extruder_count() -> int:
+        detected = 0
+        for source in (template_settings, override_template_payload, machine_payload):
+            if not isinstance(source, dict):
+                continue
+            count_value = source.get("extruder_count")
+            if count_value is None:
+                parsed_count = 0
+            else:
+                try:
+                    parsed_count = int(float(str(count_value).strip()))
+                except Exception:
+                    parsed_count = 0
+            if parsed_count > detected:
+                detected = parsed_count
+        return detected
+
+    detected_extruder_count = _detect_extruder_count()
+
+    def _expand_values_for_extruders(values: list[str]) -> list[str]:
+        compact = [str(v or "").strip() for v in values if str(v or "").strip()]
+        if not compact:
+            return []
+        wanted = detected_extruder_count if detected_extruder_count > 0 else len(compact)
+        if wanted <= 1:
+            return [compact[0]]
+        expanded = list(compact)
+        while len(expanded) < wanted:
+            expanded.append(expanded[-1])
+        return expanded[:wanted]
+
     def _guess_nozzle_volume_type_value() -> Optional[str]:
         nozzle_candidates: list[float] = []
 
@@ -2949,36 +3027,50 @@ def _build_support_override_load_settings(
         if not nozzles:
             return None
 
-        extruder_count = 0
-        for source in (template_settings, override_template_payload, machine_payload):
-            if not isinstance(source, dict):
-                continue
-            count_value = source.get("extruder_count")
-            if count_value is None:
-                parsed_count = 0
-            else:
-                try:
-                    parsed_count = int(float(str(count_value).strip()))
-                except Exception:
-                    parsed_count = 0
-            if parsed_count > extruder_count:
-                extruder_count = parsed_count
-
-        if extruder_count > 1:
+        if detected_extruder_count > 1:
             expanded = list(nozzles)
-            while expanded and len(expanded) < extruder_count:
+            while expanded and len(expanded) < detected_extruder_count:
                 expanded.append(expanded[-1])
-            expanded = expanded[:extruder_count] if expanded else [nozzles[0]] * extruder_count
+            expanded = expanded[:detected_extruder_count] if expanded else [nozzles[0]] * detected_extruder_count
             return ",".join(f"{value:g}" for value in expanded)
 
         return f"{nozzles[0]:g}"
 
+    def _compose_user_nozzle_values() -> tuple[list[str], list[str]]:
+        diameter_values: list[str] = []
+        if normalized_nozzle_left_diameter:
+            diameter_values.append(normalized_nozzle_left_diameter)
+        if normalized_nozzle_right_diameter:
+            diameter_values.append(normalized_nozzle_right_diameter)
+
+        flow_values: list[str] = []
+        if normalized_nozzle_left_flow:
+            flow_values.append(normalized_nozzle_left_flow)
+        if normalized_nozzle_right_flow:
+            flow_values.append(normalized_nozzle_right_flow)
+
+        return _expand_values_for_extruders(diameter_values), _expand_values_for_extruders(flow_values)
+
     runtime_compat_changed = False
+    user_nozzle_diameter_values, user_nozzle_flow_values = _compose_user_nozzle_values()
+
+    def _set_runtime_value(key: str, value: Any) -> None:
+        nonlocal runtime_compat_changed
+        if value is None:
+            return
+        if isinstance(value, str) and not value.strip():
+            return
+        if patched_payload.get(key) != value:
+            patched_payload[key] = value
+            runtime_compat_changed = True
+
     for runtime_key in ("nozzle_volume_type", "different_extruder", "extruder_count", "new_printer_name"):
         if runtime_key in patched_payload:
             continue
         if runtime_key == "nozzle_volume_type":
-            guessed_nozzle_value = _guess_nozzle_volume_type_value()
+            guessed_nozzle_value = ",".join(user_nozzle_diameter_values) if user_nozzle_diameter_values else ""
+            if not guessed_nozzle_value:
+                guessed_nozzle_value = _guess_nozzle_volume_type_value()
             if guessed_nozzle_value is not None:
                 patched_payload[runtime_key] = guessed_nozzle_value
                 runtime_compat_changed = True
@@ -2986,6 +3078,27 @@ def _build_support_override_load_settings(
         if runtime_key in template_settings:
             patched_payload[runtime_key] = template_settings.get(runtime_key)
             runtime_compat_changed = True
+
+    if user_nozzle_diameter_values:
+        diameter_csv = ",".join(user_nozzle_diameter_values)
+        for key in ("nozzle_diameter", "nozzle_diameters", "nozzle_size", "nozzle_sizes"):
+            _set_runtime_value(key, diameter_csv)
+
+    if user_nozzle_flow_values:
+        flow_csv = ",".join(user_nozzle_flow_values)
+        _set_runtime_value("nozzle_flow_type", flow_csv)
+        _set_runtime_value("nozzle_flow_types", flow_csv)
+
+    right_nozzle_requested = bool(normalized_nozzle_right_diameter or normalized_nozzle_right_flow)
+    if right_nozzle_requested or len(user_nozzle_diameter_values) > 1 or len(user_nozzle_flow_values) > 1:
+        requested_extruders = max(2, detected_extruder_count)
+        _set_runtime_value("extruder_count", requested_extruders)
+        if "different_extruder" in patched_payload:
+            desired = _profile_bool_setting_value(patched_payload.get("different_extruder"), True)
+            _set_runtime_value("different_extruder", desired)
+        else:
+            _set_runtime_value("different_extruder", "1")
+
     changed = False
     if runtime_compat_changed:
         changed = True
@@ -3373,6 +3486,10 @@ def _slice_stl_to_gcode(
     support_mode: str = "auto",
     support_type: str = "",
     support_style: str = "",
+    nozzle_left_diameter: str = "",
+    nozzle_right_diameter: str = "",
+    nozzle_left_flow: str = "",
+    nozzle_right_flow: str = "",
     bed_width_mm: float = 0.0,
     bed_depth_mm: float = 0.0,
     process_overrides: Optional[dict[str, Any]] = None,
@@ -3402,6 +3519,14 @@ def _slice_stl_to_gcode(
     normalized_support_mode = _normalize_slice_support_mode(support_mode)
     normalized_support_type = _normalize_slice_support_type(support_type)
     normalized_support_style = _normalize_slice_support_style(support_style)
+    normalized_nozzle_left_diameter = _normalize_slice_nozzle_diameter(nozzle_left_diameter)
+    normalized_nozzle_right_diameter = _normalize_slice_nozzle_diameter(nozzle_right_diameter)
+    normalized_nozzle_left_flow = _normalize_slice_nozzle_flow(nozzle_left_flow)
+    normalized_nozzle_right_flow = _normalize_slice_nozzle_flow(nozzle_right_flow)
+    if normalized_nozzle_right_diameter and not normalized_nozzle_left_diameter:
+        normalized_nozzle_left_diameter = normalized_nozzle_right_diameter
+    if normalized_nozzle_right_flow and not normalized_nozzle_left_flow:
+        normalized_nozzle_left_flow = normalized_nozzle_right_flow
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
     if normalized_support_mode == "off":
         normalized_support_type = ""
@@ -3420,6 +3545,10 @@ def _slice_stl_to_gcode(
         normalized_support_mode != "auto"
         or bool(normalized_support_type)
         or bool(normalized_support_style)
+        or bool(normalized_nozzle_left_diameter)
+        or bool(normalized_nozzle_right_diameter)
+        or bool(normalized_nozzle_left_flow)
+        or bool(normalized_nozzle_right_flow)
         or bool(normalized_process_overrides)
     )
     legacy_allowed = not support_override_requested
@@ -3438,6 +3567,10 @@ def _slice_stl_to_gcode(
             normalized_support_type,
             normalized_support_style,
             normalized_process_overrides,
+            normalized_nozzle_left_diameter,
+            normalized_nozzle_right_diameter,
+            normalized_nozzle_left_flow,
+            normalized_nozzle_right_flow,
         )
         if support_override_file is not None:
             temp_profile_overrides.append(support_override_file)
@@ -3692,6 +3825,10 @@ def _slice_stl_to_gcode(
                         support_mode="auto",
                         support_type="",
                         support_style="",
+                        nozzle_left_diameter=normalized_nozzle_left_diameter,
+                        nozzle_right_diameter=normalized_nozzle_right_diameter,
+                        nozzle_left_flow=normalized_nozzle_left_flow,
+                        nozzle_right_flow=normalized_nozzle_right_flow,
                         bed_width_mm=normalized_bed_width,
                         bed_depth_mm=normalized_bed_depth,
                         process_overrides=normalized_process_overrides,
@@ -3719,6 +3856,10 @@ def _slice_stl_to_gcode(
                                 support_mode="auto",
                                 support_type="",
                                 support_style="",
+                                nozzle_left_diameter=normalized_nozzle_left_diameter,
+                                nozzle_right_diameter=normalized_nozzle_right_diameter,
+                                nozzle_left_flow=normalized_nozzle_left_flow,
+                                nozzle_right_flow=normalized_nozzle_right_flow,
                                 bed_width_mm=normalized_bed_width,
                                 bed_depth_mm=normalized_bed_depth,
                                 process_overrides=normalized_process_overrides,
@@ -3780,6 +3921,10 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     support_mode = _normalize_slice_support_mode(payload.get("support_mode"))
     support_type = _normalize_slice_support_type(payload.get("support_type"))
     support_style = _normalize_slice_support_style(payload.get("support_style"))
+    nozzle_left_diameter = _normalize_slice_nozzle_diameter(payload.get("nozzle_left_diameter"))
+    nozzle_right_diameter = _normalize_slice_nozzle_diameter(payload.get("nozzle_right_diameter"))
+    nozzle_left_flow = _normalize_slice_nozzle_flow(payload.get("nozzle_left_flow"))
+    nozzle_right_flow = _normalize_slice_nozzle_flow(payload.get("nozzle_right_flow"))
     if support_mode == "off":
         support_type = ""
         support_style = ""
@@ -3829,6 +3974,10 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             support_mode=support_mode,
             support_type=support_type,
             support_style=support_style,
+            nozzle_left_diameter=nozzle_left_diameter,
+            nozzle_right_diameter=nozzle_right_diameter,
+            nozzle_left_flow=nozzle_left_flow,
+            nozzle_right_flow=nozzle_right_flow,
             bed_width_mm=bed_width_mm,
             bed_depth_mm=bed_depth_mm,
             process_overrides=process_overrides,
@@ -3910,6 +4059,10 @@ def enqueue_slice_job(
     support_mode: str = "auto",
     support_type: str = "",
     support_style: str = "",
+    nozzle_left_diameter: str = "",
+    nozzle_right_diameter: str = "",
+    nozzle_left_flow: str = "",
+    nozzle_right_flow: str = "",
     rotation_x_degrees: float = 0.0,
     rotation_y_degrees: float = 0.0,
     rotation_z_degrees: float = 0.0,
@@ -3932,6 +4085,10 @@ def enqueue_slice_job(
     normalized_support_mode = _normalize_slice_support_mode(support_mode)
     normalized_support_type = _normalize_slice_support_type(support_type)
     normalized_support_style = _normalize_slice_support_style(support_style)
+    normalized_nozzle_left_diameter = _normalize_slice_nozzle_diameter(nozzle_left_diameter)
+    normalized_nozzle_right_diameter = _normalize_slice_nozzle_diameter(nozzle_right_diameter)
+    normalized_nozzle_left_flow = _normalize_slice_nozzle_flow(nozzle_left_flow)
+    normalized_nozzle_right_flow = _normalize_slice_nozzle_flow(nozzle_right_flow)
     if normalized_support_mode == "off":
         normalized_support_type = ""
         normalized_support_style = ""
@@ -3948,6 +4105,10 @@ def enqueue_slice_job(
             "support_mode": normalized_support_mode,
             "support_type": normalized_support_type,
             "support_style": normalized_support_style,
+            "nozzle_left_diameter": normalized_nozzle_left_diameter,
+            "nozzle_right_diameter": normalized_nozzle_right_diameter,
+            "nozzle_left_flow": normalized_nozzle_left_flow,
+            "nozzle_right_flow": normalized_nozzle_right_flow,
             "rotation_x_degrees": normalized_rotation_x,
             "rotation_y_degrees": normalized_rotation_y,
             "rotation_z_degrees": normalized_rotation_z,
@@ -6175,6 +6336,10 @@ def api_file_slice(file_id: int):
     support_mode = _normalize_slice_support_mode(body.get("support_mode"))
     support_type = _normalize_slice_support_type(body.get("support_type"))
     support_style = _normalize_slice_support_style(body.get("support_style"))
+    nozzle_left_diameter = _normalize_slice_nozzle_diameter(body.get("nozzle_left_diameter"))
+    nozzle_right_diameter = _normalize_slice_nozzle_diameter(body.get("nozzle_right_diameter"))
+    nozzle_left_flow = _normalize_slice_nozzle_flow(body.get("nozzle_left_flow"))
+    nozzle_right_flow = _normalize_slice_nozzle_flow(body.get("nozzle_right_flow"))
     if support_mode == "off":
         support_type = ""
         support_style = ""
@@ -6236,6 +6401,12 @@ def api_file_slice(file_id: int):
         if support_style:
             support_txt.append(f"style={support_style}")
         profile_details.append("/".join(support_txt))
+    if nozzle_left_diameter or nozzle_right_diameter or nozzle_left_flow or nozzle_right_flow:
+        nozzle_txt = [
+            f"L={nozzle_left_diameter or 'auto'}/{nozzle_left_flow or 'auto'}",
+            f"R={nozzle_right_diameter or 'auto'}/{nozzle_right_flow or 'auto'}",
+        ]
+        profile_details.append(f"nozzle({' '.join(nozzle_txt)})")
     if bed_width_mm > 0.0 and bed_depth_mm > 0.0:
         profile_details.append(f"bed={bed_width_mm}x{bed_depth_mm}mm")
     if process_overrides:
@@ -6262,6 +6433,10 @@ def api_file_slice(file_id: int):
         support_mode=support_mode,
         support_type=support_type,
         support_style=support_style,
+        nozzle_left_diameter=nozzle_left_diameter,
+        nozzle_right_diameter=nozzle_right_diameter,
+        nozzle_left_flow=nozzle_left_flow,
+        nozzle_right_flow=nozzle_right_flow,
         rotation_x_degrees=rotation_x_degrees,
         rotation_y_degrees=rotation_y_degrees,
         rotation_z_degrees=rotation_z_degrees,
@@ -6281,6 +6456,10 @@ def api_file_slice(file_id: int):
                 "support_mode": support_mode,
                 "support_type": support_type,
                 "support_style": support_style,
+                "nozzle_left_diameter": nozzle_left_diameter,
+                "nozzle_right_diameter": nozzle_right_diameter,
+                "nozzle_left_flow": nozzle_left_flow,
+                "nozzle_right_flow": nozzle_right_flow,
                 "rotation_x_degrees": rotation_x_degrees,
                 "rotation_y_degrees": rotation_y_degrees,
                 "rotation_z_degrees": rotation_z_degrees,

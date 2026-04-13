@@ -46,6 +46,10 @@
       support_mode: "auto",
       support_type: "",
       support_style: "",
+      nozzle_left_diameter: "",
+      nozzle_right_diameter: "",
+      nozzle_left_flow: "",
+      nozzle_right_flow: "",
       rotation_x_degrees: 0,
       rotation_y_degrees: 0,
       rotation_z_degrees: 0,
@@ -189,6 +193,10 @@
     sliceSupportModeSelect: document.getElementById("sliceSupportModeSelect"),
     sliceSupportTypeSelect: document.getElementById("sliceSupportTypeSelect"),
     sliceSupportStyleSelect: document.getElementById("sliceSupportStyleSelect"),
+    sliceNozzleLeftDiameterSelect: document.getElementById("sliceNozzleLeftDiameterSelect"),
+    sliceNozzleRightDiameterSelect: document.getElementById("sliceNozzleRightDiameterSelect"),
+    sliceNozzleLeftFlowSelect: document.getElementById("sliceNozzleLeftFlowSelect"),
+    sliceNozzleRightFlowSelect: document.getElementById("sliceNozzleRightFlowSelect"),
     sliceProcessProfileSelect: document.getElementById("sliceProcessProfileSelect"),
     sliceProcessTabBar: document.getElementById("sliceProcessTabBar"),
     sliceProcessSettingsSearchInput: document.getElementById("sliceProcessSettingsSearchInput"),
@@ -727,6 +735,8 @@
   const SLICE_SUPPORT_MODE_VALUES = new Set(["auto", "on", "off"]);
   const SLICE_SUPPORT_TYPE_VALUES = new Set(["", "tree(auto)", "normal(auto)"]);
   const SLICE_SUPPORT_STYLE_VALUES = new Set(["", "default"]);
+  const SLICE_NOZZLE_DIAMETER_VALUES = new Set(["", "0.2", "0.4", "0.6", "0.8", "1.0"]);
+  const SLICE_NOZZLE_FLOW_VALUES = new Set(["", "standard", "high_flow"]);
   const GLTF_UNIT_CONTEXT = Object.freeze({
     unitKey: "m",
     unitLabel: "m",
@@ -1790,6 +1800,22 @@
   function normalizeSliceSupportStyle(value) {
     const normalized = String(value || "").trim().toLowerCase();
     return SLICE_SUPPORT_STYLE_VALUES.has(normalized) ? normalized : "";
+  }
+
+  function normalizeSliceNozzleDiameter(value) {
+    const raw = String(value || "").trim().replace(",", ".");
+    if (!raw) return "";
+    if (SLICE_NOZZLE_DIAMETER_VALUES.has(raw)) return raw;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return "";
+    const canonical = parsed.toFixed(1);
+    return SLICE_NOZZLE_DIAMETER_VALUES.has(canonical) ? canonical : "";
+  }
+
+  function normalizeSliceNozzleFlow(value) {
+    const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
+    if (normalized === "normal") return "standard";
+    return SLICE_NOZZLE_FLOW_VALUES.has(normalized) ? normalized : "";
   }
 
   function clampSliceBedSizeMm(value, fallback = 0) {
@@ -4092,6 +4118,10 @@
     if (els.sliceSupportModeSelect) els.sliceSupportModeSelect.value = "auto";
     if (els.sliceSupportTypeSelect) els.sliceSupportTypeSelect.value = "";
     if (els.sliceSupportStyleSelect) els.sliceSupportStyleSelect.value = "";
+    if (els.sliceNozzleLeftDiameterSelect) els.sliceNozzleLeftDiameterSelect.value = "";
+    if (els.sliceNozzleRightDiameterSelect) els.sliceNozzleRightDiameterSelect.value = "";
+    if (els.sliceNozzleLeftFlowSelect) els.sliceNozzleLeftFlowSelect.value = "";
+    if (els.sliceNozzleRightFlowSelect) els.sliceNozzleRightFlowSelect.value = "";
     updateSliceSupportControlsUi();
     if (els.slicePreviewBed) {
       els.slicePreviewBed.textContent = `Plade: ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.width_mm)} x ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.depth_mm)} mm`;
@@ -4131,6 +4161,18 @@
     }
     if (els.sliceSupportStyleSelect) {
       els.sliceSupportStyleSelect.value = normalizeSliceSupportStyle(state.lastSliceSelection.support_style || "");
+    }
+    if (els.sliceNozzleLeftDiameterSelect) {
+      els.sliceNozzleLeftDiameterSelect.value = normalizeSliceNozzleDiameter(state.lastSliceSelection.nozzle_left_diameter || "");
+    }
+    if (els.sliceNozzleRightDiameterSelect) {
+      els.sliceNozzleRightDiameterSelect.value = normalizeSliceNozzleDiameter(state.lastSliceSelection.nozzle_right_diameter || "");
+    }
+    if (els.sliceNozzleLeftFlowSelect) {
+      els.sliceNozzleLeftFlowSelect.value = normalizeSliceNozzleFlow(state.lastSliceSelection.nozzle_left_flow || "");
+    }
+    if (els.sliceNozzleRightFlowSelect) {
+      els.sliceNozzleRightFlowSelect.value = normalizeSliceNozzleFlow(state.lastSliceSelection.nozzle_right_flow || "");
     }
     if (els.sliceProcessSettingsSearchInput) {
       els.sliceProcessSettingsSearchInput.value = "";
@@ -4242,6 +4284,10 @@
     const support_mode = normalizeSliceSupportMode((els.sliceSupportModeSelect && els.sliceSupportModeSelect.value) || "auto");
     const support_type = support_mode === "on" ? normalizeSliceSupportType((els.sliceSupportTypeSelect && els.sliceSupportTypeSelect.value) || "") : "";
     const support_style = support_mode === "on" ? normalizeSliceSupportStyle((els.sliceSupportStyleSelect && els.sliceSupportStyleSelect.value) || "") : "";
+    const nozzle_left_diameter = normalizeSliceNozzleDiameter((els.sliceNozzleLeftDiameterSelect && els.sliceNozzleLeftDiameterSelect.value) || "");
+    const nozzle_right_diameter = normalizeSliceNozzleDiameter((els.sliceNozzleRightDiameterSelect && els.sliceNozzleRightDiameterSelect.value) || "");
+    const nozzle_left_flow = normalizeSliceNozzleFlow((els.sliceNozzleLeftFlowSelect && els.sliceNozzleLeftFlowSelect.value) || "");
+    const nozzle_right_flow = normalizeSliceNozzleFlow((els.sliceNozzleRightFlowSelect && els.sliceNozzleRightFlowSelect.value) || "");
     const rotation = currentSliceRotation();
     const bed = resolveSelectedSliceBedSize();
     const settingsOverrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
@@ -4282,6 +4328,10 @@
       support_mode,
       support_type,
       support_style,
+      nozzle_left_diameter,
+      nozzle_right_diameter,
+      nozzle_left_flow,
+      nozzle_right_flow,
       rotation_x_degrees: rotation.x,
       rotation_y_degrees: rotation.y,
       rotation_z_degrees: rotation.z,
@@ -4519,6 +4569,10 @@
     const supportMode = normalizeSliceSupportMode(profiles.support_mode || "auto");
     const supportType = supportMode === "on" ? normalizeSliceSupportType(profiles.support_type || "") : "";
     const supportStyle = supportMode === "on" ? normalizeSliceSupportStyle(profiles.support_style || "") : "";
+    const nozzleLeftDiameter = normalizeSliceNozzleDiameter(profiles.nozzle_left_diameter || "");
+    const nozzleRightDiameter = normalizeSliceNozzleDiameter(profiles.nozzle_right_diameter || "");
+    const nozzleLeftFlow = normalizeSliceNozzleFlow(profiles.nozzle_left_flow || "");
+    const nozzleRightFlow = normalizeSliceNozzleFlow(profiles.nozzle_right_flow || "");
     const rotationX = clampSliceRotationDeg(profiles.rotation_x_degrees);
     const rotationY = clampSliceRotationDeg(profiles.rotation_y_degrees);
     const rotationZ = clampSliceRotationDeg(profiles.rotation_z_degrees);
@@ -4534,6 +4588,10 @@
     body.support_mode = supportMode;
     if (supportType) body.support_type = supportType;
     if (supportStyle) body.support_style = supportStyle;
+    if (nozzleLeftDiameter) body.nozzle_left_diameter = nozzleLeftDiameter;
+    if (nozzleRightDiameter) body.nozzle_right_diameter = nozzleRightDiameter;
+    if (nozzleLeftFlow) body.nozzle_left_flow = nozzleLeftFlow;
+    if (nozzleRightFlow) body.nozzle_right_flow = nozzleRightFlow;
     body.rotation_x_degrees = rotationX;
     body.rotation_y_degrees = rotationY;
     body.rotation_z_degrees = rotationZ;
@@ -8525,6 +8583,38 @@
         }
       });
     }
+    if (els.sliceNozzleLeftDiameterSelect) {
+      els.sliceNozzleLeftDiameterSelect.addEventListener("change", () => {
+        const normalized = normalizeSliceNozzleDiameter(els.sliceNozzleLeftDiameterSelect.value || "");
+        if (els.sliceNozzleLeftDiameterSelect.value !== normalized) {
+          els.sliceNozzleLeftDiameterSelect.value = normalized;
+        }
+      });
+    }
+    if (els.sliceNozzleRightDiameterSelect) {
+      els.sliceNozzleRightDiameterSelect.addEventListener("change", () => {
+        const normalized = normalizeSliceNozzleDiameter(els.sliceNozzleRightDiameterSelect.value || "");
+        if (els.sliceNozzleRightDiameterSelect.value !== normalized) {
+          els.sliceNozzleRightDiameterSelect.value = normalized;
+        }
+      });
+    }
+    if (els.sliceNozzleLeftFlowSelect) {
+      els.sliceNozzleLeftFlowSelect.addEventListener("change", () => {
+        const normalized = normalizeSliceNozzleFlow(els.sliceNozzleLeftFlowSelect.value || "");
+        if (els.sliceNozzleLeftFlowSelect.value !== normalized) {
+          els.sliceNozzleLeftFlowSelect.value = normalized;
+        }
+      });
+    }
+    if (els.sliceNozzleRightFlowSelect) {
+      els.sliceNozzleRightFlowSelect.addEventListener("change", () => {
+        const normalized = normalizeSliceNozzleFlow(els.sliceNozzleRightFlowSelect.value || "");
+        if (els.sliceNozzleRightFlowSelect.value !== normalized) {
+          els.sliceNozzleRightFlowSelect.value = normalized;
+        }
+      });
+    }
     updateSliceSupportControlsUi();
     syncSliceRotationInputs({ x: 0, y: 0, z: 0 });
     updateSliceToolUi();
@@ -8547,6 +8637,10 @@
           support_mode: String(profiles.support_mode || "auto"),
           support_type: String(profiles.support_type || ""),
           support_style: String(profiles.support_style || ""),
+          nozzle_left_diameter: normalizeSliceNozzleDiameter(profiles.nozzle_left_diameter || ""),
+          nozzle_right_diameter: normalizeSliceNozzleDiameter(profiles.nozzle_right_diameter || ""),
+          nozzle_left_flow: normalizeSliceNozzleFlow(profiles.nozzle_left_flow || ""),
+          nozzle_right_flow: normalizeSliceNozzleFlow(profiles.nozzle_right_flow || ""),
           rotation_x_degrees: clampSliceRotationDeg(profiles.rotation_x_degrees || 0),
           rotation_y_degrees: clampSliceRotationDeg(profiles.rotation_y_degrees || 0),
           rotation_z_degrees: clampSliceRotationDeg(profiles.rotation_z_degrees || 0),
