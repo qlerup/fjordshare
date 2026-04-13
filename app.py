@@ -3064,7 +3064,7 @@ def _build_support_override_load_settings(
             patched_payload[key] = value
             runtime_compat_changed = True
 
-    for runtime_key in ("nozzle_volume_type", "different_extruder", "extruder_count", "new_printer_name"):
+    for runtime_key in ("nozzle_volume_type", "different_extruder", "new_printer_name"):
         if runtime_key in patched_payload:
             continue
         if runtime_key == "nozzle_volume_type":
@@ -3091,13 +3091,12 @@ def _build_support_override_load_settings(
 
     right_nozzle_requested = bool(normalized_nozzle_right_diameter or normalized_nozzle_right_flow)
     if right_nozzle_requested or len(user_nozzle_diameter_values) > 1 or len(user_nozzle_flow_values) > 1:
-        requested_extruders = max(2, detected_extruder_count)
-        _set_runtime_value("extruder_count", requested_extruders)
         if "different_extruder" in patched_payload:
             desired = _profile_bool_setting_value(patched_payload.get("different_extruder"), True)
             _set_runtime_value("different_extruder", desired)
-        else:
-            _set_runtime_value("different_extruder", "1")
+        elif "different_extruder" in template_settings:
+            desired = _profile_bool_setting_value(template_settings.get("different_extruder"), True)
+            _set_runtime_value("different_extruder", desired)
 
     changed = False
     if runtime_compat_changed:
