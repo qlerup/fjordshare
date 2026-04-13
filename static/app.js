@@ -1931,7 +1931,7 @@
   function sliceProcessKeyLooksBoolean(key) {
     const normalized = String(key || "").trim().toLowerCase();
     if (!normalized) return false;
-    return /(^|_)(enable|enabled|is|has|use|only|avoid|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_top_surfaces|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental)($|_)/.test(normalized);
+    return /(^|_)(enable|enabled|is|has|use|only|avoid|detect|combination|embedding|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_top_surfaces|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental)($|_)/.test(normalized);
   }
 
   function normalizeSliceProcessSettingScalar(value, key = "") {
@@ -2104,6 +2104,18 @@
     first_layer_height: "initial_layer_height",
     default_line_width: "line_width",
     perimeter_generator: "wall_generator",
+    perimeters: "wall_loops",
+    wall_count: "wall_loops",
+    wall_line_count: "wall_loops",
+    top_layers: "top_shell_layers",
+    bottom_layers: "bottom_shell_layers",
+    solid_infill_pattern: "internal_solid_infill_pattern",
+    sparse_infill_anchor_length: "length_of_sparse_infill_anchor",
+    sparse_infill_anchor_max_length: "maximum_length_of_sparse_infill_anchor",
+    max_length_of_sparse_infill_anchor: "maximum_length_of_sparse_infill_anchor",
+    infill_overlap: "infill_wall_overlap",
+    infill_walls_overlap: "infill_wall_overlap",
+    minimum_sparse_infill_area: "minimum_sparse_infill_threshold",
     wall_transition_threshold_angle: "wall_transitioning_threshold_angle",
     wall_transition_filter_margin: "wall_transitioning_filter_margin",
     wall_transitioning_length: "wall_transition_length",
@@ -2163,6 +2175,33 @@
     smooth_coefficient: 150,
     avoid_crossing_wall: false,
     smoothing_wall_speed_along_z_experimental: false,
+    wall_loops: 2,
+    embedding_wall_into_infill: false,
+    detect_thin_wall: false,
+    top_surface_pattern: "monotonic",
+    top_surface_density: 100,
+    top_shell_layers: 6,
+    top_shell_thickness: 1,
+    top_paint_penetration_layers: 6,
+    bottom_surface_pattern: "monotonic",
+    bottom_surface_density: 100,
+    bottom_shell_layers: 4,
+    bottom_shell_thickness: 0,
+    bottom_paint_penetration_layers: 4,
+    internal_solid_infill_pattern: "rectilinear",
+    sparse_infill_density: 15,
+    fill_multiline: 1,
+    sparse_infill_pattern: "grid",
+    length_of_sparse_infill_anchor: 400,
+    maximum_length_of_sparse_infill_anchor: 20,
+    infill_wall_overlap: 15,
+    infill_direction: 45,
+    bridge_direction: 0,
+    minimum_sparse_infill_threshold: 15,
+    infill_combination: false,
+    detect_narrow_internal_solid_infill: true,
+    ensure_vertical_shell_thickness: "enabled",
+    detect_floating_vertical_shells: true,
   };
 
   const SLICE_PROCESS_FALLBACK_SETTING_OPTIONS = {
@@ -2176,6 +2215,11 @@
     bridge_flow: [0.8, 0.9, 1, 1.1, 1.2],
     scarf_steps: [5, 10, 15],
     scarf_application_angle_threshold: [120, 135, 150, 155, 170],
+    top_surface_pattern: ["monotonic", "monotonic_line", "rectilinear", "concentric"],
+    bottom_surface_pattern: ["monotonic", "monotonic_line", "rectilinear", "concentric"],
+    internal_solid_infill_pattern: ["rectilinear", "grid", "monotonic", "aligned_rectilinear"],
+    sparse_infill_pattern: ["grid", "gyroid", "cubic", "triangles", "rectilinear", "honeycomb"],
+    ensure_vertical_shell_thickness: ["enabled", "critical_only", "disabled"],
   };
 
   const SLICE_PROCESS_LABEL_OVERRIDES = {
@@ -2240,6 +2284,37 @@
     smooth_coefficient: "Smooth coefficient",
     avoid_crossing_wall: "Avoid crossing wall",
     smoothing_wall_speed_along_z_experimental: "Smoothing wall speed along Z (experimental)",
+    wall_loops: "Wall loops",
+    wall_count: "Wall loops",
+    wall_line_count: "Wall loops",
+    embedding_wall_into_infill: "Embedding the wall into the infill",
+    detect_thin_wall: "Detect thin wall",
+    top_surface_pattern: "Top surface pattern",
+    top_surface_density: "Top surface density",
+    top_shell_layers: "Top shell layers",
+    top_layers: "Top shell layers",
+    top_shell_thickness: "Top shell thickness",
+    top_paint_penetration_layers: "Top paint penetration layers",
+    bottom_surface_pattern: "Bottom surface pattern",
+    bottom_surface_density: "Bottom surface density",
+    bottom_shell_layers: "Bottom shell layers",
+    bottom_layers: "Bottom shell layers",
+    bottom_shell_thickness: "Bottom shell thickness",
+    bottom_paint_penetration_layers: "Bottom paint penetration layers",
+    internal_solid_infill_pattern: "Internal solid infill pattern",
+    sparse_infill_density: "Sparse infill density",
+    fill_multiline: "Fill multiline",
+    sparse_infill_pattern: "Sparse infill pattern",
+    length_of_sparse_infill_anchor: "Length of sparse infill anchor",
+    maximum_length_of_sparse_infill_anchor: "Maximum length of sparse infill anchor",
+    infill_wall_overlap: "Infill/Wall overlap",
+    infill_direction: "Infill direction",
+    bridge_direction: "Bridge direction",
+    minimum_sparse_infill_threshold: "Minimum sparse infill threshold",
+    infill_combination: "Infill combination",
+    detect_narrow_internal_solid_infill: "Detect narrow internal solid infill",
+    ensure_vertical_shell_thickness: "Ensure vertical shell thickness",
+    detect_floating_vertical_shells: "Detect floating vertical shells",
   };
 
   const SLICE_PROCESS_QUALITY_ROW_ORDER = {
@@ -2306,6 +2381,43 @@
     smoothing_wall_speed_along_z_experimental: 100,
   };
 
+  const SLICE_PROCESS_STRENGTH_ROW_ORDER = {
+    wall_loops: 10,
+    wall_count: 10,
+    wall_line_count: 10,
+    embedding_wall_into_infill: 20,
+    detect_thin_wall: 30,
+
+    top_surface_pattern: 10,
+    top_surface_density: 20,
+    top_shell_layers: 30,
+    top_layers: 30,
+    top_shell_thickness: 40,
+    top_paint_penetration_layers: 50,
+    bottom_surface_pattern: 60,
+    bottom_surface_density: 70,
+    bottom_shell_layers: 80,
+    bottom_layers: 80,
+    bottom_shell_thickness: 90,
+    bottom_paint_penetration_layers: 100,
+    internal_solid_infill_pattern: 110,
+
+    sparse_infill_density: 10,
+    fill_multiline: 20,
+    sparse_infill_pattern: 30,
+    length_of_sparse_infill_anchor: 40,
+    maximum_length_of_sparse_infill_anchor: 50,
+
+    infill_wall_overlap: 10,
+    infill_direction: 20,
+    bridge_direction: 30,
+    minimum_sparse_infill_threshold: 40,
+    infill_combination: 50,
+    detect_narrow_internal_solid_infill: 60,
+    ensure_vertical_shell_thickness: 70,
+    detect_floating_vertical_shells: 80,
+  };
+
   function setSliceProcessSettingsActiveTab(tab, rerender = true) {
     const wanted = String(tab || "").trim().toLowerCase();
     state.sliceProcessSettingsActiveTab = SLICE_PROCESS_TAB_ORDER.includes(wanted) ? wanted : "quality";
@@ -2366,6 +2478,17 @@
       if (normalizedValue === "rectilinear") return "Rectilinear";
       if (normalizedValue === "concentric") return "Concentric";
       if (normalizedValue === "zig_zag" || normalizedValue === "zigzag") return "Zig zag";
+    }
+
+    if (canonical === "ensure_vertical_shell_thickness") {
+      if (normalizedValue === "enabled") return "Enabled";
+      if (normalizedValue === "critical_only" || normalizedValue === "critical") return "Critical only";
+      if (normalizedValue === "disabled") return "Disabled";
+    }
+
+    if (processKeyMatches(canonical, [/pattern$/])) {
+      if (normalizedValue === "monotonic_line") return "Monotonic line";
+      if (normalizedValue === "aligned_rectilinear") return "Aligned rectilinear";
     }
 
     return sliceProcessValueToText(optionValue);
@@ -2459,10 +2582,16 @@
 
   function sliceProcessSettingUnit(key) {
     const normalized = normalizeSliceProcessKey(key);
+    if (processKeyMatches(normalized, [/minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/])) return "mm2";
+    if (processKeyMatches(normalized, [/length_of_sparse_infill_anchor/, /maximum_length_of_sparse_infill_anchor/, /sparse_infill_anchor_length/])) {
+      return "mm or %";
+    }
     if (processKeyMatches(normalized, [/(^|_)angle($|_)/])) return "deg";
+    if (processKeyMatches(normalized, [/infill_direction/, /bridge_direction/])) return "deg";
     if (processKeyMatches(normalized, [/(^|_)(filter_margin|transition_length|minimum_wall_width|min_wall_width|minimum_feature_size|min_feature_size)($|_)/])) {
       return "%";
     }
+    if (processKeyMatches(normalized, [/(^|_)(density|overlap)($|_)/])) return "%";
     if (processKeyMatches(normalized, [/(^|_)flow($|_)/])) return "%";
     if (processKeyMatches(normalized, [/(^|_)speed($|_)/])) return "mm/s";
     if (processKeyMatches(normalized, [/(^|_)(height|width|spacing|inset|radius|resolution|distance|offset|compensation|thickness|length|gap)($|_)/])) {
@@ -2500,6 +2629,22 @@
       return { tab: "support", section: "Support", sectionOrder: 10 };
     }
 
+    if (processKeyMatches(normalized, [/^wall_loops$/, /^wall_count$/, /^wall_line_count$/, /embedding_wall_into_infill/, /detect_thin_wall/])) {
+      return { tab: "strength", section: "Walls", sectionOrder: 10 };
+    }
+
+    if (processKeyMatches(normalized, [/top_surface_pattern/, /top_surface_density/, /top_shell_layers/, /top_shell_thickness/, /top_paint_penetration_layers/, /bottom_surface_pattern/, /bottom_surface_density/, /bottom_shell_layers/, /bottom_shell_thickness/, /bottom_paint_penetration_layers/, /internal_solid_infill_pattern/, /solid_infill_pattern/])) {
+      return { tab: "strength", section: "Top/bottom shells", sectionOrder: 20 };
+    }
+
+    if (processKeyMatches(normalized, [/sparse_infill_density/, /fill_multiline/, /sparse_infill_pattern/, /length_of_sparse_infill_anchor/, /maximum_length_of_sparse_infill_anchor/, /sparse_infill_anchor_length/])) {
+      return { tab: "strength", section: "Sparse infill", sectionOrder: 30 };
+    }
+
+    if (processKeyMatches(normalized, [/infill_wall_overlap/, /infill_overlap/, /infill_direction/, /bridge_direction/, /minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/, /infill_combination/, /detect_narrow_internal_solid_infill/, /ensure_vertical_shell_thickness/, /detect_floating_vertical_shells/])) {
+      return { tab: "strength", section: "Advanced", sectionOrder: 40 };
+    }
+
     if (processKeyMatches(normalized, [/infill/, /wall_count/, /wall_loops/, /perimeter/, /shell/, /top_layers/, /bottom_layers/, /strength/])) {
       return { tab: "strength", section: "Strength", sectionOrder: 10 };
     }
@@ -2516,6 +2661,11 @@
     if (section === "Layer height" || section === "Line width" || section === "Seam" || section === "Precision" || section === "Ironing" || section === "Wall generator" || section === "Advanced") {
       if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_QUALITY_ROW_ORDER, normalized)) {
         return SLICE_PROCESS_QUALITY_ROW_ORDER[normalized];
+      }
+    }
+    if (section === "Walls" || section === "Top/bottom shells" || section === "Sparse infill" || section === "Advanced" || section === "Strength") {
+      if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_STRENGTH_ROW_ORDER, normalized)) {
+        return SLICE_PROCESS_STRENGTH_ROW_ORDER[normalized];
       }
     }
     return 500;
