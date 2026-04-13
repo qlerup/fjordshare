@@ -2501,6 +2501,42 @@
     preview.rotateAxisArrowUsesGizmoScale = false;
   }
 
+  function alignSlicePreviewGroundToModel(preview = state.slicePreview) {
+    if (!preview) return;
+
+    let targetZ = 0;
+    const modelBounds = getSliceModelBounds(preview);
+    if (modelBounds) {
+      const modelMinZ = Number(modelBounds.min.z);
+      if (Number.isFinite(modelMinZ)) {
+        targetZ = modelMinZ;
+      }
+    }
+
+    if (preview.plateGroup && preview.THREE) {
+      try {
+        const plateBox = new preview.THREE.Box3().setFromObject(preview.plateGroup);
+        if (plateBox && !plateBox.isEmpty()) {
+          const plateMin = Number(plateBox.min.z);
+          const plateMax = Number(plateBox.max.z);
+          const chosenSurface = Math.abs(plateMax - targetZ) <= Math.abs(plateMin - targetZ) ? plateMax : plateMin;
+          if (Number.isFinite(chosenSurface)) {
+            const delta = targetZ - chosenSurface;
+            if (Math.abs(delta) > 1e-6) {
+              preview.plateGroup.position.z += delta;
+              preview.plateGroup.updateMatrixWorld(true);
+            }
+          }
+        }
+      } catch (_err) {}
+    }
+
+    preview.plateTopZ = targetZ;
+    if (preview.bedMesh) preview.bedMesh.position.z = targetZ;
+    if (preview.bedOutline) preview.bedOutline.position.z = targetZ + 0.2;
+    if (preview.axisGrid) preview.axisGrid.position.z = targetZ - 0.2;
+  }
+
   function updateSliceRotateAxisArrowVisibility(preview = state.slicePreview) {
     if (!preview || !preview.rotateAxisArrowGroup) return;
     preview.rotateAxisArrowGroup.visible = state.sliceActiveTool === "rotate";
@@ -2844,6 +2880,7 @@
       preview.bedOutline.geometry.dispose();
     }
     preview.bedOutline.geometry = new preview.THREE.EdgesGeometry(preview.bedMesh.geometry);
+    alignSlicePreviewGroundToModel(preview);
 
     resizeSlicePreview(preview);
     updateSlicePreviewFootprint();
@@ -2990,6 +3027,7 @@
     preview.plateGroup = group;
     preview.activePlateUrl = assetUrl;
     setSlicePreviewBedVisualMode(false);
+    alignSlicePreviewGroundToModel(preview);
     applySlicePreviewRotation();
     renderSlicePreview();
     return true;
@@ -3003,6 +3041,7 @@
       state.slicePlateLoadToken += 1;
       clearSlicePreviewPlate(preview);
       setSlicePreviewBedVisualMode(true);
+      alignSlicePreviewGroundToModel(preview);
       applySlicePreviewRotation();
       renderSlicePreview();
       return;
@@ -3021,6 +3060,7 @@
     if (!asset) {
       clearSlicePreviewPlate(state.slicePreview);
       setSlicePreviewBedVisualMode(true);
+      alignSlicePreviewGroundToModel(state.slicePreview);
       applySlicePreviewRotation();
       renderSlicePreview();
       return;
@@ -3031,6 +3071,7 @@
       if (!loaded && loadToken === state.slicePlateLoadToken) {
         clearSlicePreviewPlate(state.slicePreview);
         setSlicePreviewBedVisualMode(true);
+        alignSlicePreviewGroundToModel(state.slicePreview);
         applySlicePreviewRotation();
         renderSlicePreview();
       }
@@ -3038,6 +3079,7 @@
       if (loadToken !== state.slicePlateLoadToken) return;
       clearSlicePreviewPlate(state.slicePreview);
       setSlicePreviewBedVisualMode(true);
+      alignSlicePreviewGroundToModel(state.slicePreview);
       applySlicePreviewRotation();
       renderSlicePreview();
     }
@@ -3302,6 +3344,7 @@
       canvas,
       bedMesh,
       bedOutline,
+      axisGrid,
       modelGroup: null,
       rotateAxisArrowGroup: null,
       rotateAxisArrowUsesGizmoScale: false,
@@ -3374,6 +3417,7 @@
     } catch (_err) {
       preview.modelGroup.position.z = targetMinZ;
     }
+    alignSlicePreviewGroundToModel(preview);
     preview.syncingRotation = false;
 
     updateSlicePreviewFootprint();

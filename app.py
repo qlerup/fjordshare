@@ -5663,6 +5663,40 @@ def api_slice_process_settings():
         machine_json=machine_json,
     )
 
+    # Some machine-compatibility filters can resolve to a tiny variant profile
+    # with only a couple of keys. If that happens, retry with explicit process
+    # profile lookup without strict machine filtering.
+    if len(settings) <= 2 and print_profile:
+        fallback_process_json = ""
+        for profile_dir in _candidate_process_profile_dirs(executable):
+            candidate = _pick_profile_json(
+                profile_dir,
+                print_profile,
+                fallback_first=False,
+                machine_profile_json="",
+            )
+            if candidate:
+                fallback_process_json = candidate
+                break
+
+        if fallback_process_json:
+            try:
+                same_profile = Path(fallback_process_json).resolve() == Path(process_json).resolve()
+            except Exception:
+                same_profile = str(fallback_process_json) == str(process_json)
+
+            if not same_profile:
+                fb_settings, fb_options, fb_chain = _resolve_effective_process_profile_settings(
+                    executable,
+                    fallback_process_json,
+                    machine_json="",
+                )
+                if len(fb_settings) > len(settings):
+                    process_json = fallback_process_json
+                    settings = fb_settings
+                    setting_options = fb_options
+                    inherits_chain = fb_chain
+
     # Keep dropdown payload compact while preserving meaningful options.
     compact_options: dict[str, list[Any]] = {}
     for key, options in setting_options.items():
