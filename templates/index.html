@@ -575,44 +575,61 @@
         </div>
 
         <div class="slice-studio-card">
-          <div class="slice-studio-card-title">Rotation (X/Y/Z)</div>
-          <div class="slice-rotate-controls">
-            <div class="slice-rotate-axis">
-              <span class="slice-rotate-axis-label">X</span>
-              <div class="slice-rotate-buttons">
-                <button id="sliceRotateXMinusBtn" class="btn" type="button">-15 deg</button>
-                <input id="sliceRotateXRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation X">
-                <button id="sliceRotateXPlusBtn" class="btn" type="button">+15 deg</button>
-              </div>
+          <div class="slice-studio-card-title">Rotation (ringe + værdier)</div>
+          <div class="slice-rotate-input-grid">
+            <div class="slice-modal-field">
+              <label for="sliceRotateXInput">X (deg)</label>
+              <input id="sliceRotateXInput" class="input" type="number" step="1" min="-180" max="180" value="0">
               <div id="sliceRotateXValue" class="hint">0 deg</div>
             </div>
-            <div class="slice-rotate-axis">
-              <span class="slice-rotate-axis-label">Y</span>
-              <div class="slice-rotate-buttons">
-                <button id="sliceRotateYMinusBtn" class="btn" type="button">-15 deg</button>
-                <input id="sliceRotateYRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation Y">
-                <button id="sliceRotateYPlusBtn" class="btn" type="button">+15 deg</button>
-              </div>
+            <div class="slice-modal-field">
+              <label for="sliceRotateYInput">Y (deg)</label>
+              <input id="sliceRotateYInput" class="input" type="number" step="1" min="-180" max="180" value="0">
               <div id="sliceRotateYValue" class="hint">0 deg</div>
             </div>
-            <div class="slice-rotate-axis">
-              <span class="slice-rotate-axis-label">Z</span>
-              <div class="slice-rotate-buttons">
-                <button id="sliceRotateZMinusBtn" class="btn" type="button">-15 deg</button>
-                <input id="sliceRotateZRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation Z">
-                <button id="sliceRotateZPlusBtn" class="btn" type="button">+15 deg</button>
-              </div>
+            <div class="slice-modal-field">
+              <label for="sliceRotateZInput">Z (deg)</label>
+              <input id="sliceRotateZInput" class="input" type="number" step="1" min="-180" max="180" value="0">
               <div id="sliceRotateZValue" class="hint">0 deg</div>
             </div>
           </div>
-          <div class="slice-lift-controls">
-            <label>Z-placering</label>
-            <div class="hint">Objektet lægges automatisk ned på pladen efter rotation (fast kontaktpunkt).</div>
+          <div class="slice-rotate-row-actions">
+            <button id="sliceToolResetRotationBtn" class="btn" type="button">Nulstil rotation</button>
           </div>
+          <div class="slice-lift-controls">
+            <label>Tip</label>
+            <div class="hint">Vælg rotate-tool i topbaren for at rotere med 3D-ringe, ligesom i Bambu Studio.</div>
+          </div>
+        </div>
+
+        <div class="slice-studio-card">
+          <div class="slice-studio-card-title">Process settings (redigér profil)</div>
+          <div class="slice-process-settings-head">
+            <input id="sliceProcessSettingsSearchInput" class="input" type="search" placeholder="Søg i settings...">
+            <button id="sliceProcessSettingsResetBtn" class="btn" type="button">Nulstil ændringer</button>
+          </div>
+          <div id="sliceProcessSettingsMeta" class="hint">Indlæser process settings...</div>
+          <div id="sliceProcessSettingsList" class="slice-process-settings-list"></div>
+          <div class="hint">Ændringer bliver sendt som overrides oven på den valgte process-profil ved slicing.</div>
+          <div id="sliceProcessSettingsStatus" class="status hidden"></div>
+        </div>
+
+        <div class="slice-studio-card">
+          <div class="slice-studio-card-title">Direkte overrides (JSON)</div>
+          <div class="hint">Valgfrit: skriv ekstra process-overrides som JSON objekt (fx {"brim_width": 6, "outer_wall_speed": 120}).</div>
+          <textarea id="sliceProcessOverridesInput" class="textarea" rows="4" placeholder='{"key": "value"}'></textarea>
+          <div class="hint">Bruges kun hvis feltet ikke er tomt.</div>
         </div>
       </aside>
 
       <section class="slice-studio-stage">
+        <div class="slice-stage-toolbar">
+          <div class="slice-stage-tool-group">
+            <button id="sliceToolViewBtn" class="btn active" type="button">View</button>
+            <button id="sliceToolRotateBtn" class="btn" type="button">Rotate</button>
+          </div>
+          <div class="slice-stage-tool-hint">Rotate viser ring-gizmo på modellen. View er fri orbit-kontrol.</div>
+        </div>
         <div class="slice-preview-wrap">
           <div class="slice-preview-canvas-wrap">
             <canvas id="slicePreviewCanvas" class="slice-preview-canvas" aria-label="Printplade preview"></canvas>

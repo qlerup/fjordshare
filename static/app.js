@@ -26,6 +26,12 @@
     currentSliceFileId: 0,
     sliceProfiles: null,
     slicerSettings: null,
+    sliceActiveTool: "view",
+    sliceRotation: { x: 0, y: 0, z: 0 },
+    sliceProcessSettingsBase: {},
+    sliceProcessSettingsProfileKey: "",
+    sliceProcessSettingsOverrides: {},
+    sliceProcessSettingsLoadToken: 0,
     currentSlicerUploadKind: "",
     currentSlicerUploadFiles: [],
     slicerBedMapHiddenNames: new Set(),
@@ -37,7 +43,12 @@
       support_mode: "auto",
       support_type: "",
       support_style: "",
+      rotation_x_degrees: 0,
+      rotation_y_degrees: 0,
+      rotation_z_degrees: 0,
       lift_z_mm: 0,
+      process_overrides: {},
+      process_overrides_text: "",
     },
     sliceStatusWasPending: false,
     sliceStatusHoldUntil: 0,
@@ -158,18 +169,15 @@
     slicePreviewBed: document.getElementById("slicePreviewBed"),
     slicePreviewFootprint: document.getElementById("slicePreviewFootprint"),
     slicePreviewHeight: document.getElementById("slicePreviewHeight"),
-    sliceRotateXRange: document.getElementById("sliceRotateXRange"),
+    sliceToolViewBtn: document.getElementById("sliceToolViewBtn"),
+    sliceToolRotateBtn: document.getElementById("sliceToolRotateBtn"),
+    sliceToolResetRotationBtn: document.getElementById("sliceToolResetRotationBtn"),
+    sliceRotateXInput: document.getElementById("sliceRotateXInput"),
     sliceRotateXValue: document.getElementById("sliceRotateXValue"),
-    sliceRotateXMinusBtn: document.getElementById("sliceRotateXMinusBtn"),
-    sliceRotateXPlusBtn: document.getElementById("sliceRotateXPlusBtn"),
-    sliceRotateYRange: document.getElementById("sliceRotateYRange"),
+    sliceRotateYInput: document.getElementById("sliceRotateYInput"),
     sliceRotateYValue: document.getElementById("sliceRotateYValue"),
-    sliceRotateYMinusBtn: document.getElementById("sliceRotateYMinusBtn"),
-    sliceRotateYPlusBtn: document.getElementById("sliceRotateYPlusBtn"),
-    sliceRotateZRange: document.getElementById("sliceRotateZRange"),
+    sliceRotateZInput: document.getElementById("sliceRotateZInput"),
     sliceRotateZValue: document.getElementById("sliceRotateZValue"),
-    sliceRotateZMinusBtn: document.getElementById("sliceRotateZMinusBtn"),
-    sliceRotateZPlusBtn: document.getElementById("sliceRotateZPlusBtn"),
     sliceLiftZRange: document.getElementById("sliceLiftZRange"),
     sliceLiftZValue: document.getElementById("sliceLiftZValue"),
     sliceLiftZMinusBtn: document.getElementById("sliceLiftZMinusBtn"),
@@ -177,6 +185,12 @@
     sliceSupportModeSelect: document.getElementById("sliceSupportModeSelect"),
     sliceSupportTypeSelect: document.getElementById("sliceSupportTypeSelect"),
     sliceSupportStyleSelect: document.getElementById("sliceSupportStyleSelect"),
+    sliceProcessSettingsSearchInput: document.getElementById("sliceProcessSettingsSearchInput"),
+    sliceProcessSettingsResetBtn: document.getElementById("sliceProcessSettingsResetBtn"),
+    sliceProcessSettingsMeta: document.getElementById("sliceProcessSettingsMeta"),
+    sliceProcessSettingsList: document.getElementById("sliceProcessSettingsList"),
+    sliceProcessSettingsStatus: document.getElementById("sliceProcessSettingsStatus"),
+    sliceProcessOverridesInput: document.getElementById("sliceProcessOverridesInput"),
     metadataModal: document.getElementById("metadataModal"),
     metadataStepCounter: document.getElementById("metadataStepCounter"),
     metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
@@ -1745,11 +1759,11 @@
     return Math.max(40, Math.min(2000, numeric));
   }
 
-  function rotationRangeElementForAxis(axis) {
+  function rotationInputElementForAxis(axis) {
     const key = String(axis || "").toLowerCase();
-    if (key === "x") return els.sliceRotateXRange;
-    if (key === "y") return els.sliceRotateYRange;
-    return els.sliceRotateZRange;
+    if (key === "x") return els.sliceRotateXInput;
+    if (key === "y") return els.sliceRotateYInput;
+    return els.sliceRotateZInput;
   }
 
   function rotationValueElementForAxis(axis) {
@@ -1761,9 +1775,9 @@
 
   function currentSliceRotation() {
     return {
-      x: clampSliceRotationDeg((els.sliceRotateXRange && els.sliceRotateXRange.value) || 0),
-      y: clampSliceRotationDeg((els.sliceRotateYRange && els.sliceRotateYRange.value) || 0),
-      z: clampSliceRotationDeg((els.sliceRotateZRange && els.sliceRotateZRange.value) || 0),
+      x: clampSliceRotationDeg(state.sliceRotation && state.sliceRotation.x),
+      y: clampSliceRotationDeg(state.sliceRotation && state.sliceRotation.y),
+      z: clampSliceRotationDeg(state.sliceRotation && state.sliceRotation.z),
     };
   }
 
@@ -1775,6 +1789,32 @@
     const valueEl = rotationValueElementForAxis(axis);
     if (!valueEl) return;
     valueEl.textContent = `${clampSliceRotationDeg(rotationDeg)} deg`;
+  }
+
+  function syncSliceRotationInputs(rotation = null) {
+    const next = rotation && typeof rotation === "object" ? rotation : currentSliceRotation();
+    const x = clampSliceRotationDeg(next.x);
+    const y = clampSliceRotationDeg(next.y);
+    const z = clampSliceRotationDeg(next.z);
+
+    if (!state.sliceRotation || typeof state.sliceRotation !== "object") {
+      state.sliceRotation = { x, y, z };
+    } else {
+      state.sliceRotation.x = x;
+      state.sliceRotation.y = y;
+      state.sliceRotation.z = z;
+    }
+
+    const xInput = rotationInputElementForAxis("x");
+    if (xInput) xInput.value = String(x);
+    const yInput = rotationInputElementForAxis("y");
+    if (yInput) yInput.value = String(y);
+    const zInput = rotationInputElementForAxis("z");
+    if (zInput) zInput.value = String(z);
+
+    setSliceRotateAxisValueText("x", x);
+    setSliceRotateAxisValueText("y", y);
+    setSliceRotateAxisValueText("z", z);
   }
 
   function setSliceLiftValueText(valueMm) {
@@ -1814,6 +1854,185 @@
       styleSelect.disabled = disableDetails;
       if (disableDetails) styleSelect.value = "";
     }
+  }
+
+  function sliceProcessSettingsProfileKey() {
+    const printer = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim().toLowerCase();
+    const print = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim().toLowerCase();
+    const filament = String((els.sliceFilamentProfileSelect && els.sliceFilamentProfileSelect.value) || "").trim().toLowerCase();
+    return `${printer}|${print}|${filament}`;
+  }
+
+  function normalizeSliceProcessSettingScalar(value) {
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") return value;
+    return null;
+  }
+
+  function normalizeSliceProcessSettingsMap(raw) {
+    if (!raw || typeof raw !== "object") return {};
+    const out = {};
+    Object.entries(raw).forEach(([keyRaw, valueRaw]) => {
+      const key = String(keyRaw || "").trim();
+      if (!key) return;
+      if (key.length > 120) return;
+      const value = normalizeSliceProcessSettingScalar(valueRaw);
+      if (value === null) return;
+      out[key] = value;
+    });
+    return out;
+  }
+
+  function sliceProcessValueEquals(a, b) {
+    if (typeof a === "number" && typeof b === "number") {
+      return Math.abs(a - b) < 1e-9;
+    }
+    return a === b;
+  }
+
+  function sliceProcessValueInputType(value) {
+    if (typeof value === "boolean") return "bool";
+    if (typeof value === "number") return "number";
+    return "string";
+  }
+
+  function sliceProcessValueToText(value) {
+    if (typeof value === "boolean") return value ? "true" : "false";
+    if (typeof value === "number") return formatNumberCompact(value);
+    return String(value || "");
+  }
+
+  function parseSliceProcessOverrideByType(baseValue, rawValue, valueType = "string") {
+    if (valueType === "bool") {
+      return !!rawValue;
+    }
+    if (valueType === "number") {
+      const n = Number(rawValue);
+      if (Number.isFinite(n)) return n;
+      return Number(baseValue || 0);
+    }
+    return String(rawValue == null ? "" : rawValue);
+  }
+
+  function parseSliceProcessOverridesJsonInput() {
+    if (!els.sliceProcessOverridesInput) return {};
+    const text = String(els.sliceProcessOverridesInput.value || "").trim();
+    if (!text) return {};
+    let parsed = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch (_err) {
+      throw new Error("Direkte overrides skal være gyldig JSON (objekt).");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Direkte overrides skal være et JSON objekt med key/value.");
+    }
+    const normalized = normalizeSliceProcessSettingsMap(parsed);
+    return normalized;
+  }
+
+  function renderSliceProcessSettingsList() {
+    if (!els.sliceProcessSettingsList) return;
+    const base = state.sliceProcessSettingsBase && typeof state.sliceProcessSettingsBase === "object"
+      ? state.sliceProcessSettingsBase
+      : {};
+    const overrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
+      ? state.sliceProcessSettingsOverrides
+      : {};
+    const search = String((els.sliceProcessSettingsSearchInput && els.sliceProcessSettingsSearchInput.value) || "").trim().toLowerCase();
+    const keys = Object.keys(base).sort((a, b) => a.localeCompare(b, "da"));
+    const filtered = search
+      ? keys.filter((key) => key.toLowerCase().includes(search))
+      : keys;
+
+    if (!filtered.length) {
+      els.sliceProcessSettingsList.innerHTML = `<div class="slice-process-setting-row"><div class="hint">Ingen settings matcher søgningen.</div><div></div></div>`;
+    } else {
+      const rows = filtered.map((key) => {
+        const baseValue = base[key];
+        const hasOverride = Object.prototype.hasOwnProperty.call(overrides, key);
+        const currentValue = hasOverride ? overrides[key] : baseValue;
+        const valueType = sliceProcessValueInputType(baseValue);
+        const keyEsc = esc(key);
+        if (valueType === "bool") {
+          return `
+            <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+              <div class="slice-process-setting-key">${keyEsc}</div>
+              <label class="slice-process-setting-bool">
+                <input type="checkbox" data-slice-setting-key="${keyEsc}" data-slice-setting-type="bool" ${currentValue ? "checked" : ""}>
+                <span>${currentValue ? "On" : "Off"}</span>
+              </label>
+            </div>
+          `;
+        }
+        const inputType = valueType === "number" ? "number" : "text";
+        const valueText = valueType === "number" ? String(currentValue) : sliceProcessValueToText(currentValue);
+        const stepAttr = valueType === "number" ? ` step="any"` : "";
+        return `
+          <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+            <div class="slice-process-setting-key">${keyEsc}</div>
+            <input class="input" type="${inputType}"${stepAttr} data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}" value="${esc(valueText)}">
+          </div>
+        `;
+      });
+      els.sliceProcessSettingsList.innerHTML = rows.join("");
+    }
+
+    const changedCount = Object.keys(overrides).length;
+    if (els.sliceProcessSettingsMeta) {
+      const totalCount = keys.length;
+      const shownCount = filtered.length;
+      els.sliceProcessSettingsMeta.textContent = `Settings: ${shownCount}/${totalCount} vist | Ændret: ${changedCount}`;
+    }
+  }
+
+  async function loadSliceProcessSettings(force = false) {
+    const profileKey = sliceProcessSettingsProfileKey();
+    if (!force && profileKey && state.sliceProcessSettingsProfileKey === profileKey && Object.keys(state.sliceProcessSettingsBase || {}).length) {
+      renderSliceProcessSettingsList();
+      return;
+    }
+
+    const params = new URLSearchParams();
+    const printer = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
+    const print = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim();
+    const filament = String((els.sliceFilamentProfileSelect && els.sliceFilamentProfileSelect.value) || "").trim();
+    if (printer) params.set("printer_profile", printer);
+    if (print) params.set("print_profile", print);
+    if (filament) params.set("filament_profile", filament);
+
+    const token = ++state.sliceProcessSettingsLoadToken;
+    if (els.sliceProcessSettingsMeta) {
+      els.sliceProcessSettingsMeta.textContent = "Indlæser process settings...";
+    }
+
+    const data = await api(`/api/slice/process-settings?${params.toString()}`);
+    if (token !== state.sliceProcessSettingsLoadToken) return;
+    state.sliceProcessSettingsProfileKey = profileKey;
+    state.sliceProcessSettingsBase = normalizeSliceProcessSettingsMap(data && data.settings);
+    state.sliceProcessSettingsOverrides = {};
+    renderSliceProcessSettingsList();
+    showStatus(els.sliceProcessSettingsStatus, "");
+  }
+
+  function updateSliceProcessSettingOverride(key, value, valueType = "string") {
+    const name = String(key || "").trim();
+    if (!name) return;
+    const base = state.sliceProcessSettingsBase && typeof state.sliceProcessSettingsBase === "object"
+      ? state.sliceProcessSettingsBase
+      : {};
+    if (!Object.prototype.hasOwnProperty.call(base, name)) return;
+    const next = parseSliceProcessOverrideByType(base[name], value, valueType);
+    if (!state.sliceProcessSettingsOverrides || typeof state.sliceProcessSettingsOverrides !== "object") {
+      state.sliceProcessSettingsOverrides = {};
+    }
+    if (sliceProcessValueEquals(base[name], next)) {
+      delete state.sliceProcessSettingsOverrides[name];
+    } else {
+      state.sliceProcessSettingsOverrides[name] = next;
+    }
+    renderSliceProcessSettingsList();
   }
 
   function setSlicePreviewFootprint(text, kind = "") {
@@ -2196,14 +2415,43 @@
     }
     if (preview.controls && typeof preview.controls.dispose === "function") {
       try {
-        preview.controls.dispose();
+      preview.controls.dispose();
       } catch (_err) {}
+    }
+
+    if (preview.transformControls) {
+      if (preview.onTransformDraggingChanged && typeof preview.transformControls.removeEventListener === "function") {
+        try {
+          preview.transformControls.removeEventListener("dragging-changed", preview.onTransformDraggingChanged);
+        } catch (_err) {}
+      }
+      if (preview.onTransformObjectChange && typeof preview.transformControls.removeEventListener === "function") {
+        try {
+          preview.transformControls.removeEventListener("objectChange", preview.onTransformObjectChange);
+        } catch (_err) {}
+      }
+      if (typeof preview.transformControls.detach === "function") {
+        try {
+          preview.transformControls.detach();
+        } catch (_err) {}
+      }
+      if (preview.scene) {
+        try {
+          preview.scene.remove(preview.transformControls);
+        } catch (_err) {}
+      }
+      if (typeof preview.transformControls.dispose === "function") {
+        try {
+          preview.transformControls.dispose();
+        } catch (_err) {}
+      }
     }
 
     if (preview.scene && preview.modelGroup) {
       preview.scene.remove(preview.modelGroup);
       disposeSlicePreviewObject(preview.modelGroup);
       preview.modelGroup = null;
+      updateSliceTransformControlsAttachment();
     }
 
     clearSlicePreviewPlate(preview);
@@ -2240,7 +2488,7 @@
     if (!els.slicePreviewCanvas) return null;
 
     const modules = await ensureThreeModules();
-    const { THREE, OrbitControls } = modules;
+    const { THREE, OrbitControls, TransformControls } = modules;
     const canvas = els.slicePreviewCanvas;
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -2295,6 +2543,35 @@
     const onControlsChange = () => renderSlicePreview();
     controls.addEventListener("change", onControlsChange);
 
+    const transformControls = new TransformControls(camera, canvas);
+    transformControls.setMode("rotate");
+    transformControls.setSpace("local");
+    transformControls.enabled = false;
+    transformControls.visible = false;
+    const onTransformDraggingChanged = (event) => {
+      if (controls) {
+        controls.enabled = !event.value;
+      }
+      if (!event.value) {
+        const currentPreview = state.slicePreview;
+        if (!currentPreview || currentPreview !== preview) return;
+        if (currentPreview.syncingRotation) return;
+        syncSliceRotationFromModel();
+        applySlicePreviewRotation();
+      }
+    };
+    const onTransformObjectChange = () => {
+      const currentPreview = state.slicePreview;
+      if (!currentPreview || currentPreview !== preview) return;
+      if (currentPreview.syncingRotation) return;
+      syncSliceRotationFromModel();
+      updateSlicePreviewFootprint();
+      renderSlicePreview();
+    };
+    transformControls.addEventListener("dragging-changed", onTransformDraggingChanged);
+    transformControls.addEventListener("objectChange", onTransformObjectChange);
+    scene.add(transformControls);
+
     const preview = {
       THREE,
       renderer,
@@ -2302,6 +2579,9 @@
       camera,
       controls,
       onControlsChange,
+      transformControls,
+      onTransformDraggingChanged,
+      onTransformObjectChange,
       canvas,
       bedMesh,
       bedOutline,
@@ -2313,6 +2593,7 @@
       halfBase: Math.max(DEFAULT_SLICE_BED_SIZE_MM.width_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm) * 0.66,
       viewDistanceBase: 0,
       viewInitialized: false,
+      syncingRotation: false,
       onResize: null,
       resizeObserver: null,
     };
@@ -2330,6 +2611,7 @@
     }
 
     state.slicePreview = preview;
+    updateSliceTransformControlsAttachment();
     resizeSlicePreview(preview);
     return preview;
   }
@@ -2339,6 +2621,7 @@
     if (!preview || !preview.modelGroup) return;
     const rotation = currentSliceRotation();
     const liftMm = currentSliceLiftMm();
+    preview.syncingRotation = true;
     preview.modelGroup.rotation.set(
       (rotation.x * Math.PI) / 180,
       (rotation.y * Math.PI) / 180,
@@ -2356,26 +2639,81 @@
     } catch (_err) {
       preview.modelGroup.position.z = liftMm;
     }
+    preview.syncingRotation = false;
 
     updateSlicePreviewFootprint();
     renderSlicePreview();
   }
 
+  function syncSliceRotationFromModel() {
+    const preview = state.slicePreview;
+    if (!preview || !preview.modelGroup) return;
+    const e = preview.modelGroup.rotation || null;
+    if (!e) return;
+    const next = {
+      x: clampSliceRotationDeg((Number(e.x || 0) * 180) / Math.PI),
+      y: clampSliceRotationDeg((Number(e.y || 0) * 180) / Math.PI),
+      z: clampSliceRotationDeg((Number(e.z || 0) * 180) / Math.PI),
+    };
+    syncSliceRotationInputs(next);
+  }
+
+  function updateSliceToolUi() {
+    const mode = state.sliceActiveTool === "rotate" ? "rotate" : "view";
+    if (els.sliceToolViewBtn) els.sliceToolViewBtn.classList.toggle("active", mode === "view");
+    if (els.sliceToolRotateBtn) els.sliceToolRotateBtn.classList.toggle("active", mode === "rotate");
+  }
+
+  function updateSliceTransformControlsAttachment() {
+    const preview = state.slicePreview;
+    if (!preview || !preview.transformControls) return;
+    const mode = state.sliceActiveTool === "rotate" ? "rotate" : "view";
+    const canAttach = !!preview.modelGroup;
+
+    if (mode === "rotate" && canAttach) {
+      preview.transformControls.enabled = true;
+      preview.transformControls.visible = true;
+      preview.transformControls.setMode("rotate");
+      if (preview.transformControls.object !== preview.modelGroup) {
+        preview.transformControls.attach(preview.modelGroup);
+      }
+    } else {
+      preview.transformControls.enabled = false;
+      preview.transformControls.visible = false;
+      if (preview.transformControls.object) {
+        preview.transformControls.detach();
+      }
+    }
+    renderSlicePreview();
+  }
+
+  function setSliceToolMode(mode = "view") {
+    state.sliceActiveTool = String(mode || "").toLowerCase() === "rotate" ? "rotate" : "view";
+    updateSliceToolUi();
+    updateSliceTransformControlsAttachment();
+  }
+
   function setSliceModalRotationAxis(axis, rotationDeg) {
     const normalized = clampSliceRotationDeg(rotationDeg);
-    const rangeEl = rotationRangeElementForAxis(axis);
-    if (rangeEl) {
-      rangeEl.value = String(normalized);
+    if (!state.sliceRotation || typeof state.sliceRotation !== "object") {
+      state.sliceRotation = { x: 0, y: 0, z: 0 };
     }
-    setSliceRotateAxisValueText(axis, normalized);
+    const key = String(axis || "").toLowerCase();
+    if (key === "x" || key === "y" || key === "z") {
+      state.sliceRotation[key] = normalized;
+    }
+    syncSliceRotationInputs(state.sliceRotation);
     applySlicePreviewRotation();
   }
 
   function setSliceModalRotation(rotation = null) {
     const next = rotation && typeof rotation === "object" ? rotation : {};
-    setSliceModalRotationAxis("x", next.x || 0);
-    setSliceModalRotationAxis("y", next.y || 0);
-    setSliceModalRotationAxis("z", next.z || 0);
+    syncSliceRotationInputs({
+      x: next.x || 0,
+      y: next.y || 0,
+      z: next.z || 0,
+    });
+    applySlicePreviewRotation();
   }
 
   function setSliceModalLiftMm(valueMm) {
@@ -2460,6 +2798,7 @@
     modelGroup.add(outline);
     preview.scene.add(modelGroup);
     preview.modelGroup = modelGroup;
+    updateSliceTransformControlsAttachment();
 
     setSliceModalRotation(currentSliceRotation());
     setSliceModalLiftMm(currentSliceLiftMm());
@@ -2498,7 +2837,21 @@
     state.slicePreviewLoadToken += 1;
     clearSlicePreview();
     state.currentSliceFileId = 0;
-    setSliceModalRotation({ x: 0, y: 0, z: 0 });
+    state.sliceProcessSettingsBase = {};
+    state.sliceProcessSettingsOverrides = {};
+    state.sliceProcessSettingsProfileKey = "";
+    state.sliceProcessSettingsLoadToken += 1;
+    if (els.sliceProcessSettingsSearchInput) els.sliceProcessSettingsSearchInput.value = "";
+    if (els.sliceProcessOverridesInput) els.sliceProcessOverridesInput.value = "";
+    if (els.sliceProcessSettingsList) els.sliceProcessSettingsList.innerHTML = "";
+    if (els.sliceProcessSettingsMeta) els.sliceProcessSettingsMeta.textContent = "Ingen process settings indlæst.";
+    showStatus(els.sliceProcessSettingsStatus, "");
+    setSliceModalRotation({
+      x: clampSliceRotationDeg(state.lastSliceSelection.rotation_x_degrees || 0),
+      y: clampSliceRotationDeg(state.lastSliceSelection.rotation_y_degrees || 0),
+      z: clampSliceRotationDeg(state.lastSliceSelection.rotation_z_degrees || 0),
+    });
+    setSliceToolMode("view");
     setSliceModalLiftMm(0);
     if (els.sliceSupportModeSelect) els.sliceSupportModeSelect.value = "auto";
     if (els.sliceSupportTypeSelect) els.sliceSupportTypeSelect.value = "";
@@ -2521,8 +2874,13 @@
 
     state.currentSliceFileId = Number(file.id || 0);
     state.slicePlateAssets = null;
+    state.sliceProcessSettingsBase = {};
+    state.sliceProcessSettingsOverrides = {};
+    state.sliceProcessSettingsProfileKey = "";
+    state.sliceProcessSettingsLoadToken += 1;
     if (els.sliceModalFileName) els.sliceModalFileName.textContent = String(file.filename || "-");
     if (els.sliceModal) els.sliceModal.classList.remove("hidden");
+    setSliceToolMode("rotate");
     setSliceModalRotation({ x: 0, y: 0, z: 0 });
     setSliceModalLiftMm(clampSliceLiftMm(state.lastSliceSelection.lift_z_mm, 0));
     if (els.sliceSupportModeSelect) {
@@ -2533,6 +2891,12 @@
     }
     if (els.sliceSupportStyleSelect) {
       els.sliceSupportStyleSelect.value = normalizeSliceSupportStyle(state.lastSliceSelection.support_style || "");
+    }
+    if (els.sliceProcessOverridesInput) {
+      els.sliceProcessOverridesInput.value = String(state.lastSliceSelection.process_overrides_text || "");
+    }
+    if (els.sliceProcessSettingsSearchInput) {
+      els.sliceProcessSettingsSearchInput.value = "";
     }
     updateSliceSupportControlsUi();
     setSlicePreviewFootprint("Model footprint: Klargor preview...");
@@ -2555,6 +2919,25 @@
         renderKnownPrinterSelect(els.sliceKnownPrinterSelect, guessed);
       }
       refreshSlicePreviewBedFromSelection();
+      try {
+        await loadSliceProcessSettings(true);
+        const rememberedOverrides = state.lastSliceSelection.process_overrides && typeof state.lastSliceSelection.process_overrides === "object"
+          ? normalizeSliceProcessSettingsMap(state.lastSliceSelection.process_overrides)
+          : {};
+        const rememberedForCurrent = {};
+        Object.entries(rememberedOverrides).forEach(([key, value]) => {
+          if (Object.prototype.hasOwnProperty.call(state.sliceProcessSettingsBase, key)) {
+            rememberedForCurrent[key] = value;
+          }
+        });
+        state.sliceProcessSettingsOverrides = rememberedForCurrent;
+        renderSliceProcessSettingsList();
+      } catch (processErr) {
+        if (els.sliceProcessSettingsMeta) {
+          els.sliceProcessSettingsMeta.textContent = "Kunne ikke indlæse process settings.";
+        }
+        showStatus(els.sliceProcessSettingsStatus, (processErr && processErr.message) || "Kunne ikke hente process settings", "error");
+      }
 
       if (profiles.parse_error) {
         showStatus(els.sliceModalStatus, `Profil-læsning: ${profiles.parse_error}`, "error");
@@ -2574,6 +2957,12 @@
       showStatus(els.sliceModalStatus, err.message || "Kunne ikke hente slice-profiler", "error");
       if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
       refreshSlicePreviewBedFromSelection();
+      if (els.sliceProcessSettingsMeta) {
+        els.sliceProcessSettingsMeta.textContent = "Kunne ikke indlæse process settings.";
+      }
+      if (els.sliceProcessSettingsList) {
+        els.sliceProcessSettingsList.innerHTML = "";
+      }
     }
 
     setupSliceModalPreview(file).catch((err) => {
@@ -2591,6 +2980,12 @@
     const support_style = support_mode === "on" ? normalizeSliceSupportStyle((els.sliceSupportStyleSelect && els.sliceSupportStyleSelect.value) || "") : "";
     const rotation = currentSliceRotation();
     const bed = resolveSelectedSliceBedSize();
+    const settingsOverrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
+      ? state.sliceProcessSettingsOverrides
+      : {};
+    const directOverrides = parseSliceProcessOverridesJsonInput();
+    const process_overrides = { ...settingsOverrides, ...directOverrides };
+    const process_overrides_text = String((els.sliceProcessOverridesInput && els.sliceProcessOverridesInput.value) || "");
     return {
       printer_profile,
       print_profile,
@@ -2604,6 +2999,8 @@
       lift_z_mm: 0,
       bed_width_mm: clampSliceBedSizeMm(bed && bed.width_mm, DEFAULT_SLICE_BED_SIZE_MM.width_mm),
       bed_depth_mm: clampSliceBedSizeMm(bed && bed.depth_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
+      process_overrides,
+      process_overrides_text,
     };
   }
 
@@ -2840,6 +3237,9 @@
     const liftZ = clampSliceLiftMm(profiles.lift_z_mm, 0);
     const bedWidth = clampSliceBedSizeMm(profiles.bed_width_mm, 0);
     const bedDepth = clampSliceBedSizeMm(profiles.bed_depth_mm, 0);
+    const processOverrides = profiles.process_overrides && typeof profiles.process_overrides === "object"
+      ? normalizeSliceProcessSettingsMap(profiles.process_overrides)
+      : {};
     if (printerProfile) body.printer_profile = printerProfile;
     if (printProfile) body.print_profile = printProfile;
     if (filamentProfile) body.filament_profile = filamentProfile;
@@ -2852,6 +3252,7 @@
     body.lift_z_mm = liftZ;
     if (bedWidth > 0) body.bed_width_mm = bedWidth;
     if (bedDepth > 0) body.bed_depth_mm = bedDepth;
+    if (Object.keys(processOverrides).length) body.process_overrides = processOverrides;
     const options = { method: "POST" };
     if (Object.keys(body).length) options.body = body;
     const data = await api(`/api/files/${id}/slice`, options);
@@ -4902,6 +5303,7 @@
       {
         three: "https://esm.sh/three@0.166.1",
         orbit: "https://esm.sh/three@0.166.1/examples/jsm/controls/OrbitControls.js",
+        transform: "https://esm.sh/three@0.166.1/examples/jsm/controls/TransformControls.js",
         fly: "https://esm.sh/three@0.166.1/examples/jsm/controls/FlyControls.js",
         stl: "https://esm.sh/three@0.166.1/examples/jsm/loaders/STLLoader.js",
         obj: "https://esm.sh/three@0.166.1/examples/jsm/loaders/OBJLoader.js",
@@ -4909,6 +5311,7 @@
       {
         three: "https://cdn.jsdelivr.net/npm/three@0.166.1/+esm",
         orbit: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/OrbitControls.js/+esm",
+        transform: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/TransformControls.js/+esm",
         fly: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/controls/FlyControls.js/+esm",
         stl: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/STLLoader.js/+esm",
         obj: "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/loaders/OBJLoader.js/+esm",
@@ -4919,13 +5322,14 @@
     for (const src of sources) {
       try {
         const THREE = await import(src.three);
-        const [{ OrbitControls }, { FlyControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
+        const [{ OrbitControls }, { TransformControls }, { FlyControls }, { STLLoader }, { OBJLoader }] = await Promise.all([
           import(src.orbit),
+          import(src.transform),
           import(src.fly),
           import(src.stl),
           import(src.obj),
         ]);
-        state.threeModules = { THREE, OrbitControls, FlyControls, STLLoader, OBJLoader };
+        state.threeModules = { THREE, OrbitControls, TransformControls, FlyControls, STLLoader, OBJLoader };
         return state.threeModules;
       } catch (err) {
         lastErr = err;
@@ -6636,6 +7040,75 @@
           renderKnownPrinterSelect(els.sliceKnownPrinterSelect, guessed);
         }
         refreshSlicePreviewBedFromSelection();
+        loadSliceProcessSettings(true).catch((err) => {
+          showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
+        });
+      });
+    }
+    if (els.slicePrintProfileSelect) {
+      els.slicePrintProfileSelect.addEventListener("change", () => {
+        loadSliceProcessSettings(true).catch((err) => {
+          showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
+        });
+      });
+    }
+    if (els.sliceFilamentProfileSelect) {
+      els.sliceFilamentProfileSelect.addEventListener("change", () => {
+        loadSliceProcessSettings(true).catch((err) => {
+          showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
+        });
+      });
+    }
+    if (els.sliceToolViewBtn) {
+      els.sliceToolViewBtn.addEventListener("click", () => setSliceToolMode("view"));
+    }
+    if (els.sliceToolRotateBtn) {
+      els.sliceToolRotateBtn.addEventListener("click", () => setSliceToolMode("rotate"));
+    }
+    if (els.sliceToolResetRotationBtn) {
+      els.sliceToolResetRotationBtn.addEventListener("click", () => {
+        setSliceModalRotation({ x: 0, y: 0, z: 0 });
+      });
+    }
+    if (els.sliceRotateXInput) {
+      els.sliceRotateXInput.addEventListener("change", () => {
+        setSliceModalRotationAxis("x", els.sliceRotateXInput.value || 0);
+      });
+    }
+    if (els.sliceRotateYInput) {
+      els.sliceRotateYInput.addEventListener("change", () => {
+        setSliceModalRotationAxis("y", els.sliceRotateYInput.value || 0);
+      });
+    }
+    if (els.sliceRotateZInput) {
+      els.sliceRotateZInput.addEventListener("change", () => {
+        setSliceModalRotationAxis("z", els.sliceRotateZInput.value || 0);
+      });
+    }
+    if (els.sliceProcessSettingsSearchInput) {
+      els.sliceProcessSettingsSearchInput.addEventListener("input", () => {
+        renderSliceProcessSettingsList();
+      });
+    }
+    if (els.sliceProcessSettingsResetBtn) {
+      els.sliceProcessSettingsResetBtn.addEventListener("click", () => {
+        state.sliceProcessSettingsOverrides = {};
+        renderSliceProcessSettingsList();
+      });
+    }
+    if (els.sliceProcessSettingsList) {
+      els.sliceProcessSettingsList.addEventListener("change", (event) => {
+        const input = event.target instanceof HTMLElement ? event.target.closest("[data-slice-setting-key]") : null;
+        if (!input) return;
+        const key = String(input.getAttribute("data-slice-setting-key") || "");
+        const valueType = String(input.getAttribute("data-slice-setting-type") || "string");
+        if (input instanceof HTMLInputElement && valueType === "bool") {
+          updateSliceProcessSettingOverride(key, !!input.checked, valueType);
+          return;
+        }
+        if (input instanceof HTMLInputElement) {
+          updateSliceProcessSettingOverride(key, input.value, valueType);
+        }
       });
     }
     if (els.sliceKnownPrinterSelect) {
@@ -6695,34 +7168,6 @@
       els.sliceBedDepthInput.addEventListener("change", onManualBedChange);
       els.sliceBedDepthInput.addEventListener("input", onManualBedChange);
     }
-    const bindSliceAxisControls = (axis, rangeEl, minusBtn, plusBtn) => {
-      if (rangeEl) {
-        rangeEl.addEventListener("input", () => {
-          setSliceModalRotationAxis(axis, rangeEl.value || 0);
-        });
-        rangeEl.addEventListener("change", () => {
-          setSliceModalRotationAxis(axis, rangeEl.value || 0);
-        });
-      }
-      if (minusBtn) {
-        minusBtn.addEventListener("click", () => {
-          const current = currentSliceRotation();
-          const value = axis === "x" ? current.x : (axis === "y" ? current.y : current.z);
-          setSliceModalRotationAxis(axis, value - 15);
-        });
-      }
-      if (plusBtn) {
-        plusBtn.addEventListener("click", () => {
-          const current = currentSliceRotation();
-          const value = axis === "x" ? current.x : (axis === "y" ? current.y : current.z);
-          setSliceModalRotationAxis(axis, value + 15);
-        });
-      }
-    };
-    bindSliceAxisControls("x", els.sliceRotateXRange, els.sliceRotateXMinusBtn, els.sliceRotateXPlusBtn);
-    bindSliceAxisControls("y", els.sliceRotateYRange, els.sliceRotateYMinusBtn, els.sliceRotateYPlusBtn);
-    bindSliceAxisControls("z", els.sliceRotateZRange, els.sliceRotateZMinusBtn, els.sliceRotateZPlusBtn);
-
     const bindSliceLiftControls = () => {
       if (els.sliceLiftZRange) {
         els.sliceLiftZRange.disabled = true;
@@ -6772,12 +7217,20 @@
       });
     }
     updateSliceSupportControlsUi();
+    syncSliceRotationInputs({ x: 0, y: 0, z: 0 });
+    updateSliceToolUi();
 
     if (els.sliceModalStartBtn) {
       els.sliceModalStartBtn.addEventListener("click", () => {
         const id = Number(state.currentSliceFileId || state.currentInfoFileId || 0);
         if (!id) return;
-        const profiles = selectedSliceProfiles();
+        let profiles = null;
+        try {
+          profiles = selectedSliceProfiles();
+        } catch (err) {
+          showStatus(els.sliceModalStatus, (err && err.message) || "Ugyldige process-overrides", "error");
+          return;
+        }
         state.lastSliceSelection = {
           printer_profile: String(profiles.printer_profile || ""),
           print_profile: String(profiles.print_profile || ""),
@@ -6785,7 +7238,14 @@
           support_mode: String(profiles.support_mode || "auto"),
           support_type: String(profiles.support_type || ""),
           support_style: String(profiles.support_style || ""),
+          rotation_x_degrees: clampSliceRotationDeg(profiles.rotation_x_degrees || 0),
+          rotation_y_degrees: clampSliceRotationDeg(profiles.rotation_y_degrees || 0),
+          rotation_z_degrees: clampSliceRotationDeg(profiles.rotation_z_degrees || 0),
           lift_z_mm: clampSliceLiftMm(profiles.lift_z_mm, 0),
+          process_overrides: profiles.process_overrides && typeof profiles.process_overrides === "object"
+            ? normalizeSliceProcessSettingsMap(profiles.process_overrides)
+            : {},
+          process_overrides_text: String(profiles.process_overrides_text || ""),
         };
 
         els.sliceModalStartBtn.disabled = true;

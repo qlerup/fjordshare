@@ -2142,6 +2142,78 @@ def _normalize_slice_support_style(value: Any) -> str:
     return normalized if normalized in {"", "default"} else ""
 
 
+def _normalize_slice_process_overrides(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+
+    out: dict[str, Any] = {}
+    for key_raw, value_raw in raw.items():
+        key = str(key_raw or "").strip()[:120]
+        if not key:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+            continue
+
+        value: Any = None
+        if isinstance(value_raw, bool):
+            value = bool(value_raw)
+        elif isinstance(value_raw, (int, float)) and not isinstance(value_raw, bool):
+            try:
+                number = float(value_raw)
+            except Exception:
+                continue
+            if not math.isfinite(number):
+                continue
+            if isinstance(value_raw, int):
+                value = int(value_raw)
+            else:
+                value = float(round(number, 6))
+        elif isinstance(value_raw, str):
+            value = str(value_raw)[:400]
+        else:
+            continue
+
+        out[key] = value
+        if len(out) >= 400:
+            break
+
+    return out
+
+
+def _coerce_process_override_value_like(existing: Any, incoming: Any) -> Any:
+    if isinstance(existing, bool):
+        if isinstance(incoming, bool):
+            return incoming
+        text = str(incoming or "").strip().lower()
+        return text in {"1", "true", "yes", "on"}
+
+    if isinstance(existing, int) and not isinstance(existing, bool):
+        if isinstance(incoming, (int, float)) and not isinstance(incoming, bool):
+            try:
+                parsed = int(round(float(incoming)))
+                return parsed
+            except Exception:
+                return existing
+        return existing
+
+    if isinstance(existing, float):
+        if isinstance(incoming, (int, float)) and not isinstance(incoming, bool):
+            try:
+                parsed = float(incoming)
+                if math.isfinite(parsed):
+                    return round(parsed, 6)
+            except Exception:
+                return existing
+        return existing
+
+    if isinstance(existing, str):
+        if isinstance(incoming, bool):
+            return "true" if incoming else "false"
+        return str(incoming)
+
+    return incoming
+
+
 def _profile_bool_setting_value(existing: Any, enabled: bool) -> Any:
     if isinstance(existing, bool):
         return enabled
@@ -2164,12 +2236,14 @@ def _build_support_override_load_settings(
     support_mode: str,
     support_type: str,
     support_style: str,
+    process_overrides: Optional[dict[str, Any]] = None,
 ) -> tuple[str, Optional[Path], str]:
     normalized_mode = _normalize_slice_support_mode(support_mode)
     normalized_type = _normalize_slice_support_type(support_type)
     normalized_style = _normalize_slice_support_style(support_style)
+    normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
 
-    if normalized_mode == "auto" and not normalized_type and not normalized_style:
+    if normalized_mode == "auto" and not normalized_type and not normalized_style and not normalized_process_overrides:
         return "", None, ""
 
     machine_json, process_json, _filament_json = _resolve_selected_profile_jsons(
@@ -2181,7 +2255,7 @@ def _build_support_override_load_settings(
     )
 
     if not machine_json or not process_json:
-        return "", None, "Support-override kraever machine+process profiler (JSON)."
+        return "", None, "Profile-overrides kraever machine+process profiler (JSON)."
 
     process_payload = _read_profile_json_payload(Path(process_json))
     if not isinstance(process_payload, dict):
@@ -2241,6 +2315,14 @@ def _build_support_override_load_settings(
             patched_payload["support_style"] = normalized_style
             changed = True
 
+    if normalized_process_overrides:
+        for key, incoming in normalized_process_overrides.items():
+            existing = patched_payload.get(key)
+            next_value = _coerce_process_override_value_like(existing, incoming)
+            if existing != next_value:
+                patched_payload[key] = next_value
+                changed = True
+
     if not changed:
         return f"{machine_json};{process_json}", None, ""
 
@@ -2253,7 +2335,7 @@ def _build_support_override_load_settings(
             temp_process.unlink(missing_ok=True)
         except Exception:
             pass
-        return "", None, f"Kunne ikke skrive support-override profil: {exc}"
+        return "", None, f"Kunne ikke skrive profile-override profil: {exc}"
 
     return f"{machine_json};{temp_process}", temp_process, ""
 
@@ -2563,6 +2645,7 @@ def _slice_stl_to_gcode(
     support_style: str = "",
     bed_width_mm: float = 0.0,
     bed_depth_mm: float = 0.0,
+    process_overrides: Optional[dict[str, Any]] = None,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
@@ -2588,6 +2671,7 @@ def _slice_stl_to_gcode(
     normalized_support_mode = _normalize_slice_support_mode(support_mode)
     normalized_support_type = _normalize_slice_support_type(support_type)
     normalized_support_style = _normalize_slice_support_style(support_style)
+    normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
     if normalized_support_mode == "off":
         normalized_support_type = ""
         normalized_support_style = ""
@@ -2605,6 +2689,7 @@ def _slice_stl_to_gcode(
         normalized_support_mode != "auto"
         or bool(normalized_support_type)
         or bool(normalized_support_style)
+        or bool(normalized_process_overrides)
     )
     legacy_allowed = not support_override_requested
     if support_override_requested:
@@ -2621,6 +2706,7 @@ def _slice_stl_to_gcode(
             normalized_support_mode,
             normalized_support_type,
             normalized_support_style,
+            normalized_process_overrides,
         )
         if support_override_file is not None:
             temp_profile_overrides.append(support_override_file)
@@ -2910,6 +2996,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     lift_z_mm = 0.0
     bed_width_mm = _normalize_bed_size_mm(payload.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(payload.get("bed_depth_mm"))
+    process_overrides = _normalize_slice_process_overrides(payload.get("process_overrides"))
     if file_id <= 0:
         return
 
@@ -2950,6 +3037,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             support_style=support_style,
             bed_width_mm=bed_width_mm,
             bed_depth_mm=bed_depth_mm,
+            process_overrides=process_overrides,
         )
 
         creator = requested_by or str(row["uploaded_by"] or "slicer")
@@ -3034,6 +3122,7 @@ def enqueue_slice_job(
     lift_z_mm: float = 0.0,
     bed_width_mm: float = 0.0,
     bed_depth_mm: float = 0.0,
+    process_overrides: Optional[dict[str, Any]] = None,
 ) -> bool:
     fid = int(file_id)
     with SLICE_QUEUE_LOCK:
@@ -3054,6 +3143,7 @@ def enqueue_slice_job(
         normalized_support_style = ""
     normalized_bed_width = _normalize_bed_size_mm(bed_width_mm)
     normalized_bed_depth = _normalize_bed_size_mm(bed_depth_mm)
+    normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
     SLICE_QUEUE.put(
         {
             "file_id": fid,
@@ -3070,6 +3160,7 @@ def enqueue_slice_job(
             "lift_z_mm": normalized_lift_z,
             "bed_width_mm": normalized_bed_width,
             "bed_depth_mm": normalized_bed_depth,
+            "process_overrides": normalized_process_overrides,
         }
     )
     return True
@@ -5114,6 +5205,67 @@ def api_slice_profiles():
     )
 
 
+@app.route("/api/slice/process-settings", methods=["GET"])
+@login_required
+def api_slice_process_settings():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    printer_profile = str(request.args.get("printer_profile") or "").strip()[:200]
+    print_profile = str(request.args.get("print_profile") or "").strip()[:200]
+    filament_profile = str(request.args.get("filament_profile") or "").strip()[:200]
+
+    try:
+        executable = _resolve_bambustudio_executable()
+        _machine_json, process_json, _filament_json = _resolve_selected_profile_jsons(
+            executable,
+            printer_profile,
+            print_profile,
+            filament_profile,
+            prefer_uploaded=True,
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke finde process-profil: {exc}"}), 500
+
+    if not process_json:
+        return jsonify({"ok": True, "settings": {}, "process_profile": "", "process_path": ""})
+
+    payload = _read_profile_json_payload(Path(process_json))
+    if not isinstance(payload, dict):
+        return jsonify({"ok": True, "settings": {}, "process_profile": Path(process_json).stem, "process_path": process_json})
+
+    settings: dict[str, Any] = {}
+    for key_raw, value_raw in payload.items():
+        key = str(key_raw or "").strip()[:120]
+        if not key:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+            continue
+        if isinstance(value_raw, bool):
+            settings[key] = value_raw
+        elif isinstance(value_raw, (int, float)) and not isinstance(value_raw, bool):
+            try:
+                number = float(value_raw)
+            except Exception:
+                continue
+            if not math.isfinite(number):
+                continue
+            settings[key] = value_raw
+        elif isinstance(value_raw, str):
+            settings[key] = value_raw
+        if len(settings) >= 1200:
+            break
+
+    return jsonify(
+        {
+            "ok": True,
+            "settings": settings,
+            "process_profile": Path(process_json).stem,
+            "process_path": process_json,
+        }
+    )
+
+
 @app.route("/api/slicer/plates", methods=["GET"])
 @login_required
 def api_slicer_plates():
@@ -5170,6 +5322,7 @@ def api_file_slice(file_id: int):
     lift_z_mm = 0.0
     bed_width_mm = _normalize_bed_size_mm(body.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(body.get("bed_depth_mm"))
+    process_overrides = _normalize_slice_process_overrides(body.get("process_overrides"))
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -5222,6 +5375,8 @@ def api_file_slice(file_id: int):
         profile_details.append("/".join(support_txt))
     if bed_width_mm > 0.0 and bed_depth_mm > 0.0:
         profile_details.append(f"bed={bed_width_mm}x{bed_depth_mm}mm")
+    if process_overrides:
+        profile_details.append(f"process_overrides={len(process_overrides)}")
     profile_txt = ", ".join(profile_details) if profile_details else "default profiler"
     log_activity(
         kind="slice",
@@ -5250,6 +5405,7 @@ def api_file_slice(file_id: int):
         lift_z_mm=lift_z_mm,
         bed_width_mm=bed_width_mm,
         bed_depth_mm=bed_depth_mm,
+        process_overrides=process_overrides,
     )
     return jsonify(
         {
@@ -5268,6 +5424,7 @@ def api_file_slice(file_id: int):
                 "lift_z_mm": lift_z_mm,
                 "bed_width_mm": bed_width_mm,
                 "bed_depth_mm": bed_depth_mm,
+                "process_overrides": process_overrides,
             },
         }
     )
