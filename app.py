@@ -2891,6 +2891,15 @@ def _build_support_override_load_settings(
         patched_payload["print_settings_id"] = selected_process_name
     if "process_settings_id" in patched_payload:
         patched_payload["process_settings_id"] = selected_process_name
+
+    # Some multi-extruder machine/process combos require these keys to exist explicitly
+    # in the loaded process payload (observed on H2D with nozzle_volume_type errors).
+    template_settings, _template_options = _extract_effective_process_settings_from_payload(override_template_payload)
+    for runtime_key in ("nozzle_volume_type", "different_extruder", "extruder_count", "new_printer_name"):
+        if runtime_key in patched_payload:
+            continue
+        if runtime_key in template_settings:
+            patched_payload[runtime_key] = template_settings.get(runtime_key)
     changed = False
 
     if normalized_mode in {"on", "off"}:
@@ -3279,6 +3288,7 @@ def _slice_stl_to_gcode(
     bed_width_mm: float = 0.0,
     bed_depth_mm: float = 0.0,
     process_overrides: Optional[dict[str, Any]] = None,
+    allow_support_override_fallback: bool = True,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
@@ -3567,6 +3577,42 @@ def _slice_stl_to_gcode(
         if errors:
             guidance = ""
             errors_lower = [err.lower() for err in errors]
+
+            # Some Bambu multi-extruder builds reject temporary support override payloads
+            # with setup/nozzle errors; retry once without support override profile.
+            should_retry_without_support_override = (
+                allow_support_override_fallback
+                and bool(support_load_settings_override)
+                and any(
+                    ("nozzle_volume_type not found" in err)
+                    or ("setup params error" in err)
+                    for err in errors_lower
+                )
+            )
+            if should_retry_without_support_override:
+                try:
+                    _slice_stl_to_gcode(
+                        input_stl,
+                        output_gcode,
+                        printer_profile=printer_profile_value,
+                        print_profile=print_profile_value,
+                        filament_profile=filament_profile_value,
+                        rotation_x_degrees=rotation_x_degrees,
+                        rotation_y_degrees=rotation_y_degrees,
+                        rotation_z_degrees=rotation_z_degrees,
+                        lift_z_mm=normalized_lift_z,
+                        support_mode="auto",
+                        support_type="",
+                        support_style="",
+                        bed_width_mm=normalized_bed_width,
+                        bed_depth_mm=normalized_bed_depth,
+                        process_overrides=normalized_process_overrides,
+                        allow_support_override_fallback=False,
+                    )
+                    return
+                except Exception as retry_exc:
+                    errors.append(f"support-override-fallback: {str(retry_exc)[:350]}")
+
             if any("unable to create plate triangles" in err for err in errors_lower):
                 guidance = (
                     " | Mangler muligvis machine/process/filament settings til modern CLI. "
