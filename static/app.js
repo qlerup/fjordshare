@@ -2183,25 +2183,25 @@
   function sliceProcessSettingCategory(key) {
     const normalized = normalizeSliceProcessKey(key);
 
-    if (processKeyMatches(normalized, [/^layer_height$/, /^initial_layer_(print_)?height$/, /^first_layer_height$/])) {
+    if (processKeyMatches(normalized, [/layer_height/, /^initial_layer_(print_)?height$/, /^first_layer_height$/])) {
       return { tab: "quality", section: "Layer height", sectionOrder: 10 };
     }
-    if (processKeyMatches(normalized, [/^line_width$/, /_line_width$/])) {
+    if (processKeyMatches(normalized, [/line_width/, /extrusion_width/])) {
       return { tab: "quality", section: "Line width", sectionOrder: 20 };
     }
-    if (processKeyMatches(normalized, [/^seam_/, /scarf/, /role_based_wipe/])) {
+    if (processKeyMatches(normalized, [/seam/, /scarf/, /role_based_wipe/])) {
       return { tab: "quality", section: "Seam", sectionOrder: 30 };
     }
-    if (processKeyMatches(normalized, [/slice_gap_closing_radius/, /^resolution$/, /^arc_fitting$/, /_hole_compensation$/, /_contour_compensation$/, /elephant_foot_compensation/, /precise_z_height/])) {
+    if (processKeyMatches(normalized, [/slice_gap_closing_radius/, /resolution/, /arc_fitting/, /_hole_compensation$/, /_contour_compensation$/, /elephant_foot_compensation/, /precise_z_height/, /precision/, /compensation/])) {
       return { tab: "quality", section: "Precision", sectionOrder: 40 };
     }
-    if (processKeyMatches(normalized, [/^ironing_/, /^enable_ironing$/])) {
+    if (processKeyMatches(normalized, [/ironing/, /^enable_ironing$/])) {
       return { tab: "quality", section: "Ironing", sectionOrder: 50 };
     }
-    if (processKeyMatches(normalized, [/^wall_generator$/])) {
+    if (processKeyMatches(normalized, [/wall_generator/, /perimeter_generator/])) {
       return { tab: "quality", section: "Wall generator", sectionOrder: 60 };
     }
-    if (processKeyMatches(normalized, [/order_of_walls/, /print_infill_first/, /bridge_flow/, /thick_bridges/, /only_one_wall_/, /^smooth_/, /avoid_crossing_wall/, /smoothing_wall_speed_along_z/])) {
+    if (processKeyMatches(normalized, [/order_of_walls/, /print_infill_first/, /bridge_flow/, /thick_bridges/, /only_one_wall_/, /^smooth_/, /smooth_coefficient/, /avoid_crossing_wall/, /smoothing_wall_speed_along_z/])) {
       return { tab: "quality", section: "Advanced", sectionOrder: 70 };
     }
 
@@ -2523,30 +2523,24 @@
     if (!preview) return;
 
     let targetZ = 0;
-    const modelBounds = getSliceModelBounds(preview);
-    if (modelBounds) {
-      const modelMinZ = Number(modelBounds.min.z);
-      if (Number.isFinite(modelMinZ)) {
-        targetZ = modelMinZ;
-      }
-    }
-
     if (preview.plateGroup && preview.THREE) {
       try {
         const plateBox = new preview.THREE.Box3().setFromObject(preview.plateGroup);
         if (plateBox && !plateBox.isEmpty()) {
-          const plateMin = Number(plateBox.min.z);
-          const plateMax = Number(plateBox.max.z);
-          const chosenSurface = Math.abs(plateMax - targetZ) <= Math.abs(plateMin - targetZ) ? plateMax : plateMin;
-          if (Number.isFinite(chosenSurface)) {
-            const delta = targetZ - chosenSurface;
-            if (Math.abs(delta) > 1e-6) {
-              preview.plateGroup.position.z += delta;
-              preview.plateGroup.updateMatrixWorld(true);
-            }
+          const surfaceZ = estimateSlicePlatePrintableSurfaceZ(preview, preview.plateGroup, plateBox);
+          if (Number.isFinite(surfaceZ)) {
+            targetZ = surfaceZ;
           }
         }
       } catch (_err) {}
+    } else {
+      const modelBounds = getSliceModelBounds(preview);
+      if (modelBounds) {
+        const modelMinZ = Number(modelBounds.min.z);
+        if (Number.isFinite(modelMinZ)) {
+          targetZ = modelMinZ;
+        }
+      }
     }
 
     preview.plateTopZ = targetZ;
@@ -2873,6 +2867,53 @@
     const explicitTop = Number(preview.plateTopZ || 0);
     if (Number.isFinite(explicitTop)) return explicitTop;
     return 0;
+  }
+
+  function resolveSlicePreviewModelContactZ(preview, modelBounds = null) {
+    if (!preview || !preview.THREE) return 0;
+    if (!preview.plateGroup) return getSlicePreviewPlateTopZ(preview);
+
+    const THREE = preview.THREE;
+    let plateBox = null;
+    try {
+      plateBox = new THREE.Box3().setFromObject(preview.plateGroup);
+    } catch (_err) {
+      plateBox = null;
+    }
+    if (!plateBox || plateBox.isEmpty()) return getSlicePreviewPlateTopZ(preview);
+
+    const meshes = [];
+    preview.plateGroup.traverse((node) => {
+      if (node && node.isMesh) meshes.push(node);
+    });
+    if (!meshes.length) return estimateSlicePlatePrintableSurfaceZ(preview, preview.plateGroup, plateBox);
+
+    const center = modelBounds
+      ? modelBounds.getCenter(new THREE.Vector3())
+      : new THREE.Vector3(0, 0, 0);
+    const plateSpan = Math.max(1, Number(plateBox.max.z) - Number(plateBox.min.z));
+    const modelTop = modelBounds ? Number(modelBounds.max.z || 0) : 0;
+    const originZ = Math.max(Number(plateBox.max.z || 0), modelTop, 0) + Math.max(plateSpan * 3, 1200);
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.set(new THREE.Vector3(Number(center.x) || 0, Number(center.y) || 0, originZ), new THREE.Vector3(0, 0, -1));
+
+    let contactZ = Number.NaN;
+    try {
+      const hits = raycaster.intersectObjects(meshes, false) || [];
+      for (const hit of hits) {
+        const z = Number(hit && hit.point ? hit.point.z : Number.NaN);
+        if (!Number.isFinite(z)) continue;
+        if (!Number.isFinite(contactZ) || z > contactZ) {
+          contactZ = z;
+        }
+      }
+    } catch (_err) {
+      contactZ = Number.NaN;
+    }
+
+    if (Number.isFinite(contactZ)) return contactZ;
+    return estimateSlicePlatePrintableSurfaceZ(preview, preview.plateGroup, plateBox);
   }
 
   function updateSlicePreviewFootprint() {
@@ -3456,8 +3497,6 @@
     if (!preview || !preview.modelGroup) return;
     const rotation = currentSliceRotation();
     const liftMm = currentSliceLiftMm();
-    const plateTopZ = getSlicePreviewPlateTopZ(preview);
-    const targetMinZ = plateTopZ + liftMm;
     preview.syncingRotation = true;
     preview.modelGroup.rotation.set(
       (rotation.x * Math.PI) / 180,
@@ -3472,6 +3511,8 @@
       const box = getSliceModelBounds(preview);
       const minZ = box ? Number(box.min.z) : 0;
       const snappedOffset = Number.isFinite(minZ) ? (-minZ) : 0;
+      const contactZ = resolveSlicePreviewModelContactZ(preview, box);
+      const targetMinZ = (Number.isFinite(contactZ) ? contactZ : getSlicePreviewPlateTopZ(preview)) + liftMm;
       preview.modelGroup.position.z = targetMinZ + snappedOffset;
 
       const verifyBox = getSliceModelBounds(preview);
@@ -3483,6 +3524,7 @@
         }
       }
     } catch (_err) {
+      const targetMinZ = getSlicePreviewPlateTopZ(preview) + liftMm;
       preview.modelGroup.position.z = targetMinZ;
     }
     alignSlicePreviewGroundToModel(preview);
