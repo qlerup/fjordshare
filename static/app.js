@@ -2064,6 +2064,115 @@
     });
   }
 
+  function updateSlicePreviewCursor(preview = state.slicePreview) {
+    if (!preview || !preview.canvas) return;
+    const rotateActive = state.sliceActiveTool === "rotate";
+    let cursor = "grab";
+    if (preview.isTransformDragging) {
+      cursor = "grabbing";
+    } else if (rotateActive && preview.gizmoHoverAxis) {
+      cursor = "pointer";
+    }
+    preview.canvas.style.setProperty("cursor", cursor, "important");
+  }
+
+  function clearSliceRotateAxisArrows(preview = state.slicePreview) {
+    if (!preview || !preview.rotateAxisArrowGroup) return;
+    const group = preview.rotateAxisArrowGroup;
+    if (preview.modelGroup) {
+      try {
+        preview.modelGroup.remove(group);
+      } catch (_err) {}
+    }
+    disposeSlicePreviewObject(group);
+    preview.rotateAxisArrowGroup = null;
+  }
+
+  function updateSliceRotateAxisArrowVisibility(preview = state.slicePreview) {
+    if (!preview || !preview.rotateAxisArrowGroup) return;
+    preview.rotateAxisArrowGroup.visible = state.sliceActiveTool === "rotate";
+  }
+
+  function rebuildSliceRotateAxisArrows(preview = state.slicePreview) {
+    if (!preview || !preview.THREE || !preview.modelGroup) return;
+    const THREE = preview.THREE;
+    clearSliceRotateAxisArrows(preview);
+
+    const bounds = new THREE.Box3().setFromObject(preview.modelGroup);
+    const size = bounds && !bounds.isEmpty()
+      ? bounds.getSize(new THREE.Vector3())
+      : new THREE.Vector3(28, 28, 28);
+    const maxExtent = Math.max(22, Number(size.x || 0), Number(size.y || 0), Number(size.z || 0));
+    const shaftHalf = Math.max(14, maxExtent * 0.38);
+    const coneLength = Math.max(6, Math.min(22, shaftHalf * 0.44));
+    const coneRadius = Math.max(2.2, coneLength * 0.34);
+
+    const group = new THREE.Group();
+    group.name = "sliceRotateAxisArrows";
+
+    const axes = [
+      { dir: new THREE.Vector3(1, 0, 0), color: 0x246dff },
+      { dir: new THREE.Vector3(0, 1, 0), color: 0x34d95b },
+      { dir: new THREE.Vector3(0, 0, 1), color: 0xff3c3c },
+    ];
+
+    axes.forEach(({ dir, color }) => {
+      const lineGeom = new THREE.BufferGeometry().setFromPoints([
+        dir.clone().multiplyScalar(-shaftHalf),
+        dir.clone().multiplyScalar(shaftHalf),
+      ]);
+      const lineMat = new THREE.LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+      });
+      const line = new THREE.Line(lineGeom, lineMat);
+      group.add(line);
+
+      [-1, 1].forEach((sign) => {
+        const cone = new THREE.Mesh(
+          new THREE.ConeGeometry(coneRadius, coneLength, 14),
+          new THREE.MeshStandardMaterial({
+            color,
+            roughness: 0.42,
+            metalness: 0.18,
+            transparent: true,
+            opacity: 0.96,
+          })
+        );
+        const axisDir = dir.clone().multiplyScalar(sign);
+        cone.position.copy(axisDir.clone().multiplyScalar(shaftHalf + (coneLength * 0.48)));
+        cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axisDir);
+        group.add(cone);
+      });
+    });
+
+    group.visible = state.sliceActiveTool === "rotate";
+    preview.modelGroup.add(group);
+    preview.rotateAxisArrowGroup = group;
+  }
+
+  function getSliceModelBounds(preview = state.slicePreview) {
+    if (!preview || !preview.modelGroup || !preview.THREE) return null;
+    const arrows = preview.rotateAxisArrowGroup;
+    const previousArrowVisible = arrows ? !!arrows.visible : false;
+    if (arrows) {
+      arrows.visible = false;
+    }
+    let box = null;
+    try {
+      box = new preview.THREE.Box3().setFromObject(preview.modelGroup);
+    } catch (_err) {
+      box = null;
+    } finally {
+      if (arrows) {
+        arrows.visible = previousArrowVisible;
+      }
+    }
+    if (!box || box.isEmpty()) return null;
+    return box;
+  }
+
   function renderSlicePreview() {
     const preview = state.slicePreview;
     if (!preview || !preview.renderer || !preview.scene || !preview.camera) return;
@@ -2120,8 +2229,8 @@
       return;
     }
 
-    const box = new preview.THREE.Box3().setFromObject(preview.modelGroup);
-    if (!box || box.isEmpty()) {
+    const box = getSliceModelBounds(preview);
+    if (!box) {
       setSlicePreviewFootprint("Model footprint: -");
       setSlicePreviewHeight("Model Z: -");
       return;
@@ -2421,6 +2530,12 @@
       } catch (_err) {}
     }
 
+    if (preview.canvas && preview.onCanvasPointerLeave) {
+      try {
+        preview.canvas.removeEventListener("pointerleave", preview.onCanvasPointerLeave);
+      } catch (_err) {}
+    }
+
     if (preview.transformControls) {
       if (preview.onTransformDraggingChanged && typeof preview.transformControls.removeEventListener === "function") {
         try {
@@ -2430,6 +2545,16 @@
       if (preview.onTransformObjectChange && typeof preview.transformControls.removeEventListener === "function") {
         try {
           preview.transformControls.removeEventListener("objectChange", preview.onTransformObjectChange);
+        } catch (_err) {}
+      }
+      if (preview.onTransformHoverOn && typeof preview.transformControls.removeEventListener === "function") {
+        try {
+          preview.transformControls.removeEventListener("hoveron", preview.onTransformHoverOn);
+        } catch (_err) {}
+      }
+      if (preview.onTransformHoverOff && typeof preview.transformControls.removeEventListener === "function") {
+        try {
+          preview.transformControls.removeEventListener("hoveroff", preview.onTransformHoverOff);
         } catch (_err) {}
       }
       if (typeof preview.transformControls.detach === "function") {
@@ -2450,6 +2575,7 @@
     }
 
     if (preview.scene && preview.modelGroup) {
+      clearSliceRotateAxisArrows(preview);
       preview.scene.remove(preview.modelGroup);
       disposeSlicePreviewObject(preview.modelGroup);
       preview.modelGroup = null;
@@ -2551,9 +2677,14 @@
     transformControls.enabled = false;
     transformControls.visible = false;
     const onTransformDraggingChanged = (event) => {
+      preview.isTransformDragging = !!(event && event.value);
       if (controls) {
         controls.enabled = !event.value;
       }
+      if (preview.isTransformDragging) {
+        preview.gizmoHoverAxis = "";
+      }
+      updateSlicePreviewCursor(preview);
       if (!event.value) {
         const currentPreview = state.slicePreview;
         if (!currentPreview || currentPreview !== preview) return;
@@ -2570,8 +2701,29 @@
       updateSlicePreviewFootprint();
       renderSlicePreview();
     };
+    const onTransformHoverOn = (event) => {
+      const currentPreview = state.slicePreview;
+      if (!currentPreview || currentPreview !== preview) return;
+      currentPreview.gizmoHoverAxis = String((event && event.axis) || "");
+      updateSlicePreviewCursor(currentPreview);
+    };
+    const onTransformHoverOff = () => {
+      const currentPreview = state.slicePreview;
+      if (!currentPreview || currentPreview !== preview) return;
+      currentPreview.gizmoHoverAxis = "";
+      updateSlicePreviewCursor(currentPreview);
+    };
+    const onCanvasPointerLeave = () => {
+      const currentPreview = state.slicePreview;
+      if (!currentPreview || currentPreview !== preview) return;
+      currentPreview.gizmoHoverAxis = "";
+      updateSlicePreviewCursor(currentPreview);
+    };
     transformControls.addEventListener("dragging-changed", onTransformDraggingChanged);
     transformControls.addEventListener("objectChange", onTransformObjectChange);
+    transformControls.addEventListener("hoveron", onTransformHoverOn);
+    transformControls.addEventListener("hoveroff", onTransformHoverOff);
+    canvas.addEventListener("pointerleave", onCanvasPointerLeave);
     scene.add(transformControls);
 
     const preview = {
@@ -2584,10 +2736,14 @@
       transformControls,
       onTransformDraggingChanged,
       onTransformObjectChange,
+      onTransformHoverOn,
+      onTransformHoverOff,
+      onCanvasPointerLeave,
       canvas,
       bedMesh,
       bedOutline,
       modelGroup: null,
+      rotateAxisArrowGroup: null,
       plateGroup: null,
       activePlateUrl: "",
       bedWidthMm: Number(DEFAULT_SLICE_BED_SIZE_MM.width_mm),
@@ -2596,6 +2752,8 @@
       viewDistanceBase: 0,
       viewInitialized: false,
       syncingRotation: false,
+      gizmoHoverAxis: "",
+      isTransformDragging: false,
       onResize: null,
       resizeObserver: null,
     };
@@ -2615,6 +2773,7 @@
     state.slicePreview = preview;
     updateSliceTransformControlsAttachment();
     resizeSlicePreview(preview);
+    updateSlicePreviewCursor(preview);
     return preview;
   }
 
@@ -2634,8 +2793,8 @@
     // Snap preview mesh to plate after rotation so it mirrors backend slicing behavior.
     preview.modelGroup.position.set(0, 0, 0);
     try {
-      const box = new preview.THREE.Box3().setFromObject(preview.modelGroup);
-      const minZ = box && !box.isEmpty() ? Number(box.min.z) : 0;
+      const box = getSliceModelBounds(preview);
+      const minZ = box ? Number(box.min.z) : 0;
       const snappedOffset = Number.isFinite(minZ) ? (-minZ) : 0;
       preview.modelGroup.position.z = snappedOffset + liftMm;
     } catch (_err) {
@@ -2698,10 +2857,14 @@
     } else {
       preview.transformControls.enabled = false;
       preview.transformControls.visible = false;
+      preview.gizmoHoverAxis = "";
+      preview.isTransformDragging = false;
       if (preview.transformControls.object) {
         preview.transformControls.detach();
       }
     }
+    updateSliceRotateAxisArrowVisibility(preview);
+    updateSlicePreviewCursor(preview);
     renderSlicePreview();
   }
 
@@ -2748,6 +2911,7 @@
     if (!preview || !file) return;
 
     if (preview.modelGroup) {
+      clearSliceRotateAxisArrows(preview);
       preview.scene.remove(preview.modelGroup);
       disposeSlicePreviewObject(preview.modelGroup);
       preview.modelGroup = null;
@@ -2816,6 +2980,7 @@
     modelGroup.add(outline);
     preview.scene.add(modelGroup);
     preview.modelGroup = modelGroup;
+    rebuildSliceRotateAxisArrows(preview);
     updateSliceTransformControlsAttachment();
 
     setSliceModalRotation(currentSliceRotation());
