@@ -2621,6 +2621,35 @@
   function alignSlicePreviewGroundToModel(preview = state.slicePreview) {
     if (!preview) return;
 
+    // When a custom STL/OBJ plate is loaded, force the plate surface to the model's bottom Z.
+    // This keeps the visual plate directly under the object even for imperfect plate meshes.
+    if (preview.plateGroup && preview.modelGroup && preview.THREE) {
+      const modelBounds = getSliceModelBounds(preview);
+      const modelMinZ = modelBounds ? Number(modelBounds.min.z) : Number.NaN;
+      if (Number.isFinite(modelMinZ)) {
+        let appliedTopZ = modelMinZ;
+        try {
+          const plateBox = new preview.THREE.Box3().setFromObject(preview.plateGroup);
+          if (plateBox && !plateBox.isEmpty()) {
+            const currentSurfaceZ = estimateSlicePlatePrintableSurfaceZ(preview, preview.plateGroup, plateBox);
+            if (Number.isFinite(currentSurfaceZ)) {
+              const delta = modelMinZ - currentSurfaceZ;
+              if (Math.abs(delta) > 1e-6) {
+                preview.plateGroup.position.z += delta;
+                preview.plateGroup.updateMatrixWorld(true);
+              }
+            }
+          }
+        } catch (_err) {}
+
+        preview.plateTopZ = appliedTopZ;
+        if (preview.bedMesh) preview.bedMesh.position.z = appliedTopZ;
+        if (preview.bedOutline) preview.bedOutline.position.z = appliedTopZ + 0.2;
+        if (preview.axisGrid) preview.axisGrid.position.z = appliedTopZ - 0.2;
+        return;
+      }
+    }
+
     let targetZ = 0;
     if (preview.plateGroup && preview.THREE) {
       try {
