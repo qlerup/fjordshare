@@ -233,6 +233,41 @@ def _slicer_profile_name_from_value(value: Any) -> str:
     return ""
 
 
+def _slicer_profile_names_from_value(value: Any) -> list[str]:
+    names: list[str] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, str):
+            text = node.strip()
+            if text:
+                names.append(text)
+            return
+
+        if isinstance(node, (list, tuple, set)):
+            for item in node:
+                _walk(item)
+            return
+
+        if isinstance(node, dict):
+            # Prefer explicit inheritance/value keys when payload uses structured entries.
+            for key in (
+                "inherits",
+                "from",
+                "name",
+                "id",
+                "value",
+                "setting_id",
+                "printer_settings_id",
+                "print_settings_id",
+                "filament_settings_id",
+            ):
+                if key in node:
+                    _walk(node.get(key))
+
+    _walk(value)
+    return _dedupe_preserve_order(name for name in names if str(name or "").strip())
+
+
 def _slicer_profile_json_type(kind: str) -> str:
     key = str(kind or "").strip().lower()
     if key in {"machine", "process", "filament"}:
@@ -2391,28 +2426,32 @@ def _resolve_effective_process_profile_settings(
         if not requested:
             return None
 
+        machine_hints = [str(machine_json or "").strip(), ""]
+
         for profile_dir in profile_dirs:
-            candidate = _pick_profile_json(
-                profile_dir,
+            for machine_hint in machine_hints:
+                candidate = _pick_profile_json(
+                    profile_dir,
+                    requested,
+                    fallback_first=False,
+                    machine_profile_json=machine_hint,
+                )
+                if candidate:
+                    candidate_path = Path(candidate)
+                    if candidate_path.exists() and candidate_path.is_file():
+                        return candidate_path
+
+        for machine_hint in machine_hints:
+            same_dir = _pick_profile_json(
+                current_path.parent,
                 requested,
                 fallback_first=False,
-                machine_profile_json=machine_json,
+                machine_profile_json=machine_hint,
             )
-            if candidate:
-                candidate_path = Path(candidate)
+            if same_dir:
+                candidate_path = Path(same_dir)
                 if candidate_path.exists() and candidate_path.is_file():
                     return candidate_path
-
-        same_dir = _pick_profile_json(
-            current_path.parent,
-            requested,
-            fallback_first=False,
-            machine_profile_json=machine_json,
-        )
-        if same_dir:
-            candidate_path = Path(same_dir)
-            if candidate_path.exists() and candidate_path.is_file():
-                return candidate_path
         return None
 
     def _walk(path: Path, depth: int) -> tuple[dict[str, Any], dict[str, list[Any]]]:
@@ -2432,13 +2471,16 @@ def _resolve_effective_process_profile_settings(
         merged_settings: dict[str, Any] = {}
         merged_options: dict[str, list[Any]] = {}
 
-        inherits_name = _slicer_profile_name_from_value(payload.get("inherits"))
-        if inherits_name:
+        inherits_names = _slicer_profile_names_from_value(payload.get("inherits"))
+        if not inherits_names:
+            inherits_names = _slicer_profile_names_from_value(payload.get("from"))
+        for inherits_name in inherits_names:
             parent_path = _resolve_parent_profile_path(inherits_name, path)
-            if parent_path is not None:
-                parent_settings, parent_options = _walk(parent_path, depth + 1)
-                merged_settings.update(parent_settings)
-                merged_options.update(parent_options)
+            if parent_path is None:
+                continue
+            parent_settings, parent_options = _walk(parent_path, depth + 1)
+            merged_settings.update(parent_settings)
+            merged_options.update(parent_options)
 
         current_settings, current_options = _extract_effective_process_settings_from_payload(payload)
         merged_settings.update(current_settings)

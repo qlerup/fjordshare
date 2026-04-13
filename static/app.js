@@ -2708,16 +2708,67 @@
     renderSlicePreview();
   }
 
+  function estimateSlicePlatePrintableSurfaceZ(preview, group, precomputedBox = null) {
+    if (!preview || !preview.THREE || !group) return 0;
+    const THREE = preview.THREE;
+    const box = precomputedBox || new THREE.Box3().setFromObject(group);
+    if (!box || box.isEmpty()) return 0;
+
+    const minZ = Number(box.min.z);
+    const maxZ = Number(box.max.z);
+    if (!Number.isFinite(minZ) || !Number.isFinite(maxZ)) return 0;
+
+    const zSpan = Math.max(1e-6, maxZ - minZ);
+    const tolerance = Math.max(0.08, zSpan * 0.012);
+
+    const nearMin = { count: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    const nearMax = { count: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    const temp = new THREE.Vector3();
+
+    const touchStats = (stats, x, y) => {
+      stats.count += 1;
+      if (x < stats.minX) stats.minX = x;
+      if (x > stats.maxX) stats.maxX = x;
+      if (y < stats.minY) stats.minY = y;
+      if (y > stats.maxY) stats.maxY = y;
+    };
+    const footprintArea = (stats) => {
+      if (!stats || stats.count < 3) return 0;
+      if (!Number.isFinite(stats.minX) || !Number.isFinite(stats.maxX) || !Number.isFinite(stats.minY) || !Number.isFinite(stats.maxY)) {
+        return 0;
+      }
+      const width = Math.max(0, stats.maxX - stats.minX);
+      const depth = Math.max(0, stats.maxY - stats.minY);
+      return width * depth;
+    };
+
+    group.updateMatrixWorld(true);
+    group.traverse((node) => {
+      if (!node || !node.isMesh || !node.geometry || typeof node.geometry.getAttribute !== "function") return;
+      const position = node.geometry.getAttribute("position");
+      if (!position || !position.count) return;
+      for (let i = 0; i < position.count; i += 1) {
+        temp.fromBufferAttribute(position, i).applyMatrix4(node.matrixWorld);
+        const z = Number(temp.z);
+        if (Math.abs(z - minZ) <= tolerance) touchStats(nearMin, Number(temp.x), Number(temp.y));
+        if (Math.abs(z - maxZ) <= tolerance) touchStats(nearMax, Number(temp.x), Number(temp.y));
+      }
+    });
+
+    const minArea = footprintArea(nearMin);
+    const maxArea = footprintArea(nearMax);
+    if (maxArea > (minArea * 1.12)) return maxZ;
+    if (minArea > (maxArea * 1.12)) return minZ;
+
+    // Fallback for ambiguous meshes.
+    return Math.abs(maxZ) <= Math.abs(minZ) ? maxZ : minZ;
+  }
+
   function getSlicePreviewPlateTopZ(preview = state.slicePreview) {
-    if (!preview || !preview.THREE || !preview.plateGroup) return 0;
-    try {
-      const box = new preview.THREE.Box3().setFromObject(preview.plateGroup);
-      if (!box || box.isEmpty()) return 0;
-      const topZ = Number(box.max.z);
-      return Number.isFinite(topZ) ? topZ : 0;
-    } catch (_err) {
-      return 0;
-    }
+    if (!preview) return 0;
+    const explicitTop = Number(preview.plateTopZ || 0);
+    if (Number.isFinite(explicitTop)) return explicitTop;
+    return 0;
   }
 
   function updateSlicePreviewFootprint() {
@@ -2814,6 +2865,7 @@
       disposeSlicePreviewObject(preview.plateGroup);
       preview.plateGroup = null;
     }
+    preview.plateTopZ = 0;
     preview.activePlateUrl = "";
   }
 
@@ -2843,10 +2895,10 @@
     const placedBox = new THREE.Box3().setFromObject(group);
     if (!placedBox || placedBox.isEmpty()) return;
     const center = placedBox.getCenter(new THREE.Vector3());
-    // Treat highest Z as printable top and place that top surface at Z=0.
-    const topSurfaceZ = Number(placedBox.max.z);
+    const topSurfaceZ = estimateSlicePlatePrintableSurfaceZ(preview, group, placedBox);
     group.position.set(group.position.x - center.x, group.position.y - center.y, group.position.z - topSurfaceZ);
     group.updateMatrixWorld(true);
+    preview.plateTopZ = 0;
   }
 
   async function loadSlicePreviewPlateAsset(asset, token = state.slicePlateLoadToken) {
@@ -3294,6 +3346,7 @@
     const rotation = currentSliceRotation();
     const liftMm = currentSliceLiftMm();
     const plateTopZ = getSlicePreviewPlateTopZ(preview);
+    const targetMinZ = plateTopZ + liftMm;
     preview.syncingRotation = true;
     preview.modelGroup.rotation.set(
       (rotation.x * Math.PI) / 180,
@@ -3308,9 +3361,18 @@
       const box = getSliceModelBounds(preview);
       const minZ = box ? Number(box.min.z) : 0;
       const snappedOffset = Number.isFinite(minZ) ? (-minZ) : 0;
-      preview.modelGroup.position.z = plateTopZ + snappedOffset + liftMm;
+      preview.modelGroup.position.z = targetMinZ + snappedOffset;
+
+      const verifyBox = getSliceModelBounds(preview);
+      const verifyMinZ = verifyBox ? Number(verifyBox.min.z) : NaN;
+      if (Number.isFinite(verifyMinZ)) {
+        const residual = targetMinZ - verifyMinZ;
+        if (Math.abs(residual) > 1e-5) {
+          preview.modelGroup.position.z += residual;
+        }
+      }
     } catch (_err) {
-      preview.modelGroup.position.z = plateTopZ + liftMm;
+      preview.modelGroup.position.z = targetMinZ;
     }
     preview.syncingRotation = false;
 
