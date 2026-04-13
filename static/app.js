@@ -1904,7 +1904,7 @@
   function sliceProcessKeyLooksBoolean(key) {
     const normalized = String(key || "").trim().toLowerCase();
     if (!normalized) return false;
-    return /(^|_)(enable|enabled|is|has|use|only|avoid|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation)($|_)/.test(normalized);
+    return /(^|_)(enable|enabled|is|has|use|only|avoid|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_top_surfaces|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental)($|_)/.test(normalized);
   }
 
   function normalizeSliceProcessSettingScalar(value, key = "") {
@@ -1971,6 +1971,37 @@
     return out;
   }
 
+  function mergeSliceProcessSettingsWithFallback(rawSettings, rawSettingOptions) {
+    const baseFromApi = normalizeSliceProcessSettingsMap(rawSettings);
+    const optionsFromApi = normalizeSliceProcessSettingsOptionsMap(rawSettingOptions);
+
+    // Keep backend values authoritative; fallback only fills missing keys.
+    const fallbackBase = normalizeSliceProcessSettingsMap(SLICE_PROCESS_FALLBACK_BASE_SETTINGS);
+    const mergedBase = { ...fallbackBase, ...baseFromApi };
+
+    const fallbackOptions = normalizeSliceProcessSettingsOptionsMap(SLICE_PROCESS_FALLBACK_SETTING_OPTIONS);
+    const mergedOptions = { ...optionsFromApi };
+    Object.entries(fallbackOptions).forEach(([key, fallbackValues]) => {
+      const existingValues = Array.isArray(mergedOptions[key]) ? mergedOptions[key] : [];
+      const seed = [];
+      if (Object.prototype.hasOwnProperty.call(mergedBase, key)) {
+        seed.push(mergedBase[key]);
+      }
+      const normalizedMerged = normalizeSliceProcessSettingsOptionsMap({
+        [key]: [...seed, ...existingValues, ...fallbackValues],
+      });
+      if (Array.isArray(normalizedMerged[key]) && normalizedMerged[key].length > 1) {
+        mergedOptions[key] = normalizedMerged[key];
+      }
+    });
+
+    return {
+      apiBase: baseFromApi,
+      base: mergedBase,
+      options: mergedOptions,
+    };
+  }
+
   function sliceProcessValueEquals(a, b) {
     if (typeof a === "number" && typeof b === "number") {
       return Math.abs(a - b) < 1e-9;
@@ -2017,6 +2048,67 @@
     others: "Others",
   };
 
+  const SLICE_PROCESS_FALLBACK_BASE_SETTINGS = {
+    layer_height: 0.16,
+    initial_layer_height: 0.2,
+    line_width: 0.42,
+    initial_layer_line_width: 0.5,
+    outer_wall_line_width: 0.42,
+    inner_wall_line_width: 0.45,
+    top_surface_line_width: 0.42,
+    sparse_infill_line_width: 0.45,
+    internal_solid_infill_line_width: 0.42,
+    support_line_width: 0.42,
+    seam_position: "aligned",
+    seam_placement_away_from_overhangs: false,
+    smart_scarf_seam_application: true,
+    scarf_application_angle_threshold: 155,
+    scarf_around_entire_wall: false,
+    scarf_steps: 10,
+    scarf_joint_for_inner_walls: true,
+    override_filament_scarf_seam_setting: false,
+    role_based_wipe_speed: true,
+    slice_gap_closing_radius: 0.049,
+    resolution: 0.012,
+    arc_fitting: false,
+    xy_hole_compensation: 0,
+    xy_contour_compensation: 0,
+    auto_circle_contour_hole_compensation: true,
+    elephant_foot_compensation: 0.075,
+    precise_z_height: false,
+    ironing_type: "top",
+    ironing_pattern: "rectilinear",
+    ironing_speed: 20,
+    ironing_flow: 20,
+    ironing_line_spacing: 0.1,
+    ironing_inset: 0.15,
+    prime_tower_flat_ironing: true,
+    wall_generator: "auto",
+    order_of_walls: "inner_outer",
+    print_infill_first: false,
+    bridge_flow: 1,
+    thick_bridges: false,
+    only_one_wall_on_top_surfaces: false,
+    only_one_wall_on_first_layer: false,
+    smooth_speed_discontinuity_area: false,
+    smooth_coefficient: 150,
+    avoid_crossing_wall: false,
+    smoothing_wall_speed_along_z_experimental: false,
+  };
+
+  const SLICE_PROCESS_FALLBACK_SETTING_OPTIONS = {
+    seam_position: ["aligned", "nearest", "rear", "random"],
+    wall_generator: ["auto", "classic", "arachne"],
+    order_of_walls: ["inner_outer", "outer_inner", "inner_outer_inner"],
+    ironing_type: ["none", "top", "all_top_surfaces"],
+    ironing_pattern: ["rectilinear", "concentric", "zig_zag"],
+    ironing_flow: [10, 15, 20, 25, 30],
+    smooth_coefficient: [100, 125, 150, 175, 200],
+    bridge_flow: [0.8, 0.9, 1, 1.1, 1.2],
+    scarf_steps: [5, 10, 15],
+    scarf_application_angle_threshold: [120, 135, 150, 155, 170],
+  };
+
   const SLICE_PROCESS_LABEL_OVERRIDES = {
     layer_height: "Layer height",
     initial_layer_height: "Initial layer height",
@@ -2056,6 +2148,7 @@
     ironing_flow: "Ironing flow",
     ironing_line_spacing: "Ironing line spacing",
     ironing_inset: "Ironing inset",
+    prime_tower_flat_ironing: "Prime tower flat ironing",
     wall_generator: "Wall generator",
     order_of_walls: "Order of walls",
     print_infill_first: "Print infill first",
@@ -2108,6 +2201,7 @@
     ironing_flow: 40,
     ironing_line_spacing: 50,
     ironing_inset: 60,
+    prime_tower_flat_ironing: 70,
     wall_generator: 10,
     order_of_walls: 10,
     print_infill_first: 20,
@@ -2423,12 +2517,17 @@
     const data = await api(`/api/slice/process-settings?${params.toString()}`);
     if (token !== state.sliceProcessSettingsLoadToken) return;
     state.sliceProcessSettingsProfileKey = profileKey;
-    state.sliceProcessSettingsBase = normalizeSliceProcessSettingsMap(data && data.settings);
-    state.sliceProcessSettingsOptions = normalizeSliceProcessSettingsOptionsMap(data && data.setting_options);
+
+    const mergedProcessSettings = mergeSliceProcessSettingsWithFallback(
+      data && data.settings,
+      data && data.setting_options
+    );
+    state.sliceProcessSettingsBase = mergedProcessSettings.base;
+    state.sliceProcessSettingsOptions = mergedProcessSettings.options;
     state.sliceProcessSettingsOverrides = {};
 
     // If "Auto / fra config" resolves to a tiny setting set, try first explicit profile once.
-    const loadedCount = Object.keys(state.sliceProcessSettingsBase || {}).length;
+    const loadedCount = Object.keys(mergedProcessSettings.apiBase || {}).length;
     const currentProcessProfile = String((els.sliceProcessProfileSelect && els.sliceProcessProfileSelect.value) || "").trim();
     const currentPrintProfile = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim();
     if (allowAutoProfileFallback && loadedCount <= 2 && !currentProcessProfile && !currentPrintProfile) {
