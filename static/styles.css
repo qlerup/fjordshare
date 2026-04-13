@@ -2197,6 +2197,14 @@ input[type="checkbox"] {
   background: rgba(26, 73, 51, 0.24);
 }
 
+.slice-process-setting-row.is-disabled {
+  opacity: 0.72;
+}
+
+.slice-process-setting-row.is-disabled .slice-process-setting-key {
+  color: #8a95ab;
+}
+
 .slice-process-setting-key {
   font-size: 0.96rem;
   color: #aeb9cf;

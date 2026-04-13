@@ -3106,6 +3106,22 @@
     return false;
   }
 
+  function isSliceProcessSupportEnabled(base, overrides) {
+    const enableSupport = sliceProcessCurrentValueByCanonicalKey("enable_support", base, overrides);
+    if (typeof enableSupport === "boolean") return enableSupport;
+    if (typeof enableSupport === "number") return enableSupport > 0;
+    if (typeof enableSupport === "string") {
+      const normalized = normalizeSliceProcessKey(enableSupport);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
   function shouldRenderSliceProcessSettingEntry(entry, base, overrides) {
     if (!entry || !entry.category) return true;
     const sectionName = String(entry.category.section || "");
@@ -3328,13 +3344,15 @@
     const labelEsc = esc(meta.label);
     const unit = valueType === "number" ? sliceProcessSettingUnit(key) : "";
     const canonical = canonicalSliceProcessKey(key);
+    const disabled = !!(meta && meta.disabled);
+    const disabledAttr = disabled ? " disabled" : "";
 
     if (valueType === "bool") {
       return `
-        <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+        <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}${disabled ? " is-disabled" : ""}">
           <div class="slice-process-setting-key">${labelEsc}</div>
           <label class="slice-process-setting-bool">
-            <input type="checkbox" data-slice-setting-key="${keyEsc}" data-slice-setting-type="bool" ${currentValue ? "checked" : ""}>
+            <input type="checkbox" data-slice-setting-key="${keyEsc}" data-slice-setting-type="bool" ${currentValue ? "checked" : ""}${disabledAttr}>
             <span>${currentValue ? "On" : "Off"}</span>
           </label>
         </div>
@@ -3347,10 +3365,10 @@
       const rows = isNotes ? 8 : 4;
       const valueText = String(currentValue == null ? "" : currentValue);
       return `
-        <div class="slice-process-setting-row wide-control ${hasOverride ? "changed" : ""}">
+        <div class="slice-process-setting-row wide-control ${hasOverride ? "changed" : ""}${disabled ? " is-disabled" : ""}">
           <div class="slice-process-setting-key">${labelEsc}</div>
           <div class="slice-process-setting-control">
-            <textarea class="${textareaClass}" rows="${rows}" data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}">${esc(valueText)}</textarea>
+            <textarea class="${textareaClass}" rows="${rows}" data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}"${disabledAttr}>${esc(valueText)}</textarea>
           </div>
         </div>
       `;
@@ -3370,9 +3388,10 @@
     rawOptions.forEach(pushOption);
     pushOption(baseValue);
     if (hasOverride) pushOption(currentValue);
+    const forceTextInput = canonical === "support_style";
 
     const unitHtml = unit ? `<span class="slice-process-setting-unit">${esc(unit)}</span>` : "";
-    if (mergedOptions.length > 1) {
+    if (!forceTextInput && mergedOptions.length > 1) {
       const optionsHtml = mergedOptions
         .map((optionValue) => {
           const attrValue = sliceProcessValueToAttr(optionValue);
@@ -3382,10 +3401,10 @@
         })
         .join("");
       return `
-        <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+        <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}${disabled ? " is-disabled" : ""}">
           <div class="slice-process-setting-key">${labelEsc}</div>
           <div class="slice-process-setting-control ${unit ? "has-unit" : ""}">
-            <select class="select" data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}">
+            <select class="select" data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}"${disabledAttr}>
               ${optionsHtml}
             </select>
             ${unitHtml}
@@ -3398,10 +3417,10 @@
     const valueText = valueType === "number" ? String(currentValue) : sliceProcessValueToText(currentValue);
     const stepAttr = valueType === "number" ? " step=\"any\"" : "";
     return `
-      <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+      <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}${disabled ? " is-disabled" : ""}">
         <div class="slice-process-setting-key">${labelEsc}</div>
         <div class="slice-process-setting-control ${unit ? "has-unit" : ""}">
-          <input class="input" type="${inputType}"${stepAttr} data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}" value="${esc(valueText)}">
+          <input class="input" type="${inputType}"${stepAttr} data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}" value="${esc(valueText)}"${disabledAttr}>
           ${unitHtml}
         </div>
       </div>
@@ -3473,6 +3492,7 @@
     if (!filtered.length) {
       els.sliceProcessSettingsList.innerHTML = `<div class="slice-process-setting-empty hint">Ingen settings matcher denne fane/søgning.</div>`;
     } else {
+      const supportEnabledForEditing = activeTab !== "support" || isSliceProcessSupportEnabled(base, overrides);
       const sorted = filtered
         .map((entry) => {
           const sectionOrder = Number(entry.category.sectionOrder || 900);
@@ -3503,6 +3523,8 @@
             const hasOverride = Object.prototype.hasOwnProperty.call(overrides, key);
             const currentValue = hasOverride ? overrides[key] : baseValue;
             const valueType = sliceProcessValueInputType(baseValue);
+            const canonical = canonicalSliceProcessKey(key);
+            const disableSupportRow = activeTab === "support" && !supportEnabledForEditing && canonical !== "enable_support";
             return buildSliceProcessSettingRowHtml(
               key,
               baseValue,
@@ -3510,7 +3532,10 @@
               hasOverride,
               valueType,
               optionsByKey,
-              { label: entry.label }
+              {
+                label: entry.label,
+                disabled: disableSupportRow,
+              }
             );
           })
           .join("");
