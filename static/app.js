@@ -2517,9 +2517,7 @@
       try {
         const plateBox = new preview.THREE.Box3().setFromObject(preview.plateGroup);
         if (plateBox && !plateBox.isEmpty()) {
-          const plateMin = Number(plateBox.min.z);
-          const plateMax = Number(plateBox.max.z);
-          const chosenSurface = Math.abs(plateMax - targetZ) <= Math.abs(plateMin - targetZ) ? plateMax : plateMin;
+          const chosenSurface = estimateSlicePlatePrintableSurfaceZ(preview, preview.plateGroup, plateBox);
           if (Number.isFinite(chosenSurface)) {
             const delta = targetZ - chosenSurface;
             if (Math.abs(delta) > 1e-6) {
@@ -2757,16 +2755,38 @@
     const zSpan = Math.max(1e-6, maxZ - minZ);
     const tolerance = Math.max(0.08, zSpan * 0.012);
 
-    const nearMin = { count: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
-    const nearMax = { count: 0, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+    const nearMin = {
+      count: 0,
+      minX: Infinity,
+      maxX: -Infinity,
+      minY: Infinity,
+      maxY: -Infinity,
+      normalZSum: 0,
+      normalSamples: 0,
+    };
+    const nearMax = {
+      count: 0,
+      minX: Infinity,
+      maxX: -Infinity,
+      minY: Infinity,
+      maxY: -Infinity,
+      normalZSum: 0,
+      normalSamples: 0,
+    };
     const temp = new THREE.Vector3();
+    const tempNormal = new THREE.Vector3();
+    const normalMatrix = new THREE.Matrix3();
 
-    const touchStats = (stats, x, y) => {
+    const touchStats = (stats, x, y, normalZ) => {
       stats.count += 1;
       if (x < stats.minX) stats.minX = x;
       if (x > stats.maxX) stats.maxX = x;
       if (y < stats.minY) stats.minY = y;
       if (y > stats.maxY) stats.maxY = y;
+      if (Number.isFinite(normalZ)) {
+        stats.normalZSum += normalZ;
+        stats.normalSamples += 1;
+      }
     };
     const footprintArea = (stats) => {
       if (!stats || stats.count < 3) return 0;
@@ -2777,22 +2797,50 @@
       const depth = Math.max(0, stats.maxY - stats.minY);
       return width * depth;
     };
+    const avgNormalZ = (stats) => {
+      if (!stats || stats.normalSamples <= 0) return 0;
+      return stats.normalZSum / stats.normalSamples;
+    };
+    const upwardScore = (area, avgNz) => {
+      return area * (0.35 + Math.max(0, avgNz));
+    };
 
     group.updateMatrixWorld(true);
     group.traverse((node) => {
       if (!node || !node.isMesh || !node.geometry || typeof node.geometry.getAttribute !== "function") return;
       const position = node.geometry.getAttribute("position");
+      const normal = node.geometry.getAttribute("normal");
       if (!position || !position.count) return;
+      const hasNormal = !!(normal && normal.count >= position.count);
+      if (hasNormal) {
+        normalMatrix.getNormalMatrix(node.matrixWorld);
+      }
       for (let i = 0; i < position.count; i += 1) {
         temp.fromBufferAttribute(position, i).applyMatrix4(node.matrixWorld);
         const z = Number(temp.z);
-        if (Math.abs(z - minZ) <= tolerance) touchStats(nearMin, Number(temp.x), Number(temp.y));
-        if (Math.abs(z - maxZ) <= tolerance) touchStats(nearMax, Number(temp.x), Number(temp.y));
+        let normalZ = NaN;
+        if (hasNormal) {
+          tempNormal.fromBufferAttribute(normal, i).applyMatrix3(normalMatrix).normalize();
+          normalZ = Number(tempNormal.z);
+        }
+        if (Math.abs(z - minZ) <= tolerance) touchStats(nearMin, Number(temp.x), Number(temp.y), normalZ);
+        if (Math.abs(z - maxZ) <= tolerance) touchStats(nearMax, Number(temp.x), Number(temp.y), normalZ);
       }
     });
 
     const minArea = footprintArea(nearMin);
     const maxArea = footprintArea(nearMax);
+    const minAvgNz = avgNormalZ(nearMin);
+    const maxAvgNz = avgNormalZ(nearMax);
+
+    const minTopScore = upwardScore(minArea, minAvgNz);
+    const maxTopScore = upwardScore(maxArea, maxAvgNz);
+    if (maxTopScore > (minTopScore * 1.08)) return maxZ;
+    if (minTopScore > (maxTopScore * 1.08)) return minZ;
+
+    if (maxAvgNz > (minAvgNz + 0.08)) return maxZ;
+    if (minAvgNz > (maxAvgNz + 0.08)) return minZ;
+
     if (maxArea > (minArea * 1.12)) return maxZ;
     if (minArea > (maxArea * 1.12)) return minZ;
 
