@@ -2891,6 +2891,7 @@ def _build_support_override_load_settings(
     nozzle_right_diameter: str = "",
     nozzle_left_flow: str = "",
     nozzle_right_flow: str = "",
+    force_runtime_compat: bool = False,
 ) -> tuple[str, list[Path], str]:
     normalized_mode = _normalize_slice_support_mode(support_mode)
     normalized_type = _normalize_slice_support_type(support_type)
@@ -2915,6 +2916,7 @@ def _build_support_override_load_settings(
         and not normalized_nozzle_right_diameter
         and not normalized_nozzle_left_flow
         and not normalized_nozzle_right_flow
+        and not force_runtime_compat
     ):
         return "", [], ""
 
@@ -3614,6 +3616,7 @@ def _slice_stl_to_gcode(
     bed_depth_mm: float = 0.0,
     process_overrides: Optional[dict[str, Any]] = None,
     allow_support_override_fallback: bool = True,
+    force_profile_runtime_compat: bool = False,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
@@ -3670,6 +3673,7 @@ def _slice_stl_to_gcode(
         or bool(normalized_nozzle_left_flow)
         or bool(normalized_nozzle_right_flow)
         or bool(normalized_process_overrides)
+        or bool(force_profile_runtime_compat)
     )
     legacy_allowed = not support_override_requested
     if support_override_requested:
@@ -3691,6 +3695,7 @@ def _slice_stl_to_gcode(
             normalized_nozzle_right_diameter,
             normalized_nozzle_left_flow,
             normalized_nozzle_right_flow,
+            force_runtime_compat=force_profile_runtime_compat,
         )
         if support_override_files:
             temp_profile_overrides.extend(support_override_files)
@@ -3954,6 +3959,7 @@ def _slice_stl_to_gcode(
                         bed_depth_mm=normalized_bed_depth,
                         process_overrides=normalized_process_overrides,
                         allow_support_override_fallback=False,
+                        force_profile_runtime_compat=force_profile_runtime_compat,
                     )
                     return
                 except Exception as retry_exc:
@@ -3985,10 +3991,50 @@ def _slice_stl_to_gcode(
                                 bed_depth_mm=normalized_bed_depth,
                                 process_overrides=normalized_process_overrides,
                                 allow_support_override_fallback=False,
+                                force_profile_runtime_compat=force_profile_runtime_compat,
                             )
                             return
                         except Exception as retry2_exc:
                             errors.append(f"process-auto-fallback: {str(retry2_exc)[:350]}")
+
+            # If no explicit support/nozzle override file was used, force one
+            # compatibility retry for H2D/multi-extruder process payloads so
+            # runtime keys (e.g. nozzle_volume_type) get materialized.
+            should_retry_with_forced_compat_override = (
+                allow_support_override_fallback
+                and has_nozzle_setup_error
+                and not bool(support_load_settings_override)
+                and not bool(force_profile_runtime_compat)
+                and bool(print_profile_value)
+            )
+            if should_retry_with_forced_compat_override:
+                try:
+                    _slice_stl_to_gcode(
+                        input_stl,
+                        output_gcode,
+                        printer_profile=printer_profile_value,
+                        print_profile=print_profile_value,
+                        filament_profile=filament_profile_value,
+                        rotation_x_degrees=rotation_x_degrees,
+                        rotation_y_degrees=rotation_y_degrees,
+                        rotation_z_degrees=rotation_z_degrees,
+                        lift_z_mm=normalized_lift_z,
+                        support_mode=normalized_support_mode,
+                        support_type=normalized_support_type,
+                        support_style=normalized_support_style,
+                        nozzle_left_diameter=normalized_nozzle_left_diameter,
+                        nozzle_right_diameter=normalized_nozzle_right_diameter,
+                        nozzle_left_flow=normalized_nozzle_left_flow,
+                        nozzle_right_flow=normalized_nozzle_right_flow,
+                        bed_width_mm=normalized_bed_width,
+                        bed_depth_mm=normalized_bed_depth,
+                        process_overrides=normalized_process_overrides,
+                        allow_support_override_fallback=False,
+                        force_profile_runtime_compat=True,
+                    )
+                    return
+                except Exception as retry_force_compat_exc:
+                    errors.append(f"compat-runtime-override-fallback: {str(retry_force_compat_exc)[:350]}")
 
             # Compatibility fallback even when no explicit support/nozzle override
             # file was provided. Some H2D profile combos still fail with
@@ -4024,7 +4070,37 @@ def _slice_stl_to_gcode(
                     )
                     return
                 except Exception as retry_process_auto_exc:
-                    errors.append(f"process-auto-direct-fallback: {str(retry_process_auto_exc)[:350]}")
+                    retry_process_auto_text = str(retry_process_auto_exc)
+                    errors.append(f"process-auto-direct-fallback: {retry_process_auto_text[:350]}")
+                    if filament_profile_value and has_nozzle_setup_error:
+                        try:
+                            _slice_stl_to_gcode(
+                                input_stl,
+                                output_gcode,
+                                printer_profile=printer_profile_value,
+                                print_profile="",
+                                filament_profile="",
+                                rotation_x_degrees=rotation_x_degrees,
+                                rotation_y_degrees=rotation_y_degrees,
+                                rotation_z_degrees=rotation_z_degrees,
+                                lift_z_mm=normalized_lift_z,
+                                support_mode=normalized_support_mode,
+                                support_type=normalized_support_type,
+                                support_style=normalized_support_style,
+                                nozzle_left_diameter="",
+                                nozzle_right_diameter="",
+                                nozzle_left_flow="",
+                                nozzle_right_flow="",
+                                bed_width_mm=normalized_bed_width,
+                                bed_depth_mm=normalized_bed_depth,
+                                process_overrides=normalized_process_overrides,
+                                allow_support_override_fallback=False,
+                            )
+                            return
+                        except Exception as retry_process_filament_auto_exc:
+                            errors.append(
+                                f"process+filament-auto-fallback: {str(retry_process_filament_auto_exc)[:350]}"
+                            )
 
             if any("unable to create plate triangles" in err for err in errors_lower):
                 guidance = (
