@@ -2574,7 +2574,7 @@
       const tipPos = ringPoint(axis, endA, ringRadius);
       const tipDir = ringTangent(axis, endA).normalize();
       const tipRadial = ringRadial(axis, endA).normalize();
-      const arrowHeadOutset = Math.max(coneRadius * 0.72, ringRadius * 0.085);
+      const arrowHeadOutset = Math.max(coneRadius * 1.18, ringRadius * 0.16);
       const cone = new THREE.Mesh(
         new THREE.ConeGeometry(coneRadius, coneLength, 16),
         new THREE.MeshStandardMaterial({
@@ -3457,22 +3457,17 @@
     const centerX = (Number(box.min.x) + Number(box.max.x)) / 2;
     const centerY = (Number(box.min.y) + Number(box.max.y)) / 2;
     geometry.translate(-centerX, -centerY, -Number(box.min.z));
+    // Translation invalidates precomputed bounds; refresh so snap-to-plate uses true min Z.
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
 
     const mesh = new THREE.Mesh(
       geometry,
       new THREE.MeshStandardMaterial({ color: 0x8ec5ff, roughness: 0.65, metalness: 0.14 })
     );
-    mesh.position.z = 0.03;
-
-    const outline = new THREE.LineSegments(
-      new THREE.EdgesGeometry(geometry),
-      new THREE.LineBasicMaterial({ color: 0xe6f3ff, transparent: true, opacity: 0.58 })
-    );
-    outline.position.z = 0.05;
 
     const modelGroup = new THREE.Group();
     modelGroup.add(mesh);
-    modelGroup.add(outline);
     preview.scene.add(modelGroup);
     preview.modelGroup = modelGroup;
     rebuildSliceRotateAxisArrows(preview);
