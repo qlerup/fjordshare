@@ -2859,15 +2859,34 @@ def _build_support_override_load_settings(
     if not isinstance(process_payload, dict):
         return "", None, "Kunne ikke laese valgt process-profil som JSON."
 
+    selected_process_name = str(
+        process_payload.get("print_settings_id")
+        or process_payload.get("process_settings_id")
+        or process_payload.get("setting_id")
+        or process_payload.get("name")
+        or print_profile
+        or "fjordshare-process"
+    ).strip()
+    if not selected_process_name:
+        selected_process_name = "fjordshare-process"
+
     resolved_payload, _resolved_chain = _resolve_effective_process_profile_payload(
         executable,
         process_json,
         machine_json=machine_json,
     )
     patched_payload = dict(resolved_payload) if isinstance(resolved_payload, dict) and resolved_payload else dict(process_payload)
-    # Make temp profile self-contained to avoid runtime inherits lookup failures.
+    # Make temp profile self-contained and force metadata that modern Bambu CLI accepts
+    # for external JSON files loaded through --load-settings.
     patched_payload.pop("inherits", None)
-    patched_payload.pop("from", None)
+    patched_payload["type"] = "process"
+    patched_payload["from"] = "user"
+    patched_payload["name"] = selected_process_name
+    patched_payload["setting_id"] = selected_process_name
+    if "print_settings_id" in patched_payload:
+        patched_payload["print_settings_id"] = selected_process_name
+    if "process_settings_id" in patched_payload:
+        patched_payload["process_settings_id"] = selected_process_name
     changed = False
 
     if normalized_mode in {"on", "off"}:
@@ -2935,7 +2954,8 @@ def _build_support_override_load_settings(
     temp_process = output_gcode.with_suffix(".slice_support_override.process.json")
     try:
         temp_process.parent.mkdir(parents=True, exist_ok=True)
-        temp_process.write_text(json.dumps(patched_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        normalized_bytes = _normalize_uploaded_profile_json_bytes(patched_payload, "process")
+        temp_process.write_bytes(normalized_bytes)
     except Exception as exc:
         try:
             temp_process.unlink(missing_ok=True)

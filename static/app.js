@@ -29,6 +29,7 @@
     sliceActiveTool: "view",
     sliceRotation: { x: 0, y: 0, z: 0 },
     sliceProcessSettingsBase: {},
+    sliceProcessSettingsBaseApi: {},
     sliceProcessSettingsProfileKey: "",
     sliceProcessSettingsActiveTab: "quality",
     sliceProcessSettingsOptions: {},
@@ -2522,6 +2523,7 @@
       data && data.settings,
       data && data.setting_options
     );
+    state.sliceProcessSettingsBaseApi = normalizeSliceProcessSettingsMap(mergedProcessSettings.apiBase);
     state.sliceProcessSettingsBase = mergedProcessSettings.base;
     state.sliceProcessSettingsOptions = mergedProcessSettings.options;
     state.sliceProcessSettingsOverrides = {};
@@ -3872,6 +3874,7 @@
     clearSlicePreview();
     state.currentSliceFileId = 0;
     state.sliceProcessSettingsBase = {};
+    state.sliceProcessSettingsBaseApi = {};
     state.sliceProcessSettingsOptions = {};
     state.sliceProcessSettingsOverrides = {};
     state.sliceProcessSettingsProfileKey = "";
@@ -3911,6 +3914,7 @@
     state.currentSliceFileId = Number(file.id || 0);
     state.slicePlateAssets = null;
     state.sliceProcessSettingsBase = {};
+    state.sliceProcessSettingsBaseApi = {};
     state.sliceProcessSettingsOptions = {};
     state.sliceProcessSettingsOverrides = {};
     state.sliceProcessSettingsProfileKey = "";
@@ -3985,6 +3989,7 @@
         renderSliceProcessSettingsList();
       } catch (processErr) {
         state.sliceProcessSettingsBase = {};
+        state.sliceProcessSettingsBaseApi = {};
         state.sliceProcessSettingsOptions = {};
         state.sliceProcessSettingsOverrides = {};
         if (els.sliceProcessSettingsList) {
@@ -4013,6 +4018,7 @@
       renderSliceSelect(els.sliceProcessProfileSelect, [], "Auto / fra config");
       renderSliceSelect(els.sliceFilamentProfileSelect, [], "Vælg filamentprofil", false);
       state.sliceProcessSettingsBase = {};
+      state.sliceProcessSettingsBaseApi = {};
       state.sliceProcessSettingsOptions = {};
       state.sliceProcessSettingsOverrides = {};
       showStatus(els.sliceModalStatus, err.message || "Kunne ikke hente slice-profiler", "error");
@@ -4044,7 +4050,13 @@
     const settingsOverrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
       ? state.sliceProcessSettingsOverrides
       : {};
-    const process_overrides = { ...settingsOverrides };
+    const apiBaseSettings = state.sliceProcessSettingsBaseApi && typeof state.sliceProcessSettingsBaseApi === "object"
+      ? state.sliceProcessSettingsBaseApi
+      : {};
+    // Profiles are presets; slicing uses the effective process settings map.
+    const process_overrides = Object.keys(apiBaseSettings).length
+      ? normalizeSliceProcessSettingsMap({ ...apiBaseSettings, ...settingsOverrides })
+      : { ...settingsOverrides };
     return {
       printer_profile,
       print_profile,
