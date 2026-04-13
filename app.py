@@ -2233,35 +2233,114 @@ def _extract_effective_process_settings_from_payload(payload: Optional[dict[str,
     settings: dict[str, Any] = {}
     setting_options: dict[str, list[Any]] = {}
 
-    def _record_mapping(mapping: Any, include_meta_keys: bool) -> None:
-        if not isinstance(mapping, dict):
+    visited_nodes: set[int] = set()
+
+    def _normalize_setting_key(raw_key: Any, include_meta_keys: bool) -> str:
+        key = str(raw_key or "").strip()[:120]
+        if not key:
+            return ""
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+            return ""
+        if not include_meta_keys and key in _PROCESS_PROFILE_META_KEYS:
+            return ""
+        return key
+
+    def _record_setting(key_raw: Any, value_raw: Any, include_meta_keys: bool) -> bool:
+        key = _normalize_setting_key(key_raw, include_meta_keys)
+        if not key:
+            return False
+
+        value, options = _extract_process_setting_value_and_options(value_raw)
+        if value is None:
+            return False
+
+        settings[key] = value
+        if len(options) > 1:
+            setting_options[key] = options
+        return True
+
+    def _extract_list_setting_entry(item: Any) -> tuple[str, Any]:
+        if not isinstance(item, dict):
+            return "", None
+
+        entry_key = ""
+        for key_name in ("key", "name", "id", "setting", "setting_key", "parameter", "param"):
+            raw_name = item.get(key_name)
+            if raw_name is None:
+                continue
+            candidate = str(raw_name).strip()
+            if candidate:
+                entry_key = candidate
+                break
+
+        if not entry_key:
+            return "", None
+
+        value_payload: Any = item
+        for value_key in ("value", "current", "selected", "default"):
+            if value_key in item:
+                value_payload = item.get(value_key)
+                break
+
+        return entry_key, value_payload
+
+    def _walk(node: Any, include_meta_keys: bool, depth: int) -> None:
+        if len(settings) >= 2500:
             return
-        for key_raw, value_raw in mapping.items():
-            key = str(key_raw or "").strip()[:120]
-            if not key:
-                continue
-            if not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
-                continue
-            if not include_meta_keys and key in _PROCESS_PROFILE_META_KEYS:
-                continue
+        if depth > 10:
+            return
 
-            value, options = _extract_process_setting_value_and_options(value_raw)
-            if value is None:
-                continue
-
-            settings[key] = value
-            if len(options) > 1:
-                setting_options[key] = options
-
-            if len(settings) >= 2500:
+        if isinstance(node, dict):
+            node_id = id(node)
+            if node_id in visited_nodes:
                 return
+            visited_nodes.add(node_id)
 
-    _record_mapping(payload, include_meta_keys=False)
+            for key_raw, value_raw in node.items():
+                key = _normalize_setting_key(key_raw, include_meta_keys)
+                if not key:
+                    continue
+
+                if isinstance(value_raw, (list, tuple)):
+                    consumed_list_entries = False
+                    for item in value_raw:
+                        item_key, item_value = _extract_list_setting_entry(item)
+                        if item_key and _record_setting(item_key, item_value, include_meta_keys=True):
+                            consumed_list_entries = True
+                            if len(settings) >= 2500:
+                                return
+                            continue
+                        if isinstance(item, (dict, list, tuple)):
+                            _walk(item, include_meta_keys=True, depth=depth + 1)
+                            if len(settings) >= 2500:
+                                return
+                    if consumed_list_entries:
+                        continue
+
+                if _record_setting(key, value_raw, include_meta_keys):
+                    if len(settings) >= 2500:
+                        return
+                    continue
+
+                if isinstance(value_raw, (dict, list, tuple)):
+                    _walk(value_raw, include_meta_keys=True, depth=depth + 1)
+                    if len(settings) >= 2500:
+                        return
+            return
+
+        if isinstance(node, (list, tuple)):
+            for item in node:
+                if isinstance(item, (dict, list, tuple)):
+                    _walk(item, include_meta_keys=include_meta_keys, depth=depth + 1)
+                    if len(settings) >= 2500:
+                        return
+
+    _walk(payload, include_meta_keys=False, depth=0)
 
     for container_key in _PROCESS_SETTINGS_CONTAINER_KEYS:
         nested = payload.get(container_key)
-        if isinstance(nested, dict):
-            _record_mapping(nested, include_meta_keys=True)
+        if isinstance(nested, (dict, list, tuple)):
+            _walk(nested, include_meta_keys=True, depth=1)
             if len(settings) >= 2500:
                 break
 

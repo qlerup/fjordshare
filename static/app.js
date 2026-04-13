@@ -50,7 +50,6 @@
       rotation_z_degrees: 0,
       lift_z_mm: 0,
       process_overrides: {},
-      process_overrides_text: "",
     },
     sliceStatusWasPending: false,
     sliceStatusHoldUntil: 0,
@@ -196,7 +195,6 @@
     sliceProcessSettingsMeta: document.getElementById("sliceProcessSettingsMeta"),
     sliceProcessSettingsList: document.getElementById("sliceProcessSettingsList"),
     sliceProcessSettingsStatus: document.getElementById("sliceProcessSettingsStatus"),
-    sliceProcessOverridesInput: document.getElementById("sliceProcessOverridesInput"),
     metadataModal: document.getElementById("metadataModal"),
     metadataStepCounter: document.getElementById("metadataStepCounter"),
     metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
@@ -1515,6 +1513,12 @@
     selectEl.innerHTML = html;
   }
 
+  function firstNonEmptySliceSelectValue(selectEl) {
+    if (!selectEl) return "";
+    const first = Array.from(selectEl.options || []).find((opt) => String(opt.value || "").trim());
+    return first ? String(first.value || "").trim() : "";
+  }
+
   function syncSliceProcessProfileSelectFromMain() {
     if (!els.slicePrintProfileSelect || !els.sliceProcessProfileSelect) return;
     const mainValue = String(els.slicePrintProfileSelect.value || "");
@@ -1990,23 +1994,6 @@
     return String(rawValue == null ? "" : rawValue);
   }
 
-  function parseSliceProcessOverridesJsonInput() {
-    if (!els.sliceProcessOverridesInput) return {};
-    const text = String(els.sliceProcessOverridesInput.value || "").trim();
-    if (!text) return {};
-    let parsed = null;
-    try {
-      parsed = JSON.parse(text);
-    } catch (_err) {
-      throw new Error("Direkte overrides skal være gyldig JSON (objekt).");
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("Direkte overrides skal være et JSON objekt med key/value.");
-    }
-    const normalized = normalizeSliceProcessSettingsMap(parsed);
-    return normalized;
-  }
-
   const SLICE_PROCESS_TAB_ORDER = ["quality", "strength", "speed", "support", "others"];
   const SLICE_PROCESS_TAB_LABELS = {
     quality: "Quality",
@@ -2319,8 +2306,9 @@
       };
     });
     const allTabCount = categorizedAll.filter((entry) => entry.category.tab === activeTab).length;
+    const qualityFallbackToAll = activeTab === "quality" && allTabCount === 0 && categorizedAll.length > 0;
     const filtered = categorizedAll.filter((entry) => {
-      if (entry.category.tab !== activeTab) return false;
+      if (!qualityFallbackToAll && entry.category.tab !== activeTab) return false;
       if (!search) return true;
       if (entry.key.toLowerCase().includes(search)) return true;
       if (entry.labelLower.includes(search)) return true;
@@ -2388,12 +2376,13 @@
     if (els.sliceProcessSettingsMeta) {
       const totalCount = keys.length;
       const shownCount = filtered.length;
-      els.sliceProcessSettingsMeta.textContent = `Settings: ${shownCount}/${allTabCount} i ${activeTabLabel} | Total: ${totalCount} | Ændret: ${changedCount}`;
+      const allTabCountForMeta = qualityFallbackToAll ? categorizedAll.length : allTabCount;
+      els.sliceProcessSettingsMeta.textContent = `Settings: ${shownCount}/${allTabCountForMeta} i ${activeTabLabel} | Total: ${totalCount} | Ændret: ${changedCount}`;
     }
     syncSliceProcessSettingsTabUi();
   }
 
-  async function loadSliceProcessSettings(force = false) {
+  async function loadSliceProcessSettings(force = false, allowAutoProfileFallback = true) {
     const profileKey = sliceProcessSettingsProfileKey();
     if (!force && profileKey && state.sliceProcessSettingsProfileKey === profileKey && Object.keys(state.sliceProcessSettingsBase || {}).length) {
       renderSliceProcessSettingsList();
@@ -2419,6 +2408,24 @@
     state.sliceProcessSettingsBase = normalizeSliceProcessSettingsMap(data && data.settings);
     state.sliceProcessSettingsOptions = normalizeSliceProcessSettingsOptionsMap(data && data.setting_options);
     state.sliceProcessSettingsOverrides = {};
+
+    // If "Auto / fra config" resolves to a tiny setting set, try first explicit profile once.
+    const loadedCount = Object.keys(state.sliceProcessSettingsBase || {}).length;
+    const currentProcessProfile = String((els.sliceProcessProfileSelect && els.sliceProcessProfileSelect.value) || "").trim();
+    const currentPrintProfile = String((els.slicePrintProfileSelect && els.slicePrintProfileSelect.value) || "").trim();
+    if (allowAutoProfileFallback && loadedCount <= 2 && !currentProcessProfile && !currentPrintProfile) {
+      const firstExplicitProfile = firstNonEmptySliceSelectValue(els.sliceProcessProfileSelect)
+        || firstNonEmptySliceSelectValue(els.slicePrintProfileSelect);
+      if (firstExplicitProfile) {
+        if (els.sliceProcessProfileSelect) {
+          els.sliceProcessProfileSelect.value = firstExplicitProfile;
+        }
+        syncMainPrintProfileSelectFromProcess();
+        await loadSliceProcessSettings(true, false);
+        return;
+      }
+    }
+
     renderSliceProcessSettingsList();
     showStatus(els.sliceProcessSettingsStatus, "");
   }
@@ -2539,6 +2546,11 @@
       if (axis === "y") return new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle));
       return new THREE.Vector3(-Math.sin(angle), Math.cos(angle), 0);
     };
+    const ringRadial = (axis, angle) => {
+      if (axis === "x") return new THREE.Vector3(0, Math.cos(angle), Math.sin(angle));
+      if (axis === "y") return new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
+      return new THREE.Vector3(Math.cos(angle), Math.sin(angle), 0);
+    };
 
     const addCurvedArrow = (axis, color, baseAngle) => {
       const startA = baseAngle - arcSpan;
@@ -2561,6 +2573,8 @@
 
       const tipPos = ringPoint(axis, endA, ringRadius);
       const tipDir = ringTangent(axis, endA).normalize();
+      const tipRadial = ringRadial(axis, endA).normalize();
+      const arrowHeadOutset = Math.max(coneRadius * 0.72, ringRadius * 0.085);
       const cone = new THREE.Mesh(
         new THREE.ConeGeometry(coneRadius, coneLength, 16),
         new THREE.MeshStandardMaterial({
@@ -2571,7 +2585,7 @@
           opacity: 0.96,
         })
       );
-      cone.position.copy(tipPos);
+      cone.position.copy(tipPos).addScaledVector(tipRadial, arrowHeadOutset);
       cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tipDir);
       group.add(cone);
     };
@@ -2821,7 +2835,7 @@
     const topSurfaceZ = Math.abs(Number(placedBox.max.z)) <= Math.abs(Number(placedBox.min.z))
       ? Number(placedBox.max.z)
       : Number(placedBox.min.z);
-    group.position.set(group.position.x - center.x, group.position.y - center.y, group.position.z - topSurfaceZ - 0.02);
+    group.position.set(group.position.x - center.x, group.position.y - center.y, group.position.z - topSurfaceZ);
   }
 
   async function loadSlicePreviewPlateAsset(asset, token = state.slicePlateLoadToken) {
@@ -3419,8 +3433,8 @@
     const modules = await ensureThreeModules();
     const { THREE, STLLoader } = modules;
 
-    setSlicePreviewFootprint("Model footprint: Indlaeser model...");
-    setSlicePreviewHeight("Model Z: Indlaeser model...");
+    setSlicePreviewFootprint("Model footprint: Indlæser model...");
+    setSlicePreviewHeight("Model Z: Indlæser model...");
 
     const geometry = await new Promise((resolve, reject) => {
       const loader = new STLLoader();
@@ -3509,7 +3523,6 @@
     state.sliceProcessSettingsLoadToken += 1;
     syncSliceProcessSettingsTabUi();
     if (els.sliceProcessSettingsSearchInput) els.sliceProcessSettingsSearchInput.value = "";
-    if (els.sliceProcessOverridesInput) els.sliceProcessOverridesInput.value = "";
     if (els.sliceProcessSettingsList) els.sliceProcessSettingsList.innerHTML = "";
     if (els.sliceProcessSettingsMeta) els.sliceProcessSettingsMeta.textContent = "Ingen process settings indlæst.";
     showStatus(els.sliceProcessSettingsStatus, "");
@@ -3562,15 +3575,12 @@
     if (els.sliceSupportStyleSelect) {
       els.sliceSupportStyleSelect.value = normalizeSliceSupportStyle(state.lastSliceSelection.support_style || "");
     }
-    if (els.sliceProcessOverridesInput) {
-      els.sliceProcessOverridesInput.value = String(state.lastSliceSelection.process_overrides_text || "");
-    }
     if (els.sliceProcessSettingsSearchInput) {
       els.sliceProcessSettingsSearchInput.value = "";
     }
     updateSliceSupportControlsUi();
-    setSlicePreviewFootprint("Model footprint: Klargor preview...");
-    setSlicePreviewHeight("Model Z: Klargor preview...");
+    setSlicePreviewFootprint("Model footprint: Klargør preview...");
+    setSlicePreviewHeight("Model Z: Klargør preview...");
     if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = true;
     showStatus(els.sliceModalStatus, "Henter slice-profiler...", "ok");
 
@@ -3586,6 +3596,16 @@
       setSliceSelectValue(els.sliceProcessProfileSelect, state.lastSliceSelection.print_profile);
       setSliceSelectValue(els.sliceFilamentProfileSelect, state.lastSliceSelection.filament_profile);
       syncSliceProcessProfileSelectFromMain();
+      if (!String((els.sliceProcessProfileSelect && els.sliceProcessProfileSelect.value) || "").trim()) {
+        const firstExplicitProcessProfile = firstNonEmptySliceSelectValue(els.sliceProcessProfileSelect)
+          || firstNonEmptySliceSelectValue(els.slicePrintProfileSelect);
+        if (firstExplicitProcessProfile) {
+          if (els.sliceProcessProfileSelect) {
+            els.sliceProcessProfileSelect.value = firstExplicitProcessProfile;
+          }
+          syncMainPrintProfileSelectFromProcess();
+        }
+      }
       // Render known printer options and try to guess from selected printer name
       if (els.sliceKnownPrinterSelect) {
         const guessed = guessKnownModelFromProfileName((els.slicePrinterSelect && els.slicePrinterSelect.value) || "");
@@ -3666,9 +3686,7 @@
     const settingsOverrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
       ? state.sliceProcessSettingsOverrides
       : {};
-    const directOverrides = parseSliceProcessOverridesJsonInput();
-    const process_overrides = { ...settingsOverrides, ...directOverrides };
-    const process_overrides_text = String((els.sliceProcessOverridesInput && els.sliceProcessOverridesInput.value) || "");
+    const process_overrides = { ...settingsOverrides };
     return {
       printer_profile,
       print_profile,
@@ -3683,7 +3701,6 @@
       bed_width_mm: clampSliceBedSizeMm(bed && bed.width_mm, DEFAULT_SLICE_BED_SIZE_MM.width_mm),
       bed_depth_mm: clampSliceBedSizeMm(bed && bed.depth_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
       process_overrides,
-      process_overrides_text,
     };
   }
 
@@ -7932,7 +7949,7 @@
         try {
           profiles = selectedSliceProfiles();
         } catch (err) {
-          showStatus(els.sliceModalStatus, (err && err.message) || "Ugyldige process-overrides", "error");
+          showStatus(els.sliceModalStatus, (err && err.message) || "Ugyldige process-indstillinger", "error");
           return;
         }
         state.lastSliceSelection = {
@@ -7949,7 +7966,6 @@
           process_overrides: profiles.process_overrides && typeof profiles.process_overrides === "object"
             ? normalizeSliceProcessSettingsMap(profiles.process_overrides)
             : {},
-          process_overrides_text: String(profiles.process_overrides_text || ""),
         };
 
         els.sliceModalStartBtn.disabled = true;

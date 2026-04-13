@@ -1,69 +1,69 @@
 ﻿# FjordShare
 
-FjordShare er en letvægts fil- og slicer-webapp til NAS/Docker workflows.
-Projektet er bygget til hurtig deling af filer, metadata pr. printfil og Bambu Studio-baseret slicing direkte fra web-UI.
+FjordShare is a lightweight file sharing and slicer web app for NAS and Docker workflows.
+It is built for fast file sharing, per-print-file metadata, and Bambu Studio based slicing directly from the web UI.
 
-## Hvad der er implementeret nu
+## What Is Implemented
 
-### Kernefunktioner
+### Core features
 
-- Login + første opsætning (første bruger bliver admin)
-- Mapper/filer i web-UI med sidepanel
-- TUS resumable upload (store filer / ustabilt net)
-- Opret mappe, omdøb, slet, metadata på filer
-- Deling af en eller flere mapper med rettigheder:
+- Login and first-run setup (first user becomes admin)
+- Folder/file browser in the web UI with side panel
+- TUS resumable upload (large files / unstable networks)
+- Create folder, rename, delete, and file metadata editing
+- Share one or more folders with permissions:
   - `view`
   - `upload`
   - `manage`
-- Delingsmuligheder:
-  - Udløb (dage/timer)
-  - Kodebeskyttelse
-  - Kræv besøgsnavn
-  - Ekstern DNS base-url
+- Share options:
+  - Expiry (days/hours)
+  - Password protection
+  - Require visitor name
+  - External DNS base URL
 
-### 3D/preview
+### 3D and preview
 
-- 3D thumbnails i fil-grid for `.glb`, `.gltf`, `.stl`, `.obj`, `.step`, `.stp`
-- 3D visning i browser for `.glb`, `.gltf`, `.stl`, `.obj`
+- 3D thumbnails in the file grid for `.glb`, `.gltf`, `.stl`, `.obj`, `.step`, `.stp`
+- In-browser 3D viewer for `.glb`, `.gltf`, `.stl`, `.obj`
 
-### Slicer-integration (Bambu Studio)
+### Slicer integration (Bambu Studio)
 
-- Slicing via Bambu Studio CLI fra backend
-- Ny “studio”-inspireret **Slice STL** modal med stor preview-scene
-- Rotation (X/Y/Z) med live preview og footprint/højde-info
-- Profilvalg i modal:
+- Slicing through the Bambu Studio CLI from backend jobs
+- Studio-inspired **Slice STL** modal with a large preview scene
+- Rotation (X/Y/Z) with live preview and footprint/height info
+- Profile selection in the modal:
   - Printer
-  - Printprofil
-  - Filamentprofil
+  - Print profile
+  - Filament profile
   - Support mode/type/style
 
-### Slicer-profiler i Indstillinger
+### Slicer profiles in Settings
 
-- Profilkort for:
-  - Printer profil (`machine.json`)
+- Profile cards for:
+  - Printer profile (`machine.json`)
   - Print settings (`process.json`)
-  - Filament profil (`filament.json`)
-  - Konfigurationsbundle (`ini/cfg/conf/txt`)
-- Upload kan ske på to måder:
-  - `Upload filer` knappen (modal)
-  - Drag-and-drop **direkte på profilkortet**
+  - Filament profile (`filament.json`)
+  - Config bundles (`ini/cfg/conf/txt`)
+- Upload methods:
+  - `Upload files` button (modal)
+  - Drag and drop directly on each profile card
 
-### Printer pladestørrelser (bed mapping)
+### Printer bed sizes (bed mapping)
 
-- Tabel med:
-  - Printerprofil
-  - Producent
+- Table includes:
+  - Printer profile
+  - Vendor
   - Model
-  - X/Y (auto fra model)
-  - Kilde
-  - Handlinger
-- `Tilføj printer`, `Edit` (modal til manuel X/Y), `Slet`
-- Gem/Nulstil mapping
-- Slettede rækker gemmes som “skjulte”, så de ikke automatisk kommer igen ved refresh
+  - X/Y (auto-detected from model)
+  - Source
+  - Actions
+- `Add printer`, `Edit` (modal for manual X/Y), `Delete`
+- Save/reset mapping
+- Deleted rows are persisted as hidden so they do not auto-return on refresh
 
-## Bambu presets i kode (bed sizes)
+## Built-in Bambu Presets (Bed Sizes)
 
-Følgende Bambu presets er lagt ind til auto X/Y:
+The following Bambu presets are included for automatic X/Y defaults:
 
 - H2D / H2D Pro: `350 x 320`
 - A1 mini: `180 x 180`
@@ -71,7 +71,7 @@ Følgende Bambu presets er lagt ind til auto X/Y:
 - P1S / P1P: `256 x 256`
 - X1 / X1 Carbon / X1E: `256 x 256`
 
-## Kør lokalt med Docker
+## Run Locally With Docker
 
 ```bash
 cd fjordshare
@@ -79,71 +79,71 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Åbn derefter:
+Then open:
 
-- `http://localhost:9090` (eller den port du sætter i `.env`)
+- `http://localhost:9090` (or the port configured in `.env`)
 
-## Vigtige miljøvariabler (.env)
+## Important Environment Variables (.env)
 
 - `DATA_DIR`
 - `BAMBUSTUDIO_BIN` (default: `bambu-studio`)
 - `BAMBUSTUDIO_TIMEOUT_SEC` (default: `1800`)
-- `BAMBUSTUDIO_CONFIG_PATH` (valgfri)
-- `BAMBUSTUDIO_PROFILE_ROOT` (valgfri)
-- `BAMBUSTUDIO_PRINTER_PROFILES` (valgfri fallback-liste)
-- `BAMBUSTUDIO_PRINT_PROFILES` (valgfri fallback-liste)
-- `BAMBUSTUDIO_FILAMENT_PROFILES` (valgfri fallback-liste)
-- `BAMBUSTUDIO_LOAD_SETTINGS` (valgfri direkte load)
-- `BAMBUSTUDIO_LOAD_FILAMENTS` (valgfri direkte load)
+- `BAMBUSTUDIO_CONFIG_PATH` (optional)
+- `BAMBUSTUDIO_PROFILE_ROOT` (optional)
+- `BAMBUSTUDIO_PRINTER_PROFILES` (optional fallback list)
+- `BAMBUSTUDIO_PRINT_PROFILES` (optional fallback list)
+- `BAMBUSTUDIO_FILAMENT_PROFILES` (optional fallback list)
+- `BAMBUSTUDIO_LOAD_SETTINGS` (optional direct load)
+- `BAMBUSTUDIO_LOAD_FILAMENTS` (optional direct load)
 - `BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK` (`1`/`0`)
 - `SLICER_PROFILE_MAX_BYTES`
 
-## Bambu Studio presets fra lokal installation
+## Bambu Studio Presets From Local Installation
 
-Hvis du vil hente standardprofiler direkte fra Bambu Studio på Windows, kan de typisk findes her:
+If you want to pull default profiles directly from Bambu Studio on Windows, they are typically here:
 
 `C:\Program Files\Bambu Studio\resources\profiles\BBL`
 
-Herunder ligger de normalt i:
+Usually split into:
 
 - `filament`
 - `machine`
 - `process`
 
-Disse filer kan uploades i de tilsvarende profilbokse i FjordShare under Indstillinger -> Slicer.
+You can upload these files into the matching profile boxes in FjordShare under Settings -> Slicer.
 
-## Plate assets til slicer-view
+## Plate Assets For Slicer View
 
-Der er oprettet en versioneret mappe til model/pladefiler, så de kan følge med i repo/deploy:
+A versioned folder is provided for model/plate files so assets can travel with repo/deploy:
 
 - `static/slicer-plates/`
 
-Læg pladefiler her, så de er en del af installationen for andre.
-Når model->fil mapping er klar, kan UI skifte plade automatisk efter valgt printermodel.
+Place plate files there to include them in installs for other users.
+When model-to-file mapping is configured, the UI can switch plate assets automatically based on selected printer model.
 
 ## Useful Scripts
 
-Der ligger hjælpescripts i repoet her:
+Helper scripts are included here:
 
 - `Useful Scripts/fjordshare-start.sh`
 - `Useful Scripts/fjordshare-force-update.sh`
 - `Useful Scripts/fjordshare-cleanup.sh`
 - `Useful Scripts/README.md`
 
-Formålet er drift/opdatering/cleanup af FjordShare deployment på NAS med Docker Compose.
+These scripts support operations, updates, and cleanup for FjordShare NAS deployments using Docker Compose.
 
-## Data paths
+## Data Paths
 
-Data gemmes i volumen mappet til `DATA_DIR`:
+Data is stored in the volume mapped to `DATA_DIR`:
 
 - database: `/data/fjordshare.db`
-- uploadede filer: `/data/uploads`
+- uploaded files: `/data/uploads`
 - thumbnails: `/data/thumbs`
-- TUS temp: `/data/tus_uploads`
-- slicer profiler: `/data/bambu/profiles`
+- TUS temp files: `/data/tus_uploads`
+- slicer profiles: `/data/bambu/profiles`
 - sliced output: `/data/bambu/sliced`
 
-## Bemærk
+## Notes
 
-- Hvis Bambu Studio release auto-detektion fejler ved build, pin AppImage URL i `.env` og rebuild.
-- `fjordshare-cleanup.sh` er destruktiv og bør bruges med omtanke.
+- If Bambu Studio release auto-detection fails during build, pin an AppImage URL in `.env` and rebuild.
+- `fjordshare-cleanup.sh` is destructive and should be used with care.

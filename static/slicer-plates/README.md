@@ -1,12 +1,12 @@
 ﻿# Slicer Plate Models
 
-Placer Bambu Studio plate/model filer i denne mappe.
+Place Bambu Studio plate/model files in this folder.
 
-Denne mappe er versioneret i repoet, saa filer her automatisk kommer med ved clone/pull/deploy for andre brugere.
+This folder is versioned in the repository, so files placed here are automatically included for clone/pull/deploy for other users.
 
-## Forslag til navngivning
+## Suggested naming
 
-Brug gerne modelnavn i filnavnet, fx:
+Use the model name in the filename, for example:
 
 - `bbl-3dp-a1m.*`
 - `bbl-3dp-a1.*`
@@ -14,4 +14,4 @@ Brug gerne modelnavn i filnavnet, fx:
 - `bbl-3dp-x1.*`
 - `bbl-3dp-h2d.*`
 
-Nar du giver mappingen (hvilken fil hoerer til hvilken printermodel), kan vi bagefter koble dem direkte i slicer-UI, saa korrekt plade skifter automatisk efter valgt model.
+When mapping is configured (which file belongs to which printer model), the slicer UI can switch to the correct plate automatically based on the selected model.

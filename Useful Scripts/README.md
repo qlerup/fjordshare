@@ -1,38 +1,38 @@
 ﻿# Useful Scripts
 
-Disse scripts er helper-scripts til drift/vedligehold af FjordShare pa NAS med Docker Compose.
+These scripts are helper scripts for operating and maintaining FjordShare on NAS with Docker Compose.
 
 ## Scripts
 
-- `fjordshare-start.sh`: starter/build'er FjordShare (`--fresh` for no-cache rebuild).
-- `fjordshare-force-update.sh`: tvinger git sync + opdatering af deployment.
-- `fjordshare-cleanup.sh`: rydder containere/images/volumes/netvaerk for FjordShare (destruktiv).
+- `fjordshare-start.sh`: starts/builds FjordShare (`--fresh` for no-cache rebuild).
+- `fjordshare-force-update.sh`: forces git sync and deployment update.
+- `fjordshare-cleanup.sh`: removes containers/images/volumes/networks for FjordShare (destructive).
 
-## Brug
+## Usage
 
-Koer scripts paa den maskine hvor Docker deployment af FjordShare ligger.
-Gennemgaa altid script-indholdet foer koersel.
+Run these scripts on the machine where the FjordShare Docker deployment is located.
+Always review script contents before running.
 
 ## Bambu Studio presets (BBL)
 
-Hvis du vil hente standard-profilerne direkte fra Bambu Studio, kan du finde dem her:
+If you want to fetch default profiles directly from Bambu Studio, you can find them here:
 
 `C:\Program Files\Bambu Studio\resources\profiles\BBL`
 
-I den mappe ligger presets typisk fordelt i disse undermapper:
+In that folder, presets are typically split into these subfolders:
 
 - `filament`
 - `machine`
 - `process`
 
-### Hurtig guide
+### Quick guide
 
-1. Aabn stien ovenfor i Windows Stifinder.
-2. Gaa ind i `filament`, `machine` eller `process` alt efter profiltype.
-3. Kopier de profiler du vil bruge.
-4. Upload dem i FjordShare under den matchende profilboks:
-   - `machine` -> Printer profil
+1. Open the path above in Windows Explorer.
+2. Go into `filament`, `machine`, or `process` depending on profile type.
+3. Copy the profiles you want to use.
+4. Upload them in FjordShare under the matching profile box:
+   - `machine` -> Printer profile
    - `process` -> Print settings
-   - `filament` -> Filament profil
+   - `filament` -> Filament profile
 
-Tip: Du kan nu baade bruge `Upload filer` knappen og drag-and-drop direkte paa hvert profilkort i FjordShare.
+Tip: You can use both the `Upload files` button and drag-and-drop directly on each profile card in FjordShare.
