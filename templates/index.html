@@ -276,21 +276,25 @@
         <div class="panel">
           <div class="toolbar">
             <h3>Printer pladestørrelser</h3>
+            <button id="slicerBedMapAddBtn" class="btn small" type="button">Tilføj printer</button>
             <button id="slicerBedMapSaveBtn" class="btn small primary" type="button">Gem mapping</button>
             <button id="slicerBedMapResetBtn" class="btn small" type="button">Nulstil mapping</button>
           </div>
-          <p class="hint">Sæt fast pladestørrelse pr. printerprofil her. Slice-dialogen bruger automatisk disse værdier.</p>
+          <p class="hint">Vælg producent/model for auto X/Y. Brug Edit til manuel finjustering af pladestørrelse.</p>
           <table class="table compact">
             <thead>
               <tr>
                 <th>Printerprofil</th>
+                <th>Producent</th>
+                <th>Model</th>
                 <th>X (mm)</th>
                 <th>Y (mm)</th>
                 <th>Kilde</th>
+                <th>Handling</th>
               </tr>
             </thead>
             <tbody id="slicerBedMapTableBody">
-              <tr><td colspan="4" class="hint">Indlæser printer-mapping...</td></tr>
+              <tr><td colspan="7" class="hint">Indlæser printer-mapping...</td></tr>
             </tbody>
           </table>
         </div>
@@ -299,10 +303,9 @@
           <div class="toolbar">
             <h3>Profil uploads</h3>
           </div>
-          <p class="hint">Hver profiltype har sin egen upload-knap. Klik på knappen for at åbne en modal med drag-and-drop upload.</p>
 
           <div class="slicer-profile-grid">
-            <div class="slicer-profile-card">
+            <div class="slicer-profile-card" data-slicer-upload-kind="machine">
               <div class="toolbar">
                 <h4>Printer profil (machine.json)</h4>
                 <button id="slicerMachineOpenUploadBtn" class="btn small primary" type="button">Upload filer</button>
@@ -323,7 +326,7 @@
               </table>
             </div>
 
-            <div class="slicer-profile-card">
+            <div class="slicer-profile-card" data-slicer-upload-kind="process">
               <div class="toolbar">
                 <h4>Print settings (process.json)</h4>
                 <button id="slicerProcessOpenUploadBtn" class="btn small primary" type="button">Upload filer</button>
@@ -344,7 +347,7 @@
               </table>
             </div>
 
-            <div class="slicer-profile-card">
+            <div class="slicer-profile-card" data-slicer-upload-kind="filament">
               <div class="toolbar">
                 <h4>Filament profil (filament.json)</h4>
                 <button id="slicerFilamentOpenUploadBtn" class="btn small primary" type="button">Upload filer</button>
@@ -365,7 +368,7 @@
               </table>
             </div>
 
-            <div class="slicer-profile-card">
+            <div class="slicer-profile-card" data-slicer-upload-kind="config">
               <div class="toolbar">
                 <h4>Konfigurationsbundle (INI/CFG)</h4>
                 <button id="slicerConfigOpenUploadBtn" class="btn small primary" type="button">Upload filer</button>
@@ -475,113 +478,160 @@
   </div>
 </div>
 
-<div id="sliceModal" class="modal hidden">
+<div id="slicerBedMapEditModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card slicer-bedmap-edit-modal-card">
+    <div class="toolbar">
+      <h3>Rediger pladestørrelse</h3>
+      <button id="slicerBedMapEditCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <div id="slicerBedMapEditName" class="metadata-current-file">-</div>
+    <div class="form-grid">
+      <div>
+        <label for="slicerBedMapEditWidthInput">X (mm)</label>
+        <input id="slicerBedMapEditWidthInput" class="input" type="number" min="40" max="2000" step="1" value="256">
+      </div>
+      <div>
+        <label for="slicerBedMapEditDepthInput">Y (mm)</label>
+        <input id="slicerBedMapEditDepthInput" class="input" type="number" min="40" max="2000" step="1" value="256">
+      </div>
+    </div>
+    <div class="toolbar">
+      <button id="slicerBedMapEditCancelBtn" class="btn" type="button">Annuller</button>
+      <button id="slicerBedMapEditSaveBtn" class="btn primary" type="button">Gem størrelse</button>
+    </div>
+  </div>
+</div>
+
+<div id="sliceModal" class="modal slice-studio-modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card slice-modal-card">
-    <div class="toolbar">
-      <h3>Slice STL</h3>
+    <div class="slice-studio-header">
+      <div class="slice-studio-title-wrap">
+        <h3>Slice STL</h3>
+        <div class="slice-studio-mode-pills" aria-hidden="true">
+          <span class="slice-studio-pill active">Prepare</span>
+          <span class="slice-studio-pill">Preview</span>
+        </div>
+      </div>
       <button id="sliceModalCloseBtn" class="btn" type="button">Luk</button>
     </div>
-    <p class="hint">Vælg printer, printprofil og filamentprofil før slicing.</p>
-
-    <div id="sliceModalFileName" class="metadata-current-file">-</div>
-
-    <div class="slice-preview-wrap">
-      <div class="slice-preview-canvas-wrap">
-        <canvas id="slicePreviewCanvas" class="slice-preview-canvas" aria-label="Printplade preview"></canvas>
-      </div>
-      <div class="slice-preview-meta">
-        <div id="slicePreviewBed" class="slice-preview-row">Plade: 256 x 256 mm</div>
-        <div id="slicePreviewFootprint" class="slice-preview-row">Model footprint: -</div>
-        <div id="slicePreviewHeight" class="slice-preview-row">Model Z: -</div>
-        <div class="slice-preview-row slice-preview-hint">Traek for at rotere view, scroll for zoom, hojreklik for pan.</div>
-      </div>
-      <div class="slice-rotate-controls">
-        <label>Rotation (X/Y/Z)</label>
-        <div class="slice-rotate-axis">
-          <span class="slice-rotate-axis-label">X</span>
-          <div class="slice-rotate-buttons">
-            <button id="sliceRotateXMinusBtn" class="btn" type="button">-15 deg</button>
-            <input id="sliceRotateXRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation X">
-            <button id="sliceRotateXPlusBtn" class="btn" type="button">+15 deg</button>
-          </div>
-          <div id="sliceRotateXValue" class="hint">0 deg</div>
+    <div class="slice-studio-layout">
+      <aside class="slice-studio-sidebar">
+        <div class="slice-studio-card">
+          <p class="hint">Vælg printer, printprofil og filamentprofil før slicing.</p>
+          <div id="sliceModalFileName" class="metadata-current-file">-</div>
         </div>
-        <div class="slice-rotate-axis">
-          <span class="slice-rotate-axis-label">Y</span>
-          <div class="slice-rotate-buttons">
-            <button id="sliceRotateYMinusBtn" class="btn" type="button">-15 deg</button>
-            <input id="sliceRotateYRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation Y">
-            <button id="sliceRotateYPlusBtn" class="btn" type="button">+15 deg</button>
-          </div>
-          <div id="sliceRotateYValue" class="hint">0 deg</div>
-        </div>
-        <div class="slice-rotate-axis">
-          <span class="slice-rotate-axis-label">Z</span>
-          <div class="slice-rotate-buttons">
-            <button id="sliceRotateZMinusBtn" class="btn" type="button">-15 deg</button>
-            <input id="sliceRotateZRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation Z">
-            <button id="sliceRotateZPlusBtn" class="btn" type="button">+15 deg</button>
-          </div>
-          <div id="sliceRotateZValue" class="hint">0 deg</div>
-        </div>
-      </div>
-      <div class="slice-lift-controls">
-        <label>Z-placering</label>
-        <div class="hint">Objektet laegges automatisk ned paa pladen efter rotation (fast kontaktpunkt).</div>
-      </div>
-    </div>
 
-    <div class="slice-modal-grid">
-      <div class="slice-modal-field">
-        <label for="slicePrinterSelect">Printer</label>
-        <select id="slicePrinterSelect" class="select"></select>
-      </div>
-      <div class="slice-modal-field">
-        <label>Pladestørrelse</label>
-        <div class="hint">Styres fra Indstillinger → Slicer → Printer pladestørrelser.</div>
-      </div>
-      <div class="slice-modal-field">
-        <label for="slicePrintProfileSelect">Printprofil</label>
-        <select id="slicePrintProfileSelect" class="select"></select>
-      </div>
-      <div class="slice-modal-field">
-        <label for="sliceFilamentProfileSelect">Filamentprofil</label>
-        <select id="sliceFilamentProfileSelect" class="select"></select>
-      </div>
-    </div>
+        <div class="slice-studio-card">
+          <div class="slice-studio-card-title">Profiler</div>
+          <div class="slice-modal-grid slice-modal-grid-profiles">
+            <div class="slice-modal-field">
+              <label for="slicePrinterSelect">Printer</label>
+              <select id="slicePrinterSelect" class="select"></select>
+            </div>
+            <div class="slice-modal-field">
+              <label for="slicePrintProfileSelect">Printprofil</label>
+              <select id="slicePrintProfileSelect" class="select"></select>
+            </div>
+            <div class="slice-modal-field">
+              <label for="sliceFilamentProfileSelect">Filamentprofil</label>
+              <select id="sliceFilamentProfileSelect" class="select"></select>
+            </div>
+            <div class="slice-modal-field">
+              <label>Pladestørrelse</label>
+              <div class="hint">Styres fra Indstillinger → Slicer → Printer pladestørrelser.</div>
+            </div>
+          </div>
+        </div>
 
-    <div class="slice-modal-grid">
-      <div class="slice-modal-field">
-        <label for="sliceSupportModeSelect">Support</label>
-        <select id="sliceSupportModeSelect" class="select">
-          <option value="auto">Auto / fra profil</option>
-          <option value="on">Til</option>
-          <option value="off">Fra</option>
-        </select>
-      </div>
-      <div class="slice-modal-field">
-        <label for="sliceSupportTypeSelect">Support type</label>
-        <select id="sliceSupportTypeSelect" class="select">
-          <option value="">Auto / fra profil</option>
-          <option value="tree(auto)">tree(auto)</option>
-          <option value="normal(auto)">normal(auto)</option>
-        </select>
-      </div>
-      <div class="slice-modal-field">
-        <label for="sliceSupportStyleSelect">Support style</label>
-        <select id="sliceSupportStyleSelect" class="select">
-          <option value="">Auto / fra profil</option>
-          <option value="default">Default</option>
-        </select>
-      </div>
+        <div class="slice-studio-card">
+          <div class="slice-studio-card-title">Support</div>
+          <div class="slice-modal-grid slice-modal-grid-support">
+            <div class="slice-modal-field">
+              <label for="sliceSupportModeSelect">Support</label>
+              <select id="sliceSupportModeSelect" class="select">
+                <option value="auto">Auto / fra profil</option>
+                <option value="on">Til</option>
+                <option value="off">Fra</option>
+              </select>
+            </div>
+            <div class="slice-modal-field">
+              <label for="sliceSupportTypeSelect">Support type</label>
+              <select id="sliceSupportTypeSelect" class="select">
+                <option value="">Auto / fra profil</option>
+                <option value="tree(auto)">tree(auto)</option>
+                <option value="normal(auto)">normal(auto)</option>
+              </select>
+            </div>
+            <div class="slice-modal-field">
+              <label for="sliceSupportStyleSelect">Support style</label>
+              <select id="sliceSupportStyleSelect" class="select">
+                <option value="">Auto / fra profil</option>
+                <option value="default">Default</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="slice-studio-card">
+          <div class="slice-studio-card-title">Rotation (X/Y/Z)</div>
+          <div class="slice-rotate-controls">
+            <div class="slice-rotate-axis">
+              <span class="slice-rotate-axis-label">X</span>
+              <div class="slice-rotate-buttons">
+                <button id="sliceRotateXMinusBtn" class="btn" type="button">-15 deg</button>
+                <input id="sliceRotateXRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation X">
+                <button id="sliceRotateXPlusBtn" class="btn" type="button">+15 deg</button>
+              </div>
+              <div id="sliceRotateXValue" class="hint">0 deg</div>
+            </div>
+            <div class="slice-rotate-axis">
+              <span class="slice-rotate-axis-label">Y</span>
+              <div class="slice-rotate-buttons">
+                <button id="sliceRotateYMinusBtn" class="btn" type="button">-15 deg</button>
+                <input id="sliceRotateYRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation Y">
+                <button id="sliceRotateYPlusBtn" class="btn" type="button">+15 deg</button>
+              </div>
+              <div id="sliceRotateYValue" class="hint">0 deg</div>
+            </div>
+            <div class="slice-rotate-axis">
+              <span class="slice-rotate-axis-label">Z</span>
+              <div class="slice-rotate-buttons">
+                <button id="sliceRotateZMinusBtn" class="btn" type="button">-15 deg</button>
+                <input id="sliceRotateZRange" type="range" min="-180" max="180" step="1" value="0" aria-label="Rotation Z">
+                <button id="sliceRotateZPlusBtn" class="btn" type="button">+15 deg</button>
+              </div>
+              <div id="sliceRotateZValue" class="hint">0 deg</div>
+            </div>
+          </div>
+          <div class="slice-lift-controls">
+            <label>Z-placering</label>
+            <div class="hint">Objektet lægges automatisk ned på pladen efter rotation (fast kontaktpunkt).</div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="slice-studio-stage">
+        <div class="slice-preview-wrap">
+          <div class="slice-preview-canvas-wrap">
+            <canvas id="slicePreviewCanvas" class="slice-preview-canvas" aria-label="Printplade preview"></canvas>
+          </div>
+          <div class="slice-preview-meta">
+            <div id="slicePreviewBed" class="slice-preview-row">Plade: 256 x 256 mm</div>
+            <div id="slicePreviewFootprint" class="slice-preview-row">Model footprint: -</div>
+            <div id="slicePreviewHeight" class="slice-preview-row">Model Z: -</div>
+            <div class="slice-preview-row slice-preview-hint">Træk for at rotere view, scroll for zoom, højreklik for pan.</div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <div id="sliceModalStatus" class="status hidden"></div>
 
-    <div class="toolbar">
+    <div class="slice-studio-footer">
       <button id="sliceModalCancelBtn" class="btn" type="button">Annuller</button>
-      <button id="sliceModalStartBtn" class="btn primary" type="button">Start slicing</button>
+      <button id="sliceModalStartBtn" class="btn primary" type="button">Slice plate</button>
     </div>
   </div>
 </div>

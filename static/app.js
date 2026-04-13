@@ -28,6 +28,8 @@
     slicerSettings: null,
     currentSlicerUploadKind: "",
     currentSlicerUploadFiles: [],
+    slicerBedMapHiddenNames: new Set(),
+    currentSlicerBedMapEditName: "",
     lastSliceSelection: {
       printer_profile: "",
       print_profile: "",
@@ -241,8 +243,16 @@
     slicerSettingsStatus: document.getElementById("slicerSettingsStatus"),
     slicerEffectiveInfo: document.getElementById("slicerEffectiveInfo"),
     slicerBedMapTableBody: document.getElementById("slicerBedMapTableBody"),
+    slicerBedMapAddBtn: document.getElementById("slicerBedMapAddBtn"),
     slicerBedMapSaveBtn: document.getElementById("slicerBedMapSaveBtn"),
     slicerBedMapResetBtn: document.getElementById("slicerBedMapResetBtn"),
+    slicerBedMapEditModal: document.getElementById("slicerBedMapEditModal"),
+    slicerBedMapEditName: document.getElementById("slicerBedMapEditName"),
+    slicerBedMapEditWidthInput: document.getElementById("slicerBedMapEditWidthInput"),
+    slicerBedMapEditDepthInput: document.getElementById("slicerBedMapEditDepthInput"),
+    slicerBedMapEditSaveBtn: document.getElementById("slicerBedMapEditSaveBtn"),
+    slicerBedMapEditCloseBtn: document.getElementById("slicerBedMapEditCloseBtn"),
+    slicerBedMapEditCancelBtn: document.getElementById("slicerBedMapEditCancelBtn"),
     slicerMachineOpenUploadBtn: document.getElementById("slicerMachineOpenUploadBtn"),
     slicerMachineSummary: document.getElementById("slicerMachineSummary"),
     slicerMachineTableBody: document.getElementById("slicerMachineTableBody"),
@@ -266,6 +276,7 @@
     slicerUploadCancelBtn: document.getElementById("slicerUploadCancelBtn"),
     slicerUploadSelectedFiles: document.getElementById("slicerUploadSelectedFiles"),
     slicerUploadModalStatus: document.getElementById("slicerUploadModalStatus"),
+    slicerProfileCards: Array.from(document.querySelectorAll(".slicer-profile-card[data-slicer-upload-kind]")),
   };
 
   const TABS = {
@@ -645,13 +656,37 @@
   const SCALE_CAN_DIAMETER_MM = 66;
   const PRESENTATION_TABLE_SIZE_MM = 600;
   const DEFAULT_SLICE_BED_SIZE_MM = Object.freeze({ width_mm: 256, depth_mm: 256 });
+  const BED_MAP_CUSTOM_MODEL_KEY = "custom";
+  const BED_MAP_MANUFACTURERS = Object.freeze([
+    { key: "bambu-lab", name: "Bambu Lab" },
+  ]);
+  const BAMBU_BED_MODEL_PRESETS = Object.freeze([
+    // Official product specs as of 2026-04-13.
+    { key: "bambu-h2d", name: "H2D / H2D Laser (350×320)", width_mm: 350, depth_mm: 320 },
+    { key: "bambu-h2d-pro", name: "H2D Pro (350×320)", width_mm: 350, depth_mm: 320 },
+    { key: "bambu-a1-mini", name: "A1 mini (180×180)", width_mm: 180, depth_mm: 180 },
+    { key: "bambu-a1", name: "A1 (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "bambu-p1s", name: "P1S (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "bambu-p1p", name: "P1P (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "bambu-x1-carbon", name: "X1 Carbon (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "bambu-x1e", name: "X1E (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "bambu-x1", name: "X1 (256×256)", width_mm: 256, depth_mm: 256 },
+  ]);
+  const BED_MAP_MODEL_PRESETS = Object.freeze({
+    "bambu-lab": BAMBU_BED_MODEL_PRESETS,
+  });
+  const BED_MAP_MODEL_LOOKUP = new Map(
+    Object.values(BED_MAP_MODEL_PRESETS)
+      .flat()
+      .map((entry) => [String(entry.key || ""), entry])
+  );
   const KNOWN_PRINTER_MODELS = Object.freeze([
     { key: "", name: "Auto / fra profil", width_mm: 0, depth_mm: 0 },
     { key: "bambu-h2d", name: "Bambu Lab H2D (350×320)", width_mm: 350, depth_mm: 320 },
     { key: "bambu-a1-mini", name: "Bambu Lab A1 mini (180×180)", width_mm: 180, depth_mm: 180 },
     { key: "bambu-a1", name: "Bambu Lab A1 (256×256)", width_mm: 256, depth_mm: 256 },
     { key: "bambu-p1", name: "Bambu Lab P1P/P1S (256×256)", width_mm: 256, depth_mm: 256 },
-    { key: "bambu-x1", name: "Bambu Lab X1/X1C (256×256)", width_mm: 256, depth_mm: 256 },
+    { key: "bambu-x1", name: "Bambu Lab X1/X1C/X1E (256×256)", width_mm: 256, depth_mm: 256 },
     { key: "generic-220", name: "Generic 220×220", width_mm: 220, depth_mm: 220 },
     { key: "generic-235", name: "Generic 235×235", width_mm: 235, depth_mm: 235 },
     { key: "generic-300", name: "Generic 300×300", width_mm: 300, depth_mm: 300 },
@@ -3755,17 +3790,7 @@
 
     const sizeText = formatSize(Number(item.size || 0));
     const updatedText = item.updated_at ? formatDate(item.updated_at) : "-";
-    const fileItems = Array.isArray(item.files) ? item.files : [];
-    const preview = fileItems
-      .slice(0, 3)
-      .map((entry) => String((entry && entry.name) || "").trim())
-      .filter(Boolean)
-      .join(", ");
-    const omitted = Math.max(0, Number(item.omitted || 0));
-    const previewText = preview
-      ? ` | Eksempel: ${preview}${omitted > 0 ? ` (+${omitted} mere)` : ""}`
-      : "";
-    return `Filer: ${count} (${sizeText}, ${updatedText})${previewText}`;
+    return `Filer: ${count} (${sizeText}, ${updatedText})`;
   }
 
   function normalizeSlicerFiles(source) {
@@ -3776,17 +3801,331 @@
     return [];
   }
 
-  function renderSlicerBedMapRows(printers, detectedBeds, mappedBeds) {
+  function bedMapBrandOptionsHtml(selectedKey = "bambu-lab") {
+    const selected = String(selectedKey || "bambu-lab");
+    return BED_MAP_MANUFACTURERS
+      .map((entry) => {
+        const key = String((entry && entry.key) || "");
+        const label = String((entry && entry.name) || key || "-");
+        return `<option value="${esc(key)}"${key === selected ? " selected" : ""}>${esc(label)}</option>`;
+      })
+      .join("");
+  }
+
+  function bedMapModelOptionsHtml(brandKey = "bambu-lab", selectedKey = "") {
+    const brand = String(brandKey || "bambu-lab");
+    const selected = String(selectedKey || "");
+    const presets = Array.isArray(BED_MAP_MODEL_PRESETS[brand]) ? BED_MAP_MODEL_PRESETS[brand] : [];
+    const options = [
+      `<option value="">Vælg model</option>`,
+      ...presets.map((entry) => {
+        const key = String((entry && entry.key) || "");
+        const label = String((entry && entry.name) || key || "-");
+        return `<option value="${esc(key)}"${key === selected ? " selected" : ""}>${esc(label)}</option>`;
+      }),
+      `<option value="${esc(BED_MAP_CUSTOM_MODEL_KEY)}"${selected === BED_MAP_CUSTOM_MODEL_KEY ? " selected" : ""}>Brugerdefineret</option>`,
+    ];
+    return options.join("");
+  }
+
+  function bedMapPresetByKey(modelKey = "") {
+    return BED_MAP_MODEL_LOOKUP.get(String(modelKey || "")) || null;
+  }
+
+  function guessBedMapModelKeyFromPrinterName(name = "") {
+    const n = String(name || "").toLowerCase();
+    if (!n) return "";
+    if (/\bh2d\b/.test(n)) return "bambu-h2d";
+    if (/\ba1\s*mini\b|\ba1mini\b/.test(n)) return "bambu-a1-mini";
+    if (/\ba1\b/.test(n)) return "bambu-a1";
+    if (/\bp1s\b/.test(n)) return "bambu-p1s";
+    if (/\bp1p\b/.test(n)) return "bambu-p1p";
+    if (/\bx1e\b/.test(n)) return "bambu-x1e";
+    if (/\bx1c\b|\bx1\s*carbon\b/.test(n)) return "bambu-x1-carbon";
+    if (/\bx1\b/.test(n)) return "bambu-x1";
+    return "";
+  }
+
+  function guessBedMapModelKey(name = "", widthMm = 0, depthMm = 0) {
+    const w = clampSliceBedSizeMm(widthMm, 0);
+    const d = clampSliceBedSizeMm(depthMm, 0);
+    if (w > 0 && d > 0) {
+      const matches = BAMBU_BED_MODEL_PRESETS.filter((entry) => {
+        return Math.abs(Number(entry.width_mm || 0) - w) < 0.01 && Math.abs(Number(entry.depth_mm || 0) - d) < 0.01;
+      });
+      if (matches.length === 1) return String(matches[0].key || "");
+      if (matches.length > 1) {
+        const nameGuess = guessBedMapModelKeyFromPrinterName(name);
+        if (nameGuess && matches.some((entry) => String(entry.key || "") === nameGuess)) return nameGuess;
+        return String(matches[0].key || "");
+      }
+    }
+
+    const byName = guessBedMapModelKeyFromPrinterName(name);
+    if (byName) return byName;
+    return (w > 0 && d > 0) ? BED_MAP_CUSTOM_MODEL_KEY : "";
+  }
+
+  function getSlicerBedMapRowName(row) {
+    return String(row && row.dataset ? row.dataset.bedMapName : "").trim();
+  }
+
+  function setSlicerBedMapRowSource(row, sourceLabel = "-") {
+    if (!row || !row.dataset) return;
+    const source = String(sourceLabel || "-");
+    row.dataset.bedMapSource = source;
+    const sourceEl = row.querySelector("[data-bed-map-source]");
+    if (sourceEl) sourceEl.textContent = source;
+  }
+
+  function refreshSlicerBedMapRowValues(row) {
+    if (!row || !row.dataset) return;
+    const width = clampSliceBedSizeMm(row.dataset.bedMapWidthMm || 0, 0);
+    const depth = clampSliceBedSizeMm(row.dataset.bedMapDepthMm || 0, 0);
+    const widthEl = row.querySelector("[data-bed-map-width]");
+    const depthEl = row.querySelector("[data-bed-map-depth]");
+    if (widthEl) widthEl.textContent = width > 0 ? formatNumberCompact(width) : "-";
+    if (depthEl) depthEl.textContent = depth > 0 ? formatNumberCompact(depth) : "-";
+    row.dataset.bedMapWidthMm = width > 0 ? String(width) : "";
+    row.dataset.bedMapDepthMm = depth > 0 ? String(depth) : "";
+  }
+
+  function setSlicerBedMapRowSize(row, widthMm, depthMm, sourceLabel = "Preset") {
+    if (!row || !row.dataset) return;
+    const width = clampSliceBedSizeMm(widthMm, 0);
+    const depth = clampSliceBedSizeMm(depthMm, 0);
+    row.dataset.bedMapWidthMm = width > 0 ? String(width) : "";
+    row.dataset.bedMapDepthMm = depth > 0 ? String(depth) : "";
+    refreshSlicerBedMapRowValues(row);
+    setSlicerBedMapRowSource(row, sourceLabel);
+  }
+
+  function buildSlicerBedMapRowHtml(name, options = {}) {
+    const printerName = String(name || "").trim();
+    if (!printerName) return "";
+
+    const brandKey = String(options.brandKey || "bambu-lab");
+    const widthMm = clampSliceBedSizeMm(options.widthMm, 0);
+    const depthMm = clampSliceBedSizeMm(options.depthMm, 0);
+    const sourceLabel = String(options.sourceLabel || "-");
+    let modelKey = String(options.modelKey || "");
+    if (!modelKey && (widthMm > 0 || depthMm > 0)) {
+      modelKey = guessBedMapModelKey(printerName, widthMm, depthMm);
+    }
+
+    return `
+      <tr data-bed-map-name="${esc(printerName)}" data-bed-map-width-mm="${esc(widthMm > 0 ? String(widthMm) : "")}" data-bed-map-depth-mm="${esc(depthMm > 0 ? String(depthMm) : "")}" data-bed-map-source="${esc(sourceLabel)}">
+        <td><span class="slicer-bedmap-name">${esc(printerName)}</span></td>
+        <td>
+          <select class="select" data-bed-map-brand>
+            ${bedMapBrandOptionsHtml(brandKey)}
+          </select>
+        </td>
+        <td>
+          <select class="select" data-bed-map-model>
+            ${bedMapModelOptionsHtml(brandKey, modelKey)}
+          </select>
+        </td>
+        <td><span class="slicer-bedmap-value" data-bed-map-width>${esc(widthMm > 0 ? formatNumberCompact(widthMm) : "-")}</span></td>
+        <td><span class="slicer-bedmap-value" data-bed-map-depth>${esc(depthMm > 0 ? formatNumberCompact(depthMm) : "-")}</span></td>
+        <td><span data-bed-map-source>${esc(sourceLabel)}</span></td>
+        <td>
+          <div class="slicer-bedmap-actions">
+            <button class="btn small" type="button" data-bed-map-action="edit">Edit</button>
+            <button class="btn small danger" type="button" data-bed-map-action="delete">Slet</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  function ensureSlicerBedMapEmptyState() {
     if (!els.slicerBedMapTableBody) return;
+    const rows = Array.from(els.slicerBedMapTableBody.querySelectorAll("tr[data-bed-map-name]"));
+    if (rows.length) return;
+    els.slicerBedMapTableBody.innerHTML = `<tr><td colspan="7" class="hint">Ingen printere i mapping endnu. Klik på "Tilføj printer".</td></tr>`;
+  }
+
+  function findSlicerBedMapRowByName(name = "") {
+    const normalized = String(name || "").trim();
+    if (!normalized || !els.slicerBedMapTableBody) return null;
+    const rows = Array.from(els.slicerBedMapTableBody.querySelectorAll("tr[data-bed-map-name]"));
+    return rows.find((row) => getSlicerBedMapRowName(row).toLowerCase() === normalized.toLowerCase()) || null;
+  }
+
+  function addSlicerBedMapRow(name, options = {}) {
+    const normalizedName = String(name || "").trim().slice(0, 200);
+    if (!normalizedName || !els.slicerBedMapTableBody) return null;
+    if (findSlicerBedMapRowByName(normalizedName)) return null;
+
+    const emptyHintRow = els.slicerBedMapTableBody.querySelector("tr td.hint");
+    if (emptyHintRow) {
+      els.slicerBedMapTableBody.innerHTML = "";
+    }
+    els.slicerBedMapTableBody.insertAdjacentHTML("beforeend", buildSlicerBedMapRowHtml(normalizedName, options));
+    const row = findSlicerBedMapRowByName(normalizedName);
+    if (row) {
+      refreshSlicerBedMapRowValues(row);
+      state.slicerBedMapHiddenNames.delete(normalizedName);
+    }
+    return row;
+  }
+
+  function openAddSlicerBedMapPrinterPrompt() {
+    const nameRaw = window.prompt("Navn på printerprofil:", "");
+    const name = String(nameRaw || "").trim().slice(0, 200);
+    if (!name) return;
+    if (findSlicerBedMapRowByName(name)) {
+      showStatus(els.slicerSettingsStatus, `Printerprofil findes allerede: ${name}`, "error");
+      return;
+    }
+    const guessedModel = guessBedMapModelKeyFromPrinterName(name) || "bambu-a1";
+    const preset = bedMapPresetByKey(guessedModel);
+    const row = addSlicerBedMapRow(name, {
+      brandKey: "bambu-lab",
+      modelKey: guessedModel,
+      widthMm: preset ? Number(preset.width_mm || 0) : 0,
+      depthMm: preset ? Number(preset.depth_mm || 0) : 0,
+      sourceLabel: preset ? "Preset" : "Tilføjet",
+    });
+    if (!row) {
+      showStatus(els.slicerSettingsStatus, `Kunne ikke tilføje printerprofil: ${name}`, "error");
+      return;
+    }
+    showStatus(els.slicerSettingsStatus, `Tilføjet printerprofil: ${name}`, "ok");
+  }
+
+  function openSlicerBedMapEditModal(row) {
+    if (!row || !els.slicerBedMapEditModal) return;
+    const name = getSlicerBedMapRowName(row);
+    if (!name) return;
+    const width = clampSliceBedSizeMm(row.dataset.bedMapWidthMm || 0, DEFAULT_SLICE_BED_SIZE_MM.width_mm);
+    const depth = clampSliceBedSizeMm(row.dataset.bedMapDepthMm || 0, DEFAULT_SLICE_BED_SIZE_MM.depth_mm);
+
+    state.currentSlicerBedMapEditName = name;
+    if (els.slicerBedMapEditName) els.slicerBedMapEditName.textContent = name;
+    if (els.slicerBedMapEditWidthInput) els.slicerBedMapEditWidthInput.value = String(width);
+    if (els.slicerBedMapEditDepthInput) els.slicerBedMapEditDepthInput.value = String(depth);
+    els.slicerBedMapEditModal.classList.remove("hidden");
+  }
+
+  function closeSlicerBedMapEditModal() {
+    state.currentSlicerBedMapEditName = "";
+    if (els.slicerBedMapEditModal) els.slicerBedMapEditModal.classList.add("hidden");
+  }
+
+  function applySlicerBedMapModalEdit() {
+    const name = String(state.currentSlicerBedMapEditName || "").trim();
+    if (!name) {
+      closeSlicerBedMapEditModal();
+      return;
+    }
+
+    const row = findSlicerBedMapRowByName(name);
+    if (!row) {
+      closeSlicerBedMapEditModal();
+      showStatus(els.slicerSettingsStatus, "Printerprofilen findes ikke længere i tabellen.", "error");
+      return;
+    }
+
+    const width = clampSliceBedSizeMm((els.slicerBedMapEditWidthInput && els.slicerBedMapEditWidthInput.value) || 0, 0);
+    const depth = clampSliceBedSizeMm((els.slicerBedMapEditDepthInput && els.slicerBedMapEditDepthInput.value) || 0, 0);
+    if (!(width > 0 && depth > 0)) {
+      showStatus(els.slicerSettingsStatus, "Angiv gyldig X og Y mellem 40 og 2000 mm.", "error");
+      return;
+    }
+
+    setSlicerBedMapRowSize(row, width, depth, "Manuel");
+    const modelSelect = row.querySelector("select[data-bed-map-model]");
+    const guessedModel = guessBedMapModelKey(name, width, depth);
+    if (modelSelect) {
+      const options = Array.from(modelSelect.options || []);
+      const hasOption = options.some((option) => String(option.value || "") === guessedModel);
+      modelSelect.value = hasOption && guessedModel ? guessedModel : BED_MAP_CUSTOM_MODEL_KEY;
+      if (!modelSelect.value) modelSelect.value = BED_MAP_CUSTOM_MODEL_KEY;
+    }
+    closeSlicerBedMapEditModal();
+    showStatus(els.slicerSettingsStatus, `Pladestørrelse opdateret for ${name}. Husk at gemme mapping.`, "ok");
+  }
+
+  function onSlicerBedMapTableChange(event) {
+    const target = event && event.target ? event.target : null;
+    if (!target) return;
+    const row = target.closest("tr[data-bed-map-name]");
+    if (!row) return;
+
+    if (target.matches("select[data-bed-map-brand]")) {
+      const brandKey = String(target.value || "bambu-lab");
+      const modelSelect = row.querySelector("select[data-bed-map-model]");
+      const currentModel = modelSelect ? String(modelSelect.value || "") : "";
+      if (modelSelect) {
+        modelSelect.innerHTML = bedMapModelOptionsHtml(brandKey, currentModel);
+      }
+      return;
+    }
+
+    if (target.matches("select[data-bed-map-model]")) {
+      const modelKey = String(target.value || "");
+      const preset = bedMapPresetByKey(modelKey);
+      if (preset) {
+        setSlicerBedMapRowSize(
+          row,
+          Number(preset.width_mm || 0),
+          Number(preset.depth_mm || 0),
+          "Preset"
+        );
+      } else if (modelKey === BED_MAP_CUSTOM_MODEL_KEY) {
+        setSlicerBedMapRowSource(row, "Manuel");
+      } else {
+        setSlicerBedMapRowSize(row, 0, 0, "-");
+        setSlicerBedMapRowSource(row, "-");
+      }
+    }
+  }
+
+  function onSlicerBedMapTableClick(event) {
+    const btn = event && event.target && event.target.closest
+      ? event.target.closest("button[data-bed-map-action]")
+      : null;
+    if (!btn) return;
+    const row = btn.closest("tr[data-bed-map-name]");
+    if (!row) return;
+
+    const action = String(btn.dataset.bedMapAction || "").trim().toLowerCase();
+    const name = getSlicerBedMapRowName(row);
+    if (!name) return;
+
+    if (action === "edit") {
+      openSlicerBedMapEditModal(row);
+      return;
+    }
+
+    if (action === "delete") {
+      if (!window.confirm(`Slet printerprofil '${name}' fra mapping-tabellen?`)) return;
+      row.remove();
+      state.slicerBedMapHiddenNames.add(name);
+      ensureSlicerBedMapEmptyState();
+      showStatus(els.slicerSettingsStatus, `Fjernet: ${name}. Husk at gemme mapping.`, "ok");
+    }
+  }
+
+  function renderSlicerBedMapRows(printers, detectedBeds, mappedBeds, hiddenNames = []) {
+    if (!els.slicerBedMapTableBody) return;
+
+    const hiddenSet = new Set(toStringList(hiddenNames).map((value) => String(value || "").trim()).filter(Boolean));
+    state.slicerBedMapHiddenNames = hiddenSet;
 
     const printerNames = Array.from(new Set([
       ...toStringList(printers),
       ...Object.keys(detectedBeds || {}),
       ...Object.keys(mappedBeds || {}),
-    ])).filter(Boolean);
+    ]))
+      .map((value) => String(value || "").trim())
+      .filter((value) => value && !hiddenSet.has(value));
 
     if (!printerNames.length) {
-      els.slicerBedMapTableBody.innerHTML = `<tr><td colspan="4" class="hint">Ingen printerprofiler fundet endnu.</td></tr>`;
+      els.slicerBedMapTableBody.innerHTML = "";
+      ensureSlicerBedMapEmptyState();
       return;
     }
 
@@ -3796,50 +4135,63 @@
         const mapped = pickSliceBedByProfileName(mappedBeds, name);
         const detected = pickSliceBedByProfileName(detectedBeds, name);
         const active = mapped || detected;
-        const widthValue = active ? formatNumberCompact(active.width_mm) : "";
-        const depthValue = active ? formatNumberCompact(active.depth_mm) : "";
+        const widthMm = active ? Number(active.width_mm || 0) : 0;
+        const depthMm = active ? Number(active.depth_mm || 0) : 0;
         const sourceLabel = mapped ? "Indstillinger" : (detected ? "Profil" : "-");
-        return `
-          <tr data-bed-map-name="${esc(name)}">
-            <td>${esc(name)}</td>
-            <td><input class="input" type="number" min="40" max="2000" step="1" data-bed-map-axis="width" value="${esc(widthValue)}"></td>
-            <td><input class="input" type="number" min="40" max="2000" step="1" data-bed-map-axis="depth" value="${esc(depthValue)}"></td>
-            <td>${esc(sourceLabel)}</td>
-          </tr>
-        `;
+        return buildSlicerBedMapRowHtml(name, {
+          brandKey: "bambu-lab",
+          modelKey: guessBedMapModelKey(name, widthMm, depthMm),
+          widthMm,
+          depthMm,
+          sourceLabel,
+        });
       })
       .join("");
+
+    const rows = Array.from(els.slicerBedMapTableBody.querySelectorAll("tr[data-bed-map-name]"));
+    rows.forEach((row) => {
+      refreshSlicerBedMapRowValues(row);
+    });
   }
 
   function collectSlicerBedMapFromTable() {
-    const out = {};
+    const printer_bed_map = {};
     const rows = Array.from((els.slicerBedMapTableBody && els.slicerBedMapTableBody.querySelectorAll("tr[data-bed-map-name]")) || []);
+    const visibleNames = new Set();
+
     rows.forEach((row) => {
-      const name = String(row && row.dataset ? row.dataset.bedMapName : "").trim();
+      const name = getSlicerBedMapRowName(row);
       if (!name) return;
-      const widthInput = row.querySelector("input[data-bed-map-axis='width']");
-      const depthInput = row.querySelector("input[data-bed-map-axis='depth']");
-      const width = clampSliceBedSizeMm(widthInput && widthInput.value ? Number(widthInput.value) : 0, 0);
-      const depth = clampSliceBedSizeMm(depthInput && depthInput.value ? Number(depthInput.value) : 0, 0);
+      visibleNames.add(name);
+      const width = clampSliceBedSizeMm(row.dataset.bedMapWidthMm || 0, 0);
+      const depth = clampSliceBedSizeMm(row.dataset.bedMapDepthMm || 0, 0);
       if (width > 0 && depth > 0) {
-        out[name] = { width_mm: width, depth_mm: depth };
+        printer_bed_map[name] = { width_mm: width, depth_mm: depth };
       }
+      state.slicerBedMapHiddenNames.delete(name);
     });
-    return out;
+
+    const printer_bed_hidden = Array.from(state.slicerBedMapHiddenNames)
+      .map((value) => String(value || "").trim())
+      .filter((value) => value && !visibleNames.has(value))
+      .sort((a, b) => a.localeCompare(b, "da"));
+
+    return { printer_bed_map, printer_bed_hidden };
   }
 
   async function saveSlicerBedMap() {
     if (state.role !== "admin") return;
-    const printer_bed_map = collectSlicerBedMapFromTable();
+    const payload = collectSlicerBedMapFromTable();
     const data = await api("/api/settings/slicer-profiles", {
       method: "POST",
-      body: { printer_bed_map },
+      body: payload,
     });
     state.slicerSettings = data && typeof data === "object" ? data : {};
     state.sliceProfiles = null;
     renderSlicerSettings();
-    const count = Object.keys(printer_bed_map).length;
-    showStatus(els.slicerSettingsStatus, `Printer-mapping gemt (${count} profiler).`, "ok");
+    const count = Object.keys(payload.printer_bed_map).length;
+    const hiddenCount = payload.printer_bed_hidden.length;
+    showStatus(els.slicerSettingsStatus, `Printer-mapping gemt (${count} profiler, skjult ${hiddenCount}).`, "ok");
   }
 
   async function resetSlicerBedMap() {
@@ -3847,10 +4199,11 @@
     if (!window.confirm("Nulstil alle gemte printer-pladestørrelser?")) return;
     const data = await api("/api/settings/slicer-profiles", {
       method: "POST",
-      body: { printer_bed_map: {} },
+      body: { printer_bed_map: {}, printer_bed_hidden: [] },
     });
     state.slicerSettings = data && typeof data === "object" ? data : {};
     state.sliceProfiles = null;
+    state.slicerBedMapHiddenNames = new Set();
     renderSlicerSettings();
     showStatus(els.slicerSettingsStatus, "Printer-mapping nulstillet.", "ok");
   }
@@ -3863,13 +4216,14 @@
     const printerNames = toStringList(profiles.printers);
     const detectedBeds = parseSlicePrinterBeds(profiles.printer_beds);
     const mappedBeds = parseSlicePrinterBeds(data.printer_bed_map);
+    const hiddenNames = toStringList(data.printer_bed_hidden);
 
     renderSlicerFilesTable("machine", items.machine);
     renderSlicerFilesTable("process", items.process);
     renderSlicerFilesTable("filament", items.filament);
     renderSlicerFilesTable("config", items.config);
 
-    renderSlicerBedMapRows(printerNames, detectedBeds, mappedBeds);
+    renderSlicerBedMapRows(printerNames, detectedBeds, mappedBeds, hiddenNames);
 
     if (els.slicerEffectiveInfo) {
       const lines = [
@@ -3877,6 +4231,7 @@
         `Effektiv settings: ${String(effective.load_settings || "(auto)")}`,
         `Effektiv filament: ${String(effective.load_filaments || "(auto)")}`,
         `Printer-mapping: ${String(Object.keys(mappedBeds).length)}`,
+        `Skjult i tabel: ${String(hiddenNames.length)}`,
       ];
       els.slicerEffectiveInfo.textContent = lines.join(" | ");
     }
@@ -4147,6 +4502,50 @@
       zone.classList.remove("dragover");
       const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
       setSlicerUploadFiles(files);
+    });
+  }
+
+  function bindSlicerProfileCardDropZones() {
+    const cards = Array.isArray(els.slicerProfileCards) ? els.slicerProfileCards : [];
+    if (!cards.length) return;
+
+    cards.forEach((card) => {
+      if (!card || card.dataset.dropBound === "1") return;
+      const kind = String((card.dataset && card.dataset.slicerUploadKind) || "").trim().toLowerCase();
+      const config = getSlicerProfileKindConfig(kind);
+      if (!config) return;
+
+      card.dataset.dropBound = "1";
+      card.addEventListener("dragenter", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        card.classList.add("dragover");
+      });
+      card.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        card.classList.add("dragover");
+      });
+      card.addEventListener("dragleave", (event) => {
+        event.stopPropagation();
+        card.classList.remove("dragover");
+      });
+      card.addEventListener("drop", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        card.classList.remove("dragover");
+        const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []).filter(Boolean);
+        if (!files.length) return;
+        uploadSlicerFile(kind, files, config.label).catch((err) => {
+          showStatus(els.slicerSettingsStatus, err.message || `Kunne ikke uploade filer til ${config.label}`, "error");
+        });
+      });
     });
   }
 
@@ -6118,6 +6517,11 @@
         closeImagePreviewModal();
         return;
       }
+      const bedMapEditModalOpen = !!(els.slicerBedMapEditModal && !els.slicerBedMapEditModal.classList.contains("hidden"));
+      if (bedMapEditModalOpen) {
+        closeSlicerBedMapEditModal();
+        return;
+      }
       const slicerUploadModalOpen = !!(els.slicerUploadModal && !els.slicerUploadModal.classList.contains("hidden"));
       if (slicerUploadModalOpen) {
         closeSlicerUploadModal();
@@ -6377,6 +6781,37 @@
         });
       });
     }
+    if (els.slicerBedMapAddBtn) {
+      els.slicerBedMapAddBtn.addEventListener("click", () => {
+        openAddSlicerBedMapPrinterPrompt();
+      });
+    }
+    if (els.slicerBedMapTableBody) {
+      els.slicerBedMapTableBody.addEventListener("change", (event) => {
+        onSlicerBedMapTableChange(event);
+      });
+      els.slicerBedMapTableBody.addEventListener("click", (event) => {
+        onSlicerBedMapTableClick(event);
+      });
+    }
+    if (els.slicerBedMapEditSaveBtn) {
+      els.slicerBedMapEditSaveBtn.addEventListener("click", () => {
+        applySlicerBedMapModalEdit();
+      });
+    }
+    if (els.slicerBedMapEditCloseBtn) {
+      els.slicerBedMapEditCloseBtn.addEventListener("click", closeSlicerBedMapEditModal);
+    }
+    if (els.slicerBedMapEditCancelBtn) {
+      els.slicerBedMapEditCancelBtn.addEventListener("click", closeSlicerBedMapEditModal);
+    }
+    if (els.slicerBedMapEditModal) {
+      els.slicerBedMapEditModal.addEventListener("click", (event) => {
+        if (event.target === els.slicerBedMapEditModal || event.target.classList.contains("modal-backdrop")) {
+          closeSlicerBedMapEditModal();
+        }
+      });
+    }
 
     if (els.slicerMachineOpenUploadBtn) {
       els.slicerMachineOpenUploadBtn.addEventListener("click", () => openSlicerUploadModal("machine"));
@@ -6437,6 +6872,7 @@
       });
     }
     bindSlicerUploadModalDropZone();
+    bindSlicerProfileCardDropZones();
   }
 
   async function init() {

@@ -1430,6 +1430,13 @@ input[type="checkbox"] {
   background: var(--panel-2);
   display: grid;
   gap: 8px;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.slicer-profile-card.dragover {
+  border-color: rgba(91, 140, 255, 0.92);
+  background: rgba(40, 53, 79, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(91, 140, 255, 0.35);
 }
 
 .slicer-profile-card h4 {
@@ -1447,6 +1454,35 @@ input[type="checkbox"] {
   width: min(760px, calc(100vw - 24px));
   display: grid;
   gap: 10px;
+}
+
+.slicer-bedmap-edit-modal-card {
+  width: min(620px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+}
+
+.slicer-bedmap-value {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  font-variant-numeric: tabular-nums;
+}
+
+.slicer-bedmap-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.slicer-bedmap-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+#slicerBedMapTableBody .select {
+  min-width: 150px;
 }
 
 .file-info-attach-empty {
@@ -1704,15 +1740,109 @@ input[type="checkbox"] {
 }
 
 .slice-modal-card {
-  width: min(920px, calc(100vw - 24px));
+  width: min(1500px, calc(100vw - 24px));
+  height: min(920px, calc(100vh - 22px));
+  max-height: calc(100vh - 22px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+  padding: 14px;
+  border-color: #3a3f4a;
+  background: linear-gradient(180deg, #1d2027 0%, #171a21 100%);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.slice-studio-modal .modal-backdrop {
+  background: rgba(2, 7, 13, 0.78);
+}
+
+.slice-studio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.slice-studio-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.slice-studio-header h3 {
+  margin: 0;
+  font-size: 1.18rem;
+}
+
+.slice-studio-mode-pills {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.slice-studio-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #3f4554;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  color: #a7b1c4;
+  background: rgba(19, 24, 33, 0.9);
+}
+
+.slice-studio-pill.active {
+  color: #dff5e8;
+  border-color: rgba(46, 174, 106, 0.56);
+  background: rgba(30, 88, 57, 0.5);
+}
+
+.slice-studio-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.slice-studio-stage {
+  min-height: 0;
+  display: grid;
+}
+
+.slice-studio-sidebar {
+  min-height: 0;
+  overflow: auto;
   display: grid;
   gap: 10px;
+  padding-right: 4px;
+}
+
+.slice-studio-card {
+  border: 1px solid #343a48;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(27, 33, 45, 0.96) 0%, rgba(20, 25, 35, 0.98) 100%);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.slice-studio-card-title {
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #99a8c4;
+  font-weight: 700;
 }
 
 .slice-modal-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.slice-modal-grid-profiles,
+.slice-modal-grid-support {
+  grid-template-columns: 1fr;
 }
 
 .slice-modal-field {
@@ -1721,31 +1851,44 @@ input[type="checkbox"] {
 }
 
 .slice-modal-field label {
-  font-size: 0.82rem;
-  color: var(--muted);
+  font-size: 0.79rem;
+  color: #9cabca;
+}
+
+.slice-modal-field .hint {
+  font-size: 0.79rem;
+}
+
+.slice-modal-field .select {
+  border-color: #3a4355;
+  background: #1b212d;
 }
 
 .slice-preview-wrap {
+  height: 100%;
+  min-height: 0;
   display: grid;
-  gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px;
-  background: rgba(17, 23, 36, 0.55);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 10px;
+  border: 1px solid #364051;
+  border-radius: 12px;
+  padding: 12px;
+  background: linear-gradient(180deg, #1a1f2b 0%, #141922 100%);
 }
 
 .slice-preview-canvas-wrap {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: radial-gradient(circle at 30% 25%, rgba(70, 98, 150, 0.2), rgba(9, 13, 20, 0.96));
-  min-height: 220px;
+  border: 1px solid #3d4a5f;
+  border-radius: 10px;
+  background:
+    radial-gradient(120% 100% at 52% 12%, rgba(102, 129, 170, 0.25), rgba(17, 24, 35, 0.28) 48%, rgba(6, 10, 16, 0.98) 78%),
+    linear-gradient(180deg, #1a2433 0%, #111823 55%, #0a111a 100%);
   overflow: hidden;
 }
 
 .slice-preview-canvas {
   display: block;
   width: 100%;
-  height: 240px;
+  height: clamp(280px, 58vh, 680px);
   cursor: grab;
   touch-action: none;
 }
@@ -1756,14 +1899,16 @@ input[type="checkbox"] {
 
 .slice-preview-meta {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
   align-items: center;
+  border-top: 1px solid #2c3442;
+  padding-top: 10px;
 }
 
 .slice-preview-row {
   font-size: 0.82rem;
-  color: var(--muted);
+  color: #96a5c0;
 }
 
 .slice-preview-row.ok {
@@ -1779,28 +1924,29 @@ input[type="checkbox"] {
 }
 
 .slice-preview-hint {
-  opacity: 0.85;
+  opacity: 0.86;
 }
 
 .slice-rotate-controls {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .slice-rotate-axis {
   display: grid;
-  gap: 4px;
+  gap: 5px;
 }
 
 .slice-rotate-axis-label {
   font-size: 0.75rem;
-  color: var(--muted);
-  letter-spacing: 0.04em;
+  color: #90a1bd;
+  letter-spacing: 0.06em;
+  font-weight: 700;
 }
 
 .slice-rotate-controls label {
   font-size: 0.82rem;
-  color: var(--muted);
+  color: #9cabca;
 }
 
 .slice-lift-controls {
@@ -1810,7 +1956,7 @@ input[type="checkbox"] {
 
 .slice-lift-controls label {
   font-size: 0.82rem;
-  color: var(--muted);
+  color: #9cabca;
 }
 
 .slice-rotate-buttons {
@@ -1819,13 +1965,32 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+.slice-rotate-buttons .btn {
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 0.79rem;
+}
+
 .slice-rotate-buttons input[type="range"] {
   flex: 1;
+  accent-color: #34b26e;
 }
 
 .slice-modal-field .select:disabled {
   opacity: 0.64;
   cursor: not-allowed;
+}
+
+.slice-studio-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.slice-studio-footer .btn.primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, #1f9a57, #2ecb78);
 }
 
 .modal {
@@ -1987,6 +2152,53 @@ input[type="checkbox"] {
   .split {
     grid-template-columns: 1fr;
   }
+
+  .slice-modal-card {
+    width: min(1420px, calc(100vw - 16px));
+    height: min(900px, calc(100vh - 16px));
+  }
+
+  .slice-studio-layout {
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  }
+
+  .slice-preview-canvas {
+    height: clamp(260px, 52vh, 580px);
+  }
+}
+
+@media (max-width: 920px) {
+  .slice-modal-card {
+    width: min(1400px, calc(100vw - 12px));
+    max-height: calc(100vh - 12px);
+    height: auto;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+  }
+
+  .slice-studio-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .slice-studio-stage {
+    order: 1;
+  }
+
+  .slice-studio-sidebar {
+    order: 2;
+    max-height: 42vh;
+  }
+
+  .slice-preview-canvas {
+    height: clamp(250px, 45vh, 520px);
+  }
+
+  .slice-studio-footer {
+    justify-content: stretch;
+  }
+
+  .slice-studio-footer .btn {
+    flex: 1 1 0;
+  }
 }
 
 @media (max-width: 1000px) {
@@ -2017,20 +2229,39 @@ input[type="checkbox"] {
 }
 
 @media (max-width: 760px) {
-  .slice-modal-grid {
-    grid-template-columns: 1fr;
+  .slice-modal-card {
+    border-radius: 10px;
+    padding: 10px;
+    gap: 8px;
   }
 
-  .slice-preview-canvas-wrap {
-    min-height: 190px;
+  .slice-studio-header {
+    align-items: flex-start;
+  }
+
+  .slice-studio-title-wrap {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .slice-studio-sidebar {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .slice-preview-wrap {
+    padding: 8px;
+    gap: 8px;
   }
 
   .slice-preview-canvas {
-    height: 200px;
+    height: clamp(210px, 40vh, 360px);
   }
 
   .slice-rotate-buttons {
     flex-wrap: wrap;
+    gap: 6px;
   }
 
   .slice-rotate-buttons input[type="range"] {
