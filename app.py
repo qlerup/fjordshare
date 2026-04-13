@@ -2494,6 +2494,87 @@ def _resolve_effective_process_profile_settings(
     return resolved_settings, resolved_options, chain
 
 
+def _collect_process_settings_catalog(
+    executable: str,
+    max_files: int = 800,
+) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    profile_dirs = _candidate_process_profile_dirs(executable)
+    if not profile_dirs:
+        return {}, {}
+
+    defaults: dict[str, Any] = {}
+    value_samples: dict[str, list[Any]] = {}
+    seen_files: set[str] = set()
+    scanned_files = 0
+
+    for profile_dir in profile_dirs:
+        expected_type = _expected_profile_type_for_dir(profile_dir)
+        try:
+            files = sorted((p for p in profile_dir.glob("*.json") if p.is_file()), key=lambda p: p.name.lower())
+        except Exception:
+            continue
+
+        for profile_file in files:
+            if scanned_files >= max_files:
+                break
+
+            try:
+                file_key = str(profile_file.resolve())
+            except Exception:
+                file_key = str(profile_file)
+            if file_key in seen_files:
+                continue
+            seen_files.add(file_key)
+
+            payload = _read_profile_json_payload(profile_file)
+            if not _profile_payload_is_usable(payload, expected_type):
+                continue
+            if not isinstance(payload, dict):
+                continue
+
+            scanned_files += 1
+            current_settings, current_options = _extract_effective_process_settings_from_payload(payload)
+
+            # Many process JSON files are delta-only and rely on inherits.
+            # Expand tiny payloads through effective-resolution to get full key coverage.
+            if len(current_settings) <= 4:
+                try:
+                    resolved_settings, resolved_options, _resolved_chain = _resolve_effective_process_profile_settings(
+                        executable,
+                        str(profile_file),
+                        machine_json="",
+                    )
+                    if len(resolved_settings) > len(current_settings):
+                        current_settings = resolved_settings
+                        current_options = resolved_options
+                except Exception:
+                    pass
+
+            for key, value in current_settings.items():
+                if key not in defaults:
+                    defaults[key] = value
+
+                existing_samples = value_samples.get(key, [])
+                value_samples[key] = _dedupe_process_setting_scalars([*existing_samples, value], max_items=64)
+
+            for key, options in current_options.items():
+                if not isinstance(options, list):
+                    continue
+                existing_samples = value_samples.get(key, [])
+                value_samples[key] = _dedupe_process_setting_scalars([*existing_samples, *options], max_items=64)
+
+        if scanned_files >= max_files:
+            break
+
+    options_map: dict[str, list[Any]] = {}
+    for key, values in value_samples.items():
+        deduped = _dedupe_process_setting_scalars(values, max_items=64)
+        if len(deduped) > 1:
+            options_map[key] = deduped
+
+    return defaults, options_map
+
+
 def _build_modern_profile_args(
     executable: str,
     printer_profile: str,
@@ -5637,6 +5718,7 @@ def api_slice_process_settings():
 
     try:
         executable = _resolve_bambustudio_executable()
+        catalog_settings, catalog_options = _collect_process_settings_catalog(executable)
         machine_json, process_json, _filament_json = _resolve_selected_profile_jsons(
             executable,
             printer_profile,
@@ -5648,13 +5730,25 @@ def api_slice_process_settings():
         return jsonify({"ok": False, "error": f"Kunne ikke finde process-profil: {exc}"}), 500
 
     if not process_json:
+        compact_catalog_options: dict[str, list[Any]] = {}
+        for key, options in catalog_options.items():
+            if key not in catalog_settings:
+                continue
+            if not isinstance(options, list):
+                continue
+            deduped = _dedupe_process_setting_scalars(options, max_items=64)
+            if len(deduped) > 1:
+                compact_catalog_options[key] = deduped
+
         return jsonify({
             "ok": True,
-            "settings": {},
-            "setting_options": {},
+            "settings": catalog_settings,
+            "setting_options": compact_catalog_options,
             "process_profile": "",
             "process_path": "",
             "inherits_chain": [],
+            "catalog_settings_count": len(catalog_settings),
+            "resolved_settings_count": 0,
         })
 
     settings, setting_options, inherits_chain = _resolve_effective_process_profile_settings(
@@ -5697,10 +5791,30 @@ def api_slice_process_settings():
                     setting_options = fb_options
                     inherits_chain = fb_chain
 
+    merged_settings: dict[str, Any] = {}
+    merged_settings.update(catalog_settings)
+    merged_settings.update(settings)
+
+    merged_options_raw: dict[str, list[Any]] = {}
+    for key, options in catalog_options.items():
+        if not isinstance(options, list):
+            continue
+        merged_options_raw[key] = _dedupe_process_setting_scalars(options, max_items=64)
+
+    for key, options in setting_options.items():
+        if not isinstance(options, list):
+            continue
+        existing = merged_options_raw.get(key, [])
+        merged_options_raw[key] = _dedupe_process_setting_scalars([*existing, *options], max_items=64)
+
+    for key, value in merged_settings.items():
+        existing = merged_options_raw.get(key, [])
+        merged_options_raw[key] = _dedupe_process_setting_scalars([value, *existing], max_items=64)
+
     # Keep dropdown payload compact while preserving meaningful options.
     compact_options: dict[str, list[Any]] = {}
-    for key, options in setting_options.items():
-        if key not in settings:
+    for key, options in merged_options_raw.items():
+        if key not in merged_settings:
             continue
         if not isinstance(options, list):
             continue
@@ -5711,11 +5825,13 @@ def api_slice_process_settings():
     return jsonify(
         {
             "ok": True,
-            "settings": settings,
+            "settings": merged_settings,
             "setting_options": compact_options,
             "process_profile": Path(process_json).stem,
             "process_path": process_json,
             "inherits_chain": inherits_chain,
+            "catalog_settings_count": len(catalog_settings),
+            "resolved_settings_count": len(settings),
         }
     )
 
