@@ -4258,6 +4258,18 @@
           filteredOverrides[key] = value;
         }
       });
+
+      const wallGeneratorApiValue = sliceProcessCurrentValueByCanonicalKey("wall_generator", apiBaseSettings, {});
+      const wallGeneratorUiValue = sliceProcessCurrentValueByCanonicalKey("wall_generator", state.sliceProcessSettingsBase, settingsOverrides);
+      if (
+        typeof wallGeneratorUiValue === "string"
+        && normalizeSliceProcessKey(wallGeneratorUiValue) === "classic"
+        && typeof wallGeneratorApiValue === "string"
+        && normalizeSliceProcessKey(wallGeneratorApiValue) === "auto"
+      ) {
+        const apiWallKey = Object.keys(apiBaseSettings).find((key) => canonicalSliceProcessKey(key) === "wall_generator");
+        filteredOverrides[apiWallKey || "wall_generator"] = "classic";
+      }
     }
     // Profiles are presets; slicing uses the effective process settings map.
     const process_overrides = Object.keys(apiBaseSettings).length
