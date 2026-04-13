@@ -598,35 +598,6 @@
         </div>
 
         <div class="slice-studio-card">
-          <div class="slice-studio-card-title">Support</div>
-          <div class="slice-modal-grid slice-modal-grid-support">
-            <div class="slice-modal-field">
-              <label for="sliceSupportModeSelect">Support</label>
-              <select id="sliceSupportModeSelect" class="select">
-                <option value="auto">Auto / fra profil</option>
-                <option value="on">Til</option>
-                <option value="off">Fra</option>
-              </select>
-            </div>
-            <div class="slice-modal-field">
-              <label for="sliceSupportTypeSelect">Support type</label>
-              <select id="sliceSupportTypeSelect" class="select">
-                <option value="">Auto / fra profil</option>
-                <option value="tree(auto)">tree(auto)</option>
-                <option value="normal(auto)">normal(auto)</option>
-              </select>
-            </div>
-            <div class="slice-modal-field">
-              <label for="sliceSupportStyleSelect">Support style</label>
-              <select id="sliceSupportStyleSelect" class="select">
-                <option value="">Auto / fra profil</option>
-                <option value="default">Default</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        <div class="slice-studio-card">
           <div class="slice-studio-card-title">Process settings (redigér profil)</div>
           <div class="slice-process-profile-head">
             <label for="sliceProcessProfileSelect">Printprofil</label>
@@ -638,6 +609,33 @@
             <button class="slice-process-tab" type="button" role="tab" aria-selected="false" data-slice-process-tab="speed">Speed</button>
             <button class="slice-process-tab" type="button" role="tab" aria-selected="false" data-slice-process-tab="support">Support</button>
             <button class="slice-process-tab" type="button" role="tab" aria-selected="false" data-slice-process-tab="others">Others</button>
+          </div>
+          <div id="sliceProcessSupportQuickPanel" class="slice-process-support-panel hidden" aria-hidden="true">
+            <div class="slice-modal-grid slice-modal-grid-support">
+              <div class="slice-modal-field">
+                <label for="sliceSupportModeSelect">Enable support</label>
+                <select id="sliceSupportModeSelect" class="select">
+                  <option value="auto">Use profile default</option>
+                  <option value="on">On</option>
+                  <option value="off">Off</option>
+                </select>
+              </div>
+              <div class="slice-modal-field">
+                <label for="sliceSupportTypeSelect">Type</label>
+                <select id="sliceSupportTypeSelect" class="select">
+                  <option value="">Auto / fra profil</option>
+                  <option value="tree(auto)">tree(auto)</option>
+                  <option value="normal(auto)">normal(auto)</option>
+                </select>
+              </div>
+              <div class="slice-modal-field">
+                <label for="sliceSupportStyleSelect">Style</label>
+                <select id="sliceSupportStyleSelect" class="select">
+                  <option value="">Auto / fra profil</option>
+                  <option value="default">Default</option>
+                </select>
+              </div>
+            </div>
           </div>
           <div class="slice-process-settings-head">
             <input id="sliceProcessSettingsSearchInput" class="input" type="search" placeholder="Søg i settings...">

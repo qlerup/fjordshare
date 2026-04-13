@@ -199,6 +199,7 @@
     sliceNozzleRightFlowSelect: document.getElementById("sliceNozzleRightFlowSelect"),
     sliceProcessProfileSelect: document.getElementById("sliceProcessProfileSelect"),
     sliceProcessTabBar: document.getElementById("sliceProcessTabBar"),
+    sliceProcessSupportQuickPanel: document.getElementById("sliceProcessSupportQuickPanel"),
     sliceProcessSettingsSearchInput: document.getElementById("sliceProcessSettingsSearchInput"),
     sliceProcessSettingsResetBtn: document.getElementById("sliceProcessSettingsResetBtn"),
     sliceProcessSettingsMeta: document.getElementById("sliceProcessSettingsMeta"),
@@ -1931,7 +1932,7 @@
   function sliceProcessKeyLooksBoolean(key) {
     const normalized = String(key || "").trim().toLowerCase();
     if (!normalized) return false;
-    return /(^|_)(enable|enabled|is|has|use|only|avoid|detect|combination|embedding|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_top_surfaces|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental)($|_)/.test(normalized);
+    return /(^|_)(enable|enabled|is|has|use|only|avoid|detect|combination|embedding|slow_down|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_top_surfaces|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental|remove|dont|independent|z_overrides)($|_)/.test(normalized);
   }
 
   function normalizeSliceProcessSettingScalar(value, key = "") {
@@ -2121,6 +2122,59 @@
     wall_transitioning_length: "wall_transition_length",
     min_wall_width: "minimum_wall_width",
     min_feature_size: "minimum_feature_size",
+    initial_layer_print_speed: "initial_layer_speed",
+    first_layer_speed: "initial_layer_speed",
+    first_layer_infill_speed: "initial_layer_infill_speed",
+    initial_layer_infill_print_speed: "initial_layer_infill_speed",
+    external_perimeter_speed: "outer_wall_speed",
+    perimeter_speed: "inner_wall_speed",
+    small_perimeter_min_length: "small_perimeter_threshold",
+    internal_infill_speed: "sparse_infill_speed",
+    solid_infill_speed: "internal_solid_infill_speed",
+    top_surface_print_speed: "top_surface_speed",
+    bridge_print_speed: "bridge_speed",
+    gap_fill_speed: "gap_infill_speed",
+    support_material_speed: "support_speed",
+    support_material_interface_speed: "support_interface_speed",
+    support_interface_print_speed: "support_interface_speed",
+    travel_print_speed: "travel_speed",
+    default_acceleration: "normal_printing_acceleration",
+    print_acceleration: "normal_printing_acceleration",
+    infill_acceleration: "sparse_infill_acceleration",
+    internal_infill_acceleration: "sparse_infill_acceleration",
+    first_layer_acceleration: "initial_layer_acceleration",
+    first_layer_travel_acceleration: "initial_layer_travel_acceleration",
+    top_surface_accel: "top_surface_acceleration",
+    overhang_1_4_speed: "overhang_speed_25",
+    overhang_2_4_speed: "overhang_speed_50",
+    overhang_3_4_speed: "overhang_speed_75",
+    overhang_4_4_speed: "overhang_speed_100",
+    overhang_speed_0: "overhang_speed_10",
+    overhang_speed_1: "overhang_speed_25",
+    overhang_speed_2: "overhang_speed_50",
+    overhang_speed_3: "overhang_speed_75",
+    overhang_speed_4: "overhang_speed_100",
+    support_buildplate_only: "support_on_build_plate_only",
+    support_on_buildplate_only: "support_on_build_plate_only",
+    support_enable: "enable_support",
+    enable_support_material: "enable_support",
+    support_material: "enable_support",
+    support_structure: "support_type",
+    support_remove_small_overhangs: "remove_small_overhangs",
+    support_filament_1: "support_filament_raft_base",
+    support_filament_2: "support_filament_raft_interface",
+    support_raft_base_filament: "support_filament_raft_base",
+    support_raft_interface_filament: "support_filament_raft_interface",
+    support_base_pattern: "base_pattern",
+    support_base_pattern_spacing: "base_pattern_spacing",
+    support_interface_top_layers: "top_interface_layers",
+    support_interface_bottom_layers: "bottom_interface_layers",
+    support_interface_pattern: "interface_pattern",
+    support_interface_top_spacing: "top_interface_spacing",
+    support_xy_distance: "support_object_xy_distance",
+    support_first_layer_gap: "support_object_first_layer_gap",
+    support_z_overrides_xy: "z_overrides_xy",
+    support_independent_layer_height: "independent_support_layer_height",
   };
 
   const SLICE_PROCESS_FALLBACK_BASE_SETTINGS = {
@@ -2202,6 +2256,63 @@
     detect_narrow_internal_solid_infill: true,
     ensure_vertical_shell_thickness: "enabled",
     detect_floating_vertical_shells: true,
+    initial_layer_speed: 50,
+    initial_layer_infill_speed: 105,
+    outer_wall_speed: 200,
+    inner_wall_speed: 300,
+    small_perimeter_speed: 50,
+    small_perimeter_threshold: 0,
+    sparse_infill_speed: 350,
+    internal_solid_infill_speed: 250,
+    vertical_shell_speed: 80,
+    top_surface_speed: 200,
+    slow_down_for_overhangs: true,
+    overhang_speed_10: 60,
+    overhang_speed_25: 50,
+    overhang_speed_50: 30,
+    overhang_speed_75: 10,
+    overhang_speed_100: 10,
+    slow_down_by_height: false,
+    bridge_speed: 50,
+    gap_infill_speed: 250,
+    support_speed: 150,
+    support_interface_speed: 80,
+    travel_speed: 1000,
+    normal_printing_acceleration: 8000,
+    travel_acceleration: 10000,
+    initial_layer_travel_acceleration: 6000,
+    initial_layer_acceleration: 500,
+    outer_wall_acceleration: 5000,
+    inner_wall_acceleration: 0,
+    top_surface_acceleration: 2000,
+    sparse_infill_acceleration: 100,
+    enable_support: false,
+    support_type: "tree(auto)",
+    support_style: "default",
+    support_threshold_angle: 25,
+    support_on_build_plate_only: false,
+    remove_small_overhangs: true,
+    raft_layers: 0,
+    support_filament_raft_base: "default",
+    support_filament_raft_interface: "default",
+    initial_layer_density: 90,
+    initial_layer_expansion: 3,
+    support_wall_loops: -1,
+    top_z_distance: 0.16,
+    bottom_z_distance: 0.16,
+    base_pattern: "default",
+    base_pattern_spacing: 2.5,
+    pattern_angle: 0,
+    top_interface_layers: 2,
+    bottom_interface_layers: 2,
+    interface_pattern: "default",
+    top_interface_spacing: 0.5,
+    normal_support_expansion: 0,
+    support_object_xy_distance: 0.35,
+    z_overrides_xy: false,
+    support_object_first_layer_gap: 0.2,
+    dont_support_bridges: false,
+    independent_support_layer_height: true,
   };
 
   const SLICE_PROCESS_FALLBACK_SETTING_OPTIONS = {
@@ -2220,6 +2331,15 @@
     internal_solid_infill_pattern: ["rectilinear", "grid", "monotonic", "aligned_rectilinear"],
     sparse_infill_pattern: ["grid", "gyroid", "cubic", "triangles", "rectilinear", "honeycomb"],
     ensure_vertical_shell_thickness: ["enabled", "critical_only", "disabled"],
+    small_perimeter_speed: [30, 40, 50, 60, 70, 80, 100],
+    vertical_shell_speed: [60, 70, 80, 90, 100],
+    sparse_infill_acceleration: [50, 75, 100],
+    support_type: ["tree(auto)", "normal(auto)"],
+    support_style: ["default"],
+    support_filament_raft_base: ["default"],
+    support_filament_raft_interface: ["default"],
+    base_pattern: ["default", "rectilinear", "grid", "concentric", "honeycomb"],
+    interface_pattern: ["default", "rectilinear", "grid", "concentric"],
   };
 
   const SLICE_PROCESS_LABEL_OVERRIDES = {
@@ -2315,6 +2435,96 @@
     detect_narrow_internal_solid_infill: "Detect narrow internal solid infill",
     ensure_vertical_shell_thickness: "Ensure vertical shell thickness",
     detect_floating_vertical_shells: "Detect floating vertical shells",
+    initial_layer_speed: "Initial layer",
+    initial_layer_print_speed: "Initial layer",
+    first_layer_speed: "Initial layer",
+    initial_layer_infill_speed: "Initial layer infill",
+    first_layer_infill_speed: "Initial layer infill",
+    initial_layer_infill_print_speed: "Initial layer infill",
+    outer_wall_speed: "Outer wall",
+    external_perimeter_speed: "Outer wall",
+    inner_wall_speed: "Inner wall",
+    perimeter_speed: "Inner wall",
+    small_perimeter_speed: "Small perimeters",
+    small_perimeter_threshold: "Small perimeter threshold",
+    sparse_infill_speed: "Sparse infill",
+    internal_solid_infill_speed: "Internal solid infill",
+    top_surface_speed: "Top surface",
+    slow_down_for_overhangs: "Slow down for overhangs",
+    overhang_speed_10: "Overhang speed 10%",
+    overhang_speed_25: "Overhang speed 25%",
+    overhang_speed_50: "Overhang speed 50%",
+    overhang_speed_75: "Overhang speed 75%",
+    overhang_speed_100: "Overhang speed 100%",
+    slow_down_by_height: "Slow down by height",
+    bridge_speed: "Bridge",
+    bridge_print_speed: "Bridge",
+    gap_infill_speed: "Gap infill",
+    gap_fill_speed: "Gap infill",
+    support_speed: "Support",
+    support_material_speed: "Support",
+    support_interface_speed: "Support interface",
+    support_material_interface_speed: "Support interface",
+    support_interface_print_speed: "Support interface",
+    travel_speed: "Travel",
+    travel_print_speed: "Travel",
+    normal_printing_acceleration: "Normal printing",
+    default_acceleration: "Normal printing",
+    print_acceleration: "Normal printing",
+    travel_acceleration: "Travel",
+    initial_layer_travel_acceleration: "Initial layer travel",
+    first_layer_travel_acceleration: "Initial layer travel",
+    initial_layer_acceleration: "Initial layer",
+    first_layer_acceleration: "Initial layer",
+    outer_wall_acceleration: "Outer wall",
+    inner_wall_acceleration: "Inner wall",
+    top_surface_acceleration: "Top surface",
+    top_surface_accel: "Top surface",
+    sparse_infill_acceleration: "Sparse infill",
+    infill_acceleration: "Sparse infill",
+    internal_infill_acceleration: "Sparse infill",
+    enable_support: "Enable support",
+    support_type: "Type",
+    support_style: "Style",
+    support_threshold_angle: "Threshold angle",
+    support_on_build_plate_only: "On build plate only",
+    support_buildplate_only: "On build plate only",
+    support_on_buildplate_only: "On build plate only",
+    remove_small_overhangs: "Remove small overhangs",
+    support_remove_small_overhangs: "Remove small overhangs",
+    raft_layers: "Raft layers",
+    support_filament_raft_base: "Support/raft base",
+    support_filament_raft_interface: "Support/raft interface",
+    support_raft_base_filament: "Support/raft base",
+    support_raft_interface_filament: "Support/raft interface",
+    initial_layer_density: "Initial layer density",
+    initial_layer_expansion: "Initial layer expansion",
+    support_wall_loops: "Support wall loops",
+    top_z_distance: "Top Z distance",
+    bottom_z_distance: "Bottom Z distance",
+    base_pattern: "Base pattern",
+    support_base_pattern: "Base pattern",
+    base_pattern_spacing: "Base pattern spacing",
+    support_base_pattern_spacing: "Base pattern spacing",
+    pattern_angle: "Pattern angle",
+    top_interface_layers: "Top interface layers",
+    support_interface_top_layers: "Top interface layers",
+    bottom_interface_layers: "Bottom interface layers",
+    support_interface_bottom_layers: "Bottom interface layers",
+    interface_pattern: "Interface pattern",
+    support_interface_pattern: "Interface pattern",
+    top_interface_spacing: "Top interface spacing",
+    support_interface_top_spacing: "Top interface spacing",
+    normal_support_expansion: "Normal Support expansion",
+    support_object_xy_distance: "Support/object xy distance",
+    support_xy_distance: "Support/object xy distance",
+    z_overrides_xy: "Z overrides X/Y",
+    support_z_overrides_xy: "Z overrides X/Y",
+    support_object_first_layer_gap: "Support/object first layer gap",
+    support_first_layer_gap: "Support/object first layer gap",
+    dont_support_bridges: "Don't support bridges",
+    independent_support_layer_height: "Independent support layer height",
+    support_independent_layer_height: "Independent support layer height",
   };
 
   const SLICE_PROCESS_QUALITY_ROW_ORDER = {
@@ -2418,6 +2628,109 @@
     detect_floating_vertical_shells: 80,
   };
 
+  const SLICE_PROCESS_SPEED_ROW_ORDER = {
+    initial_layer_speed: 10,
+    initial_layer_print_speed: 10,
+    first_layer_speed: 10,
+    initial_layer_infill_speed: 20,
+    first_layer_infill_speed: 20,
+    initial_layer_infill_print_speed: 20,
+
+    outer_wall_speed: 10,
+    external_perimeter_speed: 10,
+    inner_wall_speed: 20,
+    perimeter_speed: 20,
+    small_perimeter_speed: 30,
+    small_perimeter_threshold: 40,
+    sparse_infill_speed: 50,
+    internal_solid_infill_speed: 60,
+    vertical_shell_speed: 70,
+    top_surface_speed: 80,
+    slow_down_for_overhangs: 90,
+    overhang_speed_10: 100,
+    overhang_speed_25: 110,
+    overhang_speed_50: 120,
+    overhang_speed_75: 130,
+    overhang_speed_100: 140,
+    slow_down_by_height: 150,
+    bridge_speed: 160,
+    bridge_print_speed: 160,
+    gap_infill_speed: 170,
+    gap_fill_speed: 170,
+    support_speed: 180,
+    support_material_speed: 180,
+    support_interface_speed: 190,
+    support_material_interface_speed: 190,
+    support_interface_print_speed: 190,
+
+    travel_speed: 10,
+    travel_print_speed: 10,
+
+    normal_printing_acceleration: 10,
+    default_acceleration: 10,
+    print_acceleration: 10,
+    travel_acceleration: 20,
+    initial_layer_travel_acceleration: 30,
+    first_layer_travel_acceleration: 30,
+    initial_layer_acceleration: 40,
+    first_layer_acceleration: 40,
+    outer_wall_acceleration: 50,
+    inner_wall_acceleration: 60,
+    top_surface_acceleration: 70,
+    top_surface_accel: 70,
+    sparse_infill_acceleration: 80,
+    infill_acceleration: 80,
+    internal_infill_acceleration: 80,
+  };
+
+  const SLICE_PROCESS_SUPPORT_ROW_ORDER = {
+    enable_support: 10,
+    support_type: 20,
+    support_style: 30,
+    support_threshold_angle: 40,
+    support_on_build_plate_only: 50,
+    support_buildplate_only: 50,
+    support_on_buildplate_only: 50,
+    remove_small_overhangs: 60,
+    support_remove_small_overhangs: 60,
+
+    raft_layers: 10,
+
+    support_filament_raft_base: 10,
+    support_raft_base_filament: 10,
+    support_filament_raft_interface: 20,
+    support_raft_interface_filament: 20,
+
+    initial_layer_density: 10,
+    initial_layer_expansion: 20,
+    support_wall_loops: 30,
+    top_z_distance: 40,
+    bottom_z_distance: 50,
+    base_pattern: 60,
+    support_base_pattern: 60,
+    base_pattern_spacing: 70,
+    support_base_pattern_spacing: 70,
+    pattern_angle: 80,
+    top_interface_layers: 90,
+    support_interface_top_layers: 90,
+    bottom_interface_layers: 100,
+    support_interface_bottom_layers: 100,
+    interface_pattern: 110,
+    support_interface_pattern: 110,
+    top_interface_spacing: 120,
+    support_interface_top_spacing: 120,
+    normal_support_expansion: 130,
+    support_object_xy_distance: 140,
+    support_xy_distance: 140,
+    z_overrides_xy: 150,
+    support_z_overrides_xy: 150,
+    support_object_first_layer_gap: 160,
+    support_first_layer_gap: 160,
+    dont_support_bridges: 170,
+    independent_support_layer_height: 180,
+    support_independent_layer_height: 180,
+  };
+
   function setSliceProcessSettingsActiveTab(tab, rerender = true) {
     const wanted = String(tab || "").trim().toLowerCase();
     state.sliceProcessSettingsActiveTab = SLICE_PROCESS_TAB_ORDER.includes(wanted) ? wanted : "quality";
@@ -2437,6 +2750,11 @@
       button.setAttribute("aria-selected", selected ? "true" : "false");
       button.setAttribute("tabindex", selected ? "0" : "-1");
     });
+    if (els.sliceProcessSupportQuickPanel) {
+      const showSupportQuickPanel = active === "support";
+      els.sliceProcessSupportQuickPanel.classList.toggle("hidden", !showSupportQuickPanel);
+      els.sliceProcessSupportQuickPanel.setAttribute("aria-hidden", showSupportQuickPanel ? "false" : "true");
+    }
   }
 
   function normalizeSliceProcessKey(key) {
@@ -2457,6 +2775,27 @@
   function sliceProcessSettingOptionLabel(key, optionValue) {
     const canonical = canonicalSliceProcessKey(key);
     const normalizedValue = normalizeSliceProcessKey(optionValue);
+
+    if (canonical === "support_type") {
+      if (normalizedValue === "tree_auto" || normalizedValue === "tree") return "Tree (auto)";
+      if (normalizedValue === "normal_auto" || normalizedValue === "normal") return "Normal (auto)";
+    }
+
+    if (canonical === "support_style") {
+      if (normalizedValue === "default") return "Default";
+    }
+
+    if (canonical === "support_filament_raft_base" || canonical === "support_filament_raft_interface") {
+      if (normalizedValue === "default") return "Default";
+    }
+
+    if (canonical === "base_pattern" || canonical === "interface_pattern") {
+      if (normalizedValue === "default") return "Default";
+      if (normalizedValue === "rectilinear") return "Rectilinear";
+      if (normalizedValue === "grid") return "Grid";
+      if (normalizedValue === "concentric") return "Concentric";
+      if (normalizedValue === "honeycomb") return "Honeycomb";
+    }
 
     if (canonical === "wall_generator") {
       if (normalizedValue === "classic" || normalizedValue === "auto") return "Classic";
@@ -2548,6 +2887,12 @@
     if (!entry || !entry.category) return true;
     const sectionName = String(entry.category.section || "");
     const canonical = canonicalSliceProcessKey(entry.key);
+
+    // Keep Support mode/type/style in the dedicated quick panel to avoid duplicate controls.
+    if (canonical === "enable_support" || canonical === "support_type" || canonical === "support_style") {
+      return false;
+    }
+
     if (sectionName === "Ironing") {
       if (canonical === "ironing_type" || canonical === "enable_ironing") return true;
       return !isSliceProcessIroningDisabled(base, overrides);
@@ -2586,6 +2931,13 @@
     if (processKeyMatches(normalized, [/length_of_sparse_infill_anchor/, /maximum_length_of_sparse_infill_anchor/, /sparse_infill_anchor_length/])) {
       return "mm or %";
     }
+    if (normalized === "support_wall_loops") return "loops";
+    if (processKeyMatches(normalized, [/^raft_layers$/, /^top_interface_layers$/, /^bottom_interface_layers$/, /^support_interface_top_layers$/, /^support_interface_bottom_layers$/])) {
+      return "layers";
+    }
+    if (processKeyMatches(normalized, [/small_perimeter_speed/, /vertical_shell_speed/])) return "mm/s or %";
+    if (processKeyMatches(normalized, [/sparse_infill_acceleration/, /infill_acceleration/, /internal_infill_acceleration/])) return "mm/s2 or %";
+    if (processKeyMatches(normalized, [/accel/, /acceleration/])) return "mm/s2";
     if (processKeyMatches(normalized, [/(^|_)angle($|_)/])) return "deg";
     if (processKeyMatches(normalized, [/infill_direction/, /bridge_direction/])) return "deg";
     if (processKeyMatches(normalized, [/(^|_)(filter_margin|transition_length|minimum_wall_width|min_wall_width|minimum_feature_size|min_feature_size)($|_)/])) {
@@ -2625,8 +2977,40 @@
       return { tab: "quality", section: "Advanced", sectionOrder: 70 };
     }
 
-    if (processKeyMatches(normalized, [/support/, /raft/, /brim/, /skirt/, /overhang/])) {
+    if (processKeyMatches(normalized, [/^initial_layer_speed$/, /^initial_layer_print_speed$/, /^first_layer_speed$/, /^initial_layer_infill_speed$/, /^first_layer_infill_speed$/, /^initial_layer_infill_print_speed$/])) {
+      return { tab: "speed", section: "Initial layer speed", sectionOrder: 10 };
+    }
+
+    if (processKeyMatches(normalized, [/^outer_wall_speed$/, /^external_perimeter_speed$/, /^inner_wall_speed$/, /^perimeter_speed$/, /small_perimeter_speed/, /small_perimeter_threshold/, /^sparse_infill_speed$/, /^internal_solid_infill_speed$/, /^vertical_shell_speed$/, /^top_surface_speed$/, /^slow_down_for_overhangs$/, /^overhang_speed_/, /^slow_down_by_height$/, /^bridge_speed$/, /^bridge_print_speed$/, /^gap_infill_speed$/, /^gap_fill_speed$/, /^support_speed$/, /^support_material_speed$/, /^support_interface_speed$/, /^support_material_interface_speed$/, /^support_interface_print_speed$/])) {
+      return { tab: "speed", section: "Other layers speed", sectionOrder: 20 };
+    }
+
+    if (processKeyMatches(normalized, [/^travel_speed$/, /^travel_print_speed$/])) {
+      return { tab: "speed", section: "Travel speed", sectionOrder: 30 };
+    }
+
+    if (processKeyMatches(normalized, [/accel/, /acceleration/])) {
+      return { tab: "speed", section: "Acceleration", sectionOrder: 40 };
+    }
+
+    if (processKeyMatches(normalized, [/^enable_support$/, /^support_type$/, /^support_style$/, /^support_threshold_angle$/, /^support_on_build_plate_only$/, /^support_buildplate_only$/, /^support_on_buildplate_only$/, /^remove_small_overhangs$/, /^support_remove_small_overhangs$/])) {
       return { tab: "support", section: "Support", sectionOrder: 10 };
+    }
+
+    if (processKeyMatches(normalized, [/^raft_layers$/])) {
+      return { tab: "support", section: "Raft", sectionOrder: 20 };
+    }
+
+    if (processKeyMatches(normalized, [/^support_filament_raft_base$/, /^support_filament_raft_interface$/, /^support_filament_1$/, /^support_filament_2$/, /^support_raft_base_filament$/, /^support_raft_interface_filament$/])) {
+      return { tab: "support", section: "Filament for Supports", sectionOrder: 30 };
+    }
+
+    if (processKeyMatches(normalized, [/^initial_layer_density$/, /^initial_layer_expansion$/, /^support_wall_loops$/, /^top_z_distance$/, /^bottom_z_distance$/, /^base_pattern$/, /^support_base_pattern$/, /^base_pattern_spacing$/, /^support_base_pattern_spacing$/, /^pattern_angle$/, /^top_interface_layers$/, /^support_interface_top_layers$/, /^bottom_interface_layers$/, /^support_interface_bottom_layers$/, /^interface_pattern$/, /^support_interface_pattern$/, /^top_interface_spacing$/, /^support_interface_top_spacing$/, /^normal_support_expansion$/, /^support_object_xy_distance$/, /^support_xy_distance$/, /^z_overrides_xy$/, /^support_z_overrides_xy$/, /^support_object_first_layer_gap$/, /^support_first_layer_gap$/, /^dont_support_bridges$/, /^independent_support_layer_height$/, /^support_independent_layer_height$/])) {
+      return { tab: "support", section: "Advanced", sectionOrder: 40 };
+    }
+
+    if (processKeyMatches(normalized, [/support/, /raft/, /brim/, /skirt/, /overhang/])) {
+      return { tab: "support", section: "Support", sectionOrder: 50 };
     }
 
     if (processKeyMatches(normalized, [/^wall_loops$/, /^wall_count$/, /^wall_line_count$/, /embedding_wall_into_infill/, /detect_thin_wall/])) {
@@ -2657,7 +3041,7 @@
   }
 
   function sliceProcessSettingRowOrder(key, section) {
-    const normalized = normalizeSliceProcessKey(key);
+    const normalized = canonicalSliceProcessKey(key);
     if (section === "Layer height" || section === "Line width" || section === "Seam" || section === "Precision" || section === "Ironing" || section === "Wall generator" || section === "Advanced") {
       if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_QUALITY_ROW_ORDER, normalized)) {
         return SLICE_PROCESS_QUALITY_ROW_ORDER[normalized];
@@ -2666,6 +3050,16 @@
     if (section === "Walls" || section === "Top/bottom shells" || section === "Sparse infill" || section === "Advanced" || section === "Strength") {
       if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_STRENGTH_ROW_ORDER, normalized)) {
         return SLICE_PROCESS_STRENGTH_ROW_ORDER[normalized];
+      }
+    }
+    if (section === "Initial layer speed" || section === "Other layers speed" || section === "Travel speed" || section === "Acceleration" || section === "Speed") {
+      if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_SPEED_ROW_ORDER, normalized)) {
+        return SLICE_PROCESS_SPEED_ROW_ORDER[normalized];
+      }
+    }
+    if (section === "Support" || section === "Raft" || section === "Filament for Supports" || section === "Advanced") {
+      if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_SUPPORT_ROW_ORDER, normalized)) {
+        return SLICE_PROCESS_SUPPORT_ROW_ORDER[normalized];
       }
     }
     return 500;

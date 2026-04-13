@@ -2154,6 +2154,18 @@ input[type="checkbox"] {
   border-bottom-color: #3cd27a;
 }
 
+.slice-process-support-panel {
+  border: 1px solid rgba(68, 81, 104, 0.45);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(16, 24, 36, 0.42);
+}
+
+.slice-process-support-panel .slice-modal-grid-support {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .slice-process-settings-list {
   border: 1px solid #364051;
   border-radius: 10px;
@@ -2260,6 +2272,10 @@ input[type="checkbox"] {
 
 @media (max-width: 1200px) {
   .slice-nozzle-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .slice-process-support-panel .slice-modal-grid-support {
     grid-template-columns: minmax(0, 1fr);
   }
 }
