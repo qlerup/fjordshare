@@ -2704,8 +2704,15 @@ def _build_modern_profile_args(
             prefer_uploaded=prefer_uploaded,
         )
 
-    if not effective_load_settings and machine_json and process_json:
-        args.extend(["--load-settings", f"{machine_json};{process_json}"])
+    if not effective_load_settings and machine_json:
+        explicit_process_selected = bool(str(print_profile or "").strip())
+        if explicit_process_selected and process_json:
+            args.extend(["--load-settings", f"{machine_json};{process_json}"])
+        else:
+            # Compatibility mode for auto-process selection: let Bambu pick a
+            # matching process for the selected machine instead of forcing
+            # potentially incompatible process JSON into --load-settings.
+            args.extend(["--load-settings", machine_json])
 
     if not effective_load_filaments and filament_json:
         args.extend(["--load-filaments", filament_json])
@@ -2724,8 +2731,28 @@ def _normalize_slice_support_type(value: Any) -> str:
 
 
 def _normalize_slice_support_style(value: Any) -> str:
-    normalized = str(value or "").strip().lower()
-    return normalized if normalized in {"", "default"} else ""
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"tree_slim", "treeslim"}:
+        normalized = "tree_slim"
+    elif normalized in {"tree_strong", "treestrong"}:
+        normalized = "tree_strong"
+    elif normalized in {"tree_hybrid", "treehybrid"}:
+        normalized = "tree_hybrid"
+    elif normalized in {"tree_organic", "treeorganic"}:
+        normalized = "tree_organic"
+    elif normalized in {"default_style", "auto"}:
+        normalized = "default"
+    allowed = {
+        "",
+        "default",
+        "grid",
+        "snug",
+        "tree_slim",
+        "tree_strong",
+        "tree_hybrid",
+        "tree_organic",
+    }
+    return normalized if normalized in allowed else ""
 
 
 def _normalize_slice_nozzle_diameter(value: Any) -> str:
@@ -3891,17 +3918,18 @@ def _slice_stl_to_gcode(
         if errors:
             guidance = ""
             errors_lower = [err.lower() for err in errors]
+            has_nozzle_setup_error = any(
+                ("nozzle_volume_type not found" in err)
+                or ("setup params error" in err)
+                for err in errors_lower
+            )
 
             # Some Bambu multi-extruder builds reject explicit nozzle overrides
             # with setup/nozzle errors; retry once without explicit nozzle values.
             should_retry_without_support_override = (
                 allow_support_override_fallback
                 and bool(support_load_settings_override)
-                and any(
-                    ("nozzle_volume_type not found" in err)
-                    or ("setup params error" in err)
-                    for err in errors_lower
-                )
+                and has_nozzle_setup_error
             )
             if should_retry_without_support_override:
                 try:
@@ -3961,6 +3989,42 @@ def _slice_stl_to_gcode(
                             return
                         except Exception as retry2_exc:
                             errors.append(f"process-auto-fallback: {str(retry2_exc)[:350]}")
+
+            # Compatibility fallback even when no explicit support/nozzle override
+            # file was provided. Some H2D profile combos still fail with
+            # nozzle_volume_type/setup-params errors unless process is auto-selected.
+            should_retry_process_auto = (
+                allow_support_override_fallback
+                and has_nozzle_setup_error
+                and bool(print_profile_value)
+            )
+            if should_retry_process_auto:
+                try:
+                    _slice_stl_to_gcode(
+                        input_stl,
+                        output_gcode,
+                        printer_profile=printer_profile_value,
+                        print_profile="",
+                        filament_profile=filament_profile_value,
+                        rotation_x_degrees=rotation_x_degrees,
+                        rotation_y_degrees=rotation_y_degrees,
+                        rotation_z_degrees=rotation_z_degrees,
+                        lift_z_mm=normalized_lift_z,
+                        support_mode=normalized_support_mode,
+                        support_type=normalized_support_type,
+                        support_style=normalized_support_style,
+                        nozzle_left_diameter="",
+                        nozzle_right_diameter="",
+                        nozzle_left_flow="",
+                        nozzle_right_flow="",
+                        bed_width_mm=normalized_bed_width,
+                        bed_depth_mm=normalized_bed_depth,
+                        process_overrides=normalized_process_overrides,
+                        allow_support_override_fallback=False,
+                    )
+                    return
+                except Exception as retry_process_auto_exc:
+                    errors.append(f"process-auto-direct-fallback: {str(retry_process_auto_exc)[:350]}")
 
             if any("unable to create plate triangles" in err for err in errors_lower):
                 guidance = (
