@@ -2895,12 +2895,16 @@ def _build_support_override_load_settings(
     # Some multi-extruder machine/process combos require these keys to exist explicitly
     # in the loaded process payload (observed on H2D with nozzle_volume_type errors).
     template_settings, _template_options = _extract_effective_process_settings_from_payload(override_template_payload)
+    runtime_compat_changed = False
     for runtime_key in ("nozzle_volume_type", "different_extruder", "extruder_count", "new_printer_name"):
         if runtime_key in patched_payload:
             continue
         if runtime_key in template_settings:
             patched_payload[runtime_key] = template_settings.get(runtime_key)
+            runtime_compat_changed = True
     changed = False
+    if runtime_compat_changed:
+        changed = True
 
     if normalized_mode in {"on", "off"}:
         enabled = normalized_mode == "on"

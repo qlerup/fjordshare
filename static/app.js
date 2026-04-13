@@ -2049,6 +2049,15 @@
     others: "Others",
   };
 
+  const SLICE_PROCESS_KEY_ALIASES = {
+    elefant_foot_compensation: "elephant_foot_compensation",
+    x_y_hole_compensation: "xy_hole_compensation",
+    x_y_contour_compensation: "xy_contour_compensation",
+    initial_layer_print_height: "initial_layer_height",
+    first_layer_height: "initial_layer_height",
+    default_line_width: "line_width",
+  };
+
   const SLICE_PROCESS_FALLBACK_BASE_SETTINGS = {
     layer_height: 0.16,
     initial_layer_height: 0.2,
@@ -2245,6 +2254,13 @@
       .replace(/^_+|_+$/g, "");
   }
 
+  function canonicalSliceProcessKey(key) {
+    const normalized = normalizeSliceProcessKey(key);
+    return Object.prototype.hasOwnProperty.call(SLICE_PROCESS_KEY_ALIASES, normalized)
+      ? SLICE_PROCESS_KEY_ALIASES[normalized]
+      : normalized;
+  }
+
   function processKeyMatches(key, patterns) {
     return patterns.some((pattern) => pattern.test(key));
   }
@@ -2408,7 +2424,33 @@
     const activeTab = setSliceProcessSettingsActiveTab(state.sliceProcessSettingsActiveTab, false);
     const activeTabLabel = SLICE_PROCESS_TAB_LABELS[activeTab] || "Settings";
     const search = String((els.sliceProcessSettingsSearchInput && els.sliceProcessSettingsSearchInput.value) || "").trim().toLowerCase();
-    const keys = Object.keys(base).sort((a, b) => a.localeCompare(b, "da"));
+    const rawKeys = Object.keys(base).sort((a, b) => a.localeCompare(b, "da"));
+    const apiBaseKeys = state.sliceProcessSettingsBaseApi && typeof state.sliceProcessSettingsBaseApi === "object"
+      ? state.sliceProcessSettingsBaseApi
+      : {};
+    const canonicalToKey = new Map();
+    const scoreKey = (key, canonical) => {
+      let score = 0;
+      if (Object.prototype.hasOwnProperty.call(apiBaseKeys, key)) score += 10;
+      if (normalizeSliceProcessKey(key) === canonical) score += 3;
+      score -= String(key || "").length * 0.001;
+      return score;
+    };
+    rawKeys.forEach((key) => {
+      const canonical = canonicalSliceProcessKey(key);
+      const prev = canonicalToKey.get(canonical);
+      if (!prev) {
+        canonicalToKey.set(canonical, key);
+        return;
+      }
+      const prevScore = scoreKey(prev, canonical);
+      const nextScore = scoreKey(key, canonical);
+      if (nextScore > prevScore) {
+        canonicalToKey.set(canonical, key);
+      }
+    });
+    const keys = Array.from(canonicalToKey.values()).sort((a, b) => a.localeCompare(b, "da"));
+
     const categorizedAll = keys.map((key) => {
       const category = sliceProcessSettingCategory(key);
       return {
