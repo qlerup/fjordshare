@@ -2103,48 +2103,70 @@
       ? bounds.getSize(new THREE.Vector3())
       : new THREE.Vector3(28, 28, 28);
     const maxExtent = Math.max(22, Number(size.x || 0), Number(size.y || 0), Number(size.z || 0));
-    const shaftHalf = Math.max(14, maxExtent * 0.38);
-    const coneLength = Math.max(6, Math.min(22, shaftHalf * 0.44));
-    const coneRadius = Math.max(2.2, coneLength * 0.34);
+    const ringRadius = Math.max(16, maxExtent * 0.44);
+    const coneLength = Math.max(4.2, Math.min(14, ringRadius * 0.13));
+    const coneRadius = Math.max(1.8, coneLength * 0.34);
+    const arcSpan = 0.42;
 
     const group = new THREE.Group();
     group.name = "sliceRotateAxisArrows";
 
     const axes = [
-      { dir: new THREE.Vector3(1, 0, 0), color: 0x246dff },
-      { dir: new THREE.Vector3(0, 1, 0), color: 0x34d95b },
-      { dir: new THREE.Vector3(0, 0, 1), color: 0xff3c3c },
+      { axis: "x", color: 0xff3c3c },
+      { axis: "y", color: 0x34d95b },
+      { axis: "z", color: 0x246dff },
     ];
 
-    axes.forEach(({ dir, color }) => {
-      const lineGeom = new THREE.BufferGeometry().setFromPoints([
-        dir.clone().multiplyScalar(-shaftHalf),
-        dir.clone().multiplyScalar(shaftHalf),
-      ]);
+    const ringPoint = (axis, angle, radius) => {
+      if (axis === "x") return new THREE.Vector3(0, Math.cos(angle) * radius, Math.sin(angle) * radius);
+      if (axis === "y") return new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+      return new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0);
+    };
+    const ringTangent = (axis, angle) => {
+      if (axis === "x") return new THREE.Vector3(0, -Math.sin(angle), Math.cos(angle));
+      if (axis === "y") return new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle));
+      return new THREE.Vector3(-Math.sin(angle), Math.cos(angle), 0);
+    };
+
+    const addCurvedArrow = (axis, color, baseAngle) => {
+      const startA = baseAngle - arcSpan;
+      const endA = baseAngle - 0.05;
+      const steps = 18;
+      const points = [];
+      for (let i = 0; i <= steps; i += 1) {
+        const t = i / steps;
+        const a = startA + ((endA - startA) * t);
+        points.push(ringPoint(axis, a, ringRadius));
+      }
+      const lineGeom = new THREE.BufferGeometry().setFromPoints(points);
       const lineMat = new THREE.LineBasicMaterial({
         color,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.86,
       });
-      const line = new THREE.Line(lineGeom, lineMat);
-      group.add(line);
+      const arc = new THREE.Line(lineGeom, lineMat);
+      group.add(arc);
 
-      [-1, 1].forEach((sign) => {
-        const cone = new THREE.Mesh(
-          new THREE.ConeGeometry(coneRadius, coneLength, 14),
-          new THREE.MeshStandardMaterial({
-            color,
-            roughness: 0.42,
-            metalness: 0.18,
-            transparent: true,
-            opacity: 0.96,
-          })
-        );
-        const axisDir = dir.clone().multiplyScalar(sign);
-        cone.position.copy(axisDir.clone().multiplyScalar(shaftHalf + (coneLength * 0.48)));
-        cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axisDir);
-        group.add(cone);
-      });
+      const tipPos = ringPoint(axis, endA, ringRadius);
+      const tipDir = ringTangent(axis, endA).normalize();
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(coneRadius, coneLength, 16),
+        new THREE.MeshStandardMaterial({
+          color,
+          roughness: 0.38,
+          metalness: 0.2,
+          transparent: true,
+          opacity: 0.96,
+        })
+      );
+      cone.position.copy(tipPos);
+      cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tipDir);
+      group.add(cone);
+    };
+
+    axes.forEach(({ axis, color }) => {
+      addCurvedArrow(axis, color, Math.PI * 0.3);
+      addCurvedArrow(axis, color, Math.PI * 1.3);
     });
 
     group.visible = state.sliceActiveTool === "rotate";
@@ -2343,7 +2365,12 @@
     const placedBox = new THREE.Box3().setFromObject(group);
     if (!placedBox || placedBox.isEmpty()) return;
     const center = placedBox.getCenter(new THREE.Vector3());
-    group.position.set(group.position.x - center.x, group.position.y - center.y, group.position.z - placedBox.min.z + 0.01);
+    // Keep the printable top surface at Z=0 so model snap/preview matches visually.
+    // Some meshes use top≈maxZ, others top≈minZ; pick the side closest to Z=0.
+    const topSurfaceZ = Math.abs(Number(placedBox.max.z)) <= Math.abs(Number(placedBox.min.z))
+      ? Number(placedBox.max.z)
+      : Number(placedBox.min.z);
+    group.position.set(group.position.x - center.x, group.position.y - center.y, group.position.z - topSurfaceZ - 0.02);
   }
 
   async function loadSlicePreviewPlateAsset(asset, token = state.slicePlateLoadToken) {
