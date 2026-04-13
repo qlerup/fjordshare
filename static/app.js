@@ -4,8 +4,8 @@
   document.body.classList.add("app-mode");
 
   const boot = document.getElementById("bootstrap");
-  const DEFAULT_SLICE_NOZZLE_DIAMETER = "0.4";
-  const DEFAULT_SLICE_NOZZLE_FLOW = "standard";
+  const DEFAULT_SLICE_NOZZLE_DIAMETER = "";
+  const DEFAULT_SLICE_NOZZLE_FLOW = "";
   const state = {
     username: (boot && boot.dataset.username) || "",
     role: ((boot && boot.dataset.role) || "user").toLowerCase(),
@@ -737,7 +737,12 @@
   const SLICE_LIFT_RANGE_MM = Object.freeze({ min: 0, max: 80, step: 0.5 });
   const SLICE_SUPPORT_MODE_VALUES = new Set(["auto", "on", "off"]);
   const SLICE_SUPPORT_TYPE_VALUES = new Set(["", "tree(auto)", "normal(auto)"]);
-  const SLICE_SUPPORT_STYLE_VALUES = new Set(["", "default"]);
+  const SLICE_SUPPORT_STYLE_TREE_VALUES = Object.freeze(["default", "tree_slim", "tree_strong", "tree_hybrid", "tree_organic"]);
+  const SLICE_SUPPORT_STYLE_NORMAL_VALUES = Object.freeze(["default", "grid", "snug"]);
+  const SLICE_SUPPORT_STYLE_ALL_VALUES = Object.freeze(
+    Array.from(new Set([...SLICE_SUPPORT_STYLE_TREE_VALUES, ...SLICE_SUPPORT_STYLE_NORMAL_VALUES]))
+  );
+  const SLICE_SUPPORT_STYLE_VALUES = new Set(["", ...SLICE_SUPPORT_STYLE_ALL_VALUES]);
   const SLICE_NOZZLE_DIAMETER_VALUES = new Set(["", "0.2", "0.4", "0.6", "0.8", "1.0"]);
   const SLICE_NOZZLE_FLOW_VALUES = new Set(["", "standard", "high_flow"]);
   const GLTF_UNIT_CONTEXT = Object.freeze({
@@ -1796,13 +1801,37 @@
   }
 
   function normalizeSliceSupportType(value) {
-    const normalized = String(value || "").trim().toLowerCase();
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_")
+      .replace(/-/g, "_");
+    if (!normalized) return "";
+    if (normalized === "tree" || normalized === "tree_auto" || normalized === "tree(auto)") return "tree(auto)";
+    if (normalized === "normal" || normalized === "normal_auto" || normalized === "normal(auto)") return "normal(auto)";
     return SLICE_SUPPORT_TYPE_VALUES.has(normalized) ? normalized : "";
   }
 
   function normalizeSliceSupportStyle(value) {
-    const normalized = String(value || "").trim().toLowerCase();
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, "_")
+      .replace(/-/g, "_");
+    if (!normalized) return "";
+    if (normalized === "tree_slim" || normalized === "treeslim") return "tree_slim";
+    if (normalized === "tree_strong" || normalized === "treestrong") return "tree_strong";
+    if (normalized === "tree_hybrid" || normalized === "treehybrid") return "tree_hybrid";
+    if (normalized === "tree_organic" || normalized === "treeorganic") return "tree_organic";
+    if (normalized === "default_style" || normalized === "auto") return "default";
     return SLICE_SUPPORT_STYLE_VALUES.has(normalized) ? normalized : "";
+  }
+
+  function supportStyleValuesForType(supportType) {
+    const normalizedType = normalizeSliceSupportType(supportType);
+    if (normalizedType === "tree(auto)") return [...SLICE_SUPPORT_STYLE_TREE_VALUES];
+    if (normalizedType === "normal(auto)") return [...SLICE_SUPPORT_STYLE_NORMAL_VALUES];
+    return [...SLICE_SUPPORT_STYLE_ALL_VALUES];
   }
 
   function normalizeSliceNozzleDiameter(value) {
@@ -1899,6 +1928,37 @@
     }
   }
 
+  function currentSliceProcessSupportType() {
+    const base = state.sliceProcessSettingsBase && typeof state.sliceProcessSettingsBase === "object"
+      ? state.sliceProcessSettingsBase
+      : {};
+    const overrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
+      ? state.sliceProcessSettingsOverrides
+      : {};
+    const fromProcessSettings = normalizeSliceSupportType(
+      sliceProcessCurrentValueByCanonicalKey("support_type", base, overrides)
+    );
+    if (fromProcessSettings) return fromProcessSettings;
+    const fromSidebar = normalizeSliceSupportType((els.sliceSupportTypeSelect && els.sliceSupportTypeSelect.value) || "");
+    if (fromSidebar) return fromSidebar;
+    return normalizeSliceSupportType(state.lastSliceSelection && state.lastSliceSelection.support_type);
+  }
+
+  function syncSliceSupportStyleSelectOptions(typeValue) {
+    const styleSelect = els.sliceSupportStyleSelect;
+    if (!styleSelect) return;
+    const styleValues = supportStyleValuesForType(typeValue);
+    const currentStyle = normalizeSliceSupportStyle(styleSelect.value || "");
+    styleSelect.innerHTML = [
+      `<option value="">Auto / fra profil</option>`,
+      ...styleValues.map((value) => {
+        const label = sliceProcessSettingOptionLabel("support_style", value) || value;
+        return `<option value="${esc(value)}">${esc(label)}</option>`;
+      }),
+    ].join("");
+    styleSelect.value = styleValues.includes(currentStyle) ? currentStyle : "";
+  }
+
   function updateSliceSupportControlsUi() {
     const mode = normalizeSliceSupportMode((els.sliceSupportModeSelect && els.sliceSupportModeSelect.value) || "auto");
     if (els.sliceSupportModeSelect && els.sliceSupportModeSelect.value !== mode) {
@@ -1914,8 +1974,12 @@
       if (typeSelect.value !== normalizedType) typeSelect.value = normalizedType;
       typeSelect.disabled = disableDetails;
       if (disableDetails) typeSelect.value = "";
+      syncSliceSupportStyleSelectOptions(normalizedType);
     }
 
+    if (styleSelect && !typeSelect) {
+      syncSliceSupportStyleSelectOptions(currentSliceProcessSupportType());
+    }
     if (styleSelect) {
       const normalizedStyle = normalizeSliceSupportStyle(styleSelect.value);
       if (styleSelect.value !== normalizedStyle) styleSelect.value = normalizedStyle;
@@ -1947,6 +2011,18 @@
       const text = value.trim();
       if (!text) return "";
       const lower = text.toLowerCase();
+      const canonicalKey = canonicalSliceProcessKey(key);
+      const normalizedKey = normalizeSliceProcessKey(key);
+
+      if (canonicalKey === "support_type") {
+        const normalizedSupportType = normalizeSliceSupportType(text);
+        if (normalizedSupportType) return normalizedSupportType;
+      }
+      if (canonicalKey === "support_style" || normalizedKey === "style") {
+        const normalizedSupportStyle = normalizeSliceSupportStyle(text);
+        if (normalizedSupportStyle) return normalizedSupportStyle;
+      }
+
       if (lower === "true" || lower === "false") return lower === "true";
       if (lower === "on" || lower === "off") return lower === "on";
       if (lower === "yes" || lower === "no") return lower === "yes";
@@ -2398,7 +2474,7 @@
     vertical_shell_speed: [60, 70, 80, 90, 100],
     sparse_infill_acceleration: [50, 75, 100],
     support_type: ["tree(auto)", "normal(auto)"],
-    support_style: ["default"],
+    support_style: [...SLICE_SUPPORT_STYLE_ALL_VALUES],
     support_filament_raft_base: ["default"],
     support_filament_raft_interface: ["default"],
     base_pattern: ["default", "rectilinear", "grid", "concentric", "honeycomb"],
@@ -2974,6 +3050,12 @@
 
     if (canonical === "support_style") {
       if (normalizedValue === "default") return "Default";
+      if (normalizedValue === "grid") return "Grid";
+      if (normalizedValue === "snug") return "Snug";
+      if (normalizedValue === "tree_slim") return "Tree Slim";
+      if (normalizedValue === "tree_strong") return "Tree Strong";
+      if (normalizedValue === "tree_hybrid") return "Tree Hybrid";
+      if (normalizedValue === "tree_organic") return "Tree Organic";
     }
 
     if (canonical === "support_filament_raft_base" || canonical === "support_filament_raft_interface") {
@@ -3384,14 +3466,32 @@
       mergedSeen.add(signature);
       mergedOptions.push(normalized);
     };
-    const rawOptions = Array.isArray(optionsByKey[key]) ? optionsByKey[key] : [];
+    const normalizedKey = normalizeSliceProcessKey(key);
+    const isSupportStyleField = canonical === "support_style"
+      || (normalizedKey === "style" && meta && meta.category && meta.category.tab === "support");
+    const supportStyleValues = isSupportStyleField
+      ? supportStyleValuesForType(currentSliceProcessSupportType())
+      : [];
+    const rawOptions = [];
+    if (Array.isArray(optionsByKey[key])) {
+      rawOptions.push(...optionsByKey[key]);
+    }
+    if (isSupportStyleField) {
+      rawOptions.push(...supportStyleValues);
+      if (Array.isArray(optionsByKey.support_style)) {
+        rawOptions.push(...optionsByKey.support_style);
+      }
+      if (Array.isArray(SLICE_PROCESS_FALLBACK_SETTING_OPTIONS.support_style)) {
+        rawOptions.push(...SLICE_PROCESS_FALLBACK_SETTING_OPTIONS.support_style);
+      }
+    }
     rawOptions.forEach(pushOption);
     pushOption(baseValue);
     if (hasOverride) pushOption(currentValue);
-    const forceTextInput = canonical === "support_style";
+    const forceSelectInput = isSupportStyleField;
 
     const unitHtml = unit ? `<span class="slice-process-setting-unit">${esc(unit)}</span>` : "";
-    if (!forceTextInput && mergedOptions.length > 1) {
+    if (forceSelectInput || mergedOptions.length > 1) {
       const optionsHtml = mergedOptions
         .map((optionValue) => {
           const attrValue = sliceProcessValueToAttr(optionValue);
