@@ -2150,13 +2150,14 @@
   function clearSliceRotateAxisArrows(preview = state.slicePreview) {
     if (!preview || !preview.rotateAxisArrowGroup) return;
     const group = preview.rotateAxisArrowGroup;
-    if (preview.modelGroup) {
+    if (group.parent) {
       try {
-        preview.modelGroup.remove(group);
+        group.parent.remove(group);
       } catch (_err) {}
     }
     disposeSlicePreviewObject(group);
     preview.rotateAxisArrowGroup = null;
+    preview.rotateAxisArrowUsesGizmoScale = false;
   }
 
   function updateSliceRotateAxisArrowVisibility(preview = state.slicePreview) {
@@ -2169,14 +2170,20 @@
     const THREE = preview.THREE;
     clearSliceRotateAxisArrows(preview);
 
-    const bounds = new THREE.Box3().setFromObject(preview.modelGroup);
-    const size = bounds && !bounds.isEmpty()
-      ? bounds.getSize(new THREE.Vector3())
-      : new THREE.Vector3(28, 28, 28);
-    const maxExtent = Math.max(22, Number(size.x || 0), Number(size.y || 0), Number(size.z || 0));
-    const ringRadius = Math.max(16, maxExtent * 0.44);
-    const coneLength = Math.max(4.2, Math.min(14, ringRadius * 0.13));
-    const coneRadius = Math.max(1.8, coneLength * 0.34);
+    const usesGizmoScale = !!(preview.transformControls && preview.camera);
+    let ringRadius = 0.5;
+    let coneLength = 0.13;
+    let coneRadius = 0.045;
+    if (!usesGizmoScale) {
+      const bounds = new THREE.Box3().setFromObject(preview.modelGroup);
+      const size = bounds && !bounds.isEmpty()
+        ? bounds.getSize(new THREE.Vector3())
+        : new THREE.Vector3(28, 28, 28);
+      const maxExtent = Math.max(22, Number(size.x || 0), Number(size.y || 0), Number(size.z || 0));
+      ringRadius = Math.max(16, maxExtent * 0.44);
+      coneLength = Math.max(4.2, Math.min(14, ringRadius * 0.13));
+      coneRadius = Math.max(1.8, coneLength * 0.34);
+    }
     const arcSpan = 0.42;
 
     const group = new THREE.Group();
@@ -2243,6 +2250,44 @@
     group.visible = state.sliceActiveTool === "rotate";
     preview.modelGroup.add(group);
     preview.rotateAxisArrowGroup = group;
+    preview.rotateAxisArrowUsesGizmoScale = usesGizmoScale;
+    syncSliceRotateAxisArrowsToGizmoScale(preview);
+  }
+
+  function syncSliceRotateAxisArrowsToGizmoScale(preview = state.slicePreview) {
+    if (!preview || !preview.rotateAxisArrowGroup) return;
+    const group = preview.rotateAxisArrowGroup;
+    if (!preview.rotateAxisArrowUsesGizmoScale) {
+      group.scale.set(1, 1, 1);
+      return;
+    }
+    if (!preview.camera || !preview.transformControls || !preview.modelGroup || !preview.THREE) return;
+
+    if (!preview.rotateAxisArrowWorldPos) preview.rotateAxisArrowWorldPos = new preview.THREE.Vector3();
+    if (!preview.rotateAxisArrowCamPos) preview.rotateAxisArrowCamPos = new preview.THREE.Vector3();
+
+    const worldPos = preview.rotateAxisArrowWorldPos;
+    const camPos = preview.rotateAxisArrowCamPos;
+    preview.modelGroup.getWorldPosition(worldPos);
+    preview.camera.updateMatrixWorld();
+    preview.camera.getWorldPosition(camPos);
+
+    let factor = 1;
+    if (preview.camera.isOrthographicCamera) {
+      const top = Number(preview.camera.top || 1);
+      const bottom = Number(preview.camera.bottom || -1);
+      const zoom = Math.max(1e-6, Number(preview.camera.zoom || 1));
+      factor = (top - bottom) / zoom;
+    } else {
+      const distance = Math.max(1e-6, worldPos.distanceTo(camPos));
+      const fov = Number(preview.camera.fov || 50);
+      const zoom = Math.max(1e-6, Number(preview.camera.zoom || 1));
+      factor = distance * Math.min((1.9 * Math.tan((Math.PI * fov) / 360)) / zoom, 7);
+    }
+
+    const gizmoSize = Math.max(0.01, Number(preview.transformControls.size || 1));
+    const worldScale = Math.max(0.0001, (factor * gizmoSize) / 4);
+    group.scale.setScalar(worldScale);
   }
 
   function getSliceModelBounds(preview = state.slicePreview) {
@@ -2269,6 +2314,7 @@
   function renderSlicePreview() {
     const preview = state.slicePreview;
     if (!preview || !preview.renderer || !preview.scene || !preview.camera) return;
+    syncSliceRotateAxisArrowsToGizmoScale(preview);
     preview.renderer.render(preview.scene, preview.camera);
   }
 
@@ -2842,6 +2888,9 @@
       bedOutline,
       modelGroup: null,
       rotateAxisArrowGroup: null,
+      rotateAxisArrowUsesGizmoScale: false,
+      rotateAxisArrowWorldPos: null,
+      rotateAxisArrowCamPos: null,
       plateGroup: null,
       activePlateUrl: "",
       bedWidthMm: Number(DEFAULT_SLICE_BED_SIZE_MM.width_mm),
