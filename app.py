@@ -2895,10 +2895,94 @@ def _build_support_override_load_settings(
     # Some multi-extruder machine/process combos require these keys to exist explicitly
     # in the loaded process payload (observed on H2D with nozzle_volume_type errors).
     template_settings, _template_options = _extract_effective_process_settings_from_payload(override_template_payload)
+    machine_payload = _read_profile_json_payload(Path(machine_json)) if machine_json else None
+
+    def _dedupe_numbers(values: Iterable[float], max_items: int = 8) -> list[float]:
+        out: list[float] = []
+        seen: set[str] = set()
+        for raw in values:
+            try:
+                parsed = float(raw)
+            except Exception:
+                continue
+            if not math.isfinite(parsed):
+                continue
+            key = f"{parsed:.6f}"
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(parsed)
+            if len(out) >= max_items:
+                break
+        return out
+
+    def _guess_nozzle_volume_type_value() -> Optional[str]:
+        nozzle_candidates: list[float] = []
+
+        for source in (template_settings, override_template_payload, machine_payload):
+            if not isinstance(source, dict):
+                continue
+            for key in (
+                "nozzle_volume_type",
+                "nozzle_diameter",
+                "nozzle_diameters",
+                "nozzle_size",
+                "nozzle_sizes",
+                "nozzle",
+            ):
+                if key in source:
+                    nozzle_candidates.extend(_extract_float_numbers(source.get(key), max_items=8))
+
+        if not nozzle_candidates:
+            match = re.search(
+                r"(\d+(?:\.\d+)?)\s*nozzle",
+                f"{printer_profile} {selected_process_name}",
+                flags=re.IGNORECASE,
+            )
+            if match:
+                try:
+                    nozzle_candidates.append(float(match.group(1)))
+                except Exception:
+                    pass
+
+        nozzles = _dedupe_numbers(nozzle_candidates, max_items=8)
+        if not nozzles:
+            return None
+
+        extruder_count = 0
+        for source in (template_settings, override_template_payload, machine_payload):
+            if not isinstance(source, dict):
+                continue
+            count_value = source.get("extruder_count")
+            if count_value is None:
+                parsed_count = 0
+            else:
+                try:
+                    parsed_count = int(float(str(count_value).strip()))
+                except Exception:
+                    parsed_count = 0
+            if parsed_count > extruder_count:
+                extruder_count = parsed_count
+
+        if extruder_count > 1:
+            expanded = list(nozzles)
+            while expanded and len(expanded) < extruder_count:
+                expanded.append(expanded[-1])
+            expanded = expanded[:extruder_count] if expanded else [nozzles[0]] * extruder_count
+            return ",".join(f"{value:g}" for value in expanded)
+
+        return f"{nozzles[0]:g}"
+
     runtime_compat_changed = False
     for runtime_key in ("nozzle_volume_type", "different_extruder", "extruder_count", "new_printer_name"):
         if runtime_key in patched_payload:
             continue
+        if runtime_key == "nozzle_volume_type":
+            guessed_nozzle_value = _guess_nozzle_volume_type_value()
+            if guessed_nozzle_value is not None:
+                patched_payload[runtime_key] = guessed_nozzle_value
+                runtime_compat_changed = True
+                continue
         if runtime_key in template_settings:
             patched_payload[runtime_key] = template_settings.get(runtime_key)
             runtime_compat_changed = True
@@ -3615,7 +3699,34 @@ def _slice_stl_to_gcode(
                     )
                     return
                 except Exception as retry_exc:
-                    errors.append(f"support-override-fallback: {str(retry_exc)[:350]}")
+                    retry_text = str(retry_exc)
+                    errors.append(f"support-override-fallback: {retry_text[:350]}")
+
+                    # Final compatibility fallback for H2D-style nozzle/profile mismatches:
+                    # retry with auto process selection (empty print profile).
+                    if print_profile_value and "nozzle_volume_type not found" in retry_text.lower():
+                        try:
+                            _slice_stl_to_gcode(
+                                input_stl,
+                                output_gcode,
+                                printer_profile=printer_profile_value,
+                                print_profile="",
+                                filament_profile=filament_profile_value,
+                                rotation_x_degrees=rotation_x_degrees,
+                                rotation_y_degrees=rotation_y_degrees,
+                                rotation_z_degrees=rotation_z_degrees,
+                                lift_z_mm=normalized_lift_z,
+                                support_mode="auto",
+                                support_type="",
+                                support_style="",
+                                bed_width_mm=normalized_bed_width,
+                                bed_depth_mm=normalized_bed_depth,
+                                process_overrides=normalized_process_overrides,
+                                allow_support_override_fallback=False,
+                            )
+                            return
+                        except Exception as retry2_exc:
+                            errors.append(f"process-auto-fallback: {str(retry2_exc)[:350]}")
 
             if any("unable to create plate triangles" in err for err in errors_lower):
                 guidance = (
