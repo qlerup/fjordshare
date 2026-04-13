@@ -2494,6 +2494,103 @@ def _resolve_effective_process_profile_settings(
     return resolved_settings, resolved_options, chain
 
 
+def _deep_merge_process_profile_payload(base: Any, patch: Any) -> Any:
+    if isinstance(base, dict) and isinstance(patch, dict):
+        merged: dict[str, Any] = dict(base)
+        for key, value in patch.items():
+            if key in merged:
+                merged[key] = _deep_merge_process_profile_payload(merged.get(key), value)
+            else:
+                merged[key] = value
+        return merged
+    return patch
+
+
+def _resolve_effective_process_profile_payload(
+    executable: str,
+    process_json: str,
+    machine_json: str = "",
+    max_depth: int = 12,
+) -> tuple[dict[str, Any], list[str]]:
+    start_path = Path(str(process_json or "").strip())
+    if not start_path.exists() or not start_path.is_file():
+        return {}, []
+
+    profile_dirs = _candidate_process_profile_dirs(executable)
+    if not profile_dirs:
+        profile_dirs = [start_path.parent]
+
+    chain: list[str] = []
+    visited: set[str] = set()
+
+    def _resolve_parent_profile_path(inherits_name: str, current_path: Path) -> Optional[Path]:
+        requested = str(inherits_name or "").strip()
+        if not requested:
+            return None
+
+        machine_hints = [str(machine_json or "").strip(), ""]
+
+        for profile_dir in profile_dirs:
+            for machine_hint in machine_hints:
+                candidate = _pick_profile_json(
+                    profile_dir,
+                    requested,
+                    fallback_first=False,
+                    machine_profile_json=machine_hint,
+                )
+                if candidate:
+                    candidate_path = Path(candidate)
+                    if candidate_path.exists() and candidate_path.is_file():
+                        return candidate_path
+
+        for machine_hint in machine_hints:
+            same_dir = _pick_profile_json(
+                current_path.parent,
+                requested,
+                fallback_first=False,
+                machine_profile_json=machine_hint,
+            )
+            if same_dir:
+                candidate_path = Path(same_dir)
+                if candidate_path.exists() and candidate_path.is_file():
+                    return candidate_path
+
+        return None
+
+    def _walk(path: Path, depth: int) -> dict[str, Any]:
+        if depth > max_depth:
+            return {}
+
+        path_key = str(path.resolve())
+        if path_key in visited:
+            return {}
+        visited.add(path_key)
+
+        payload = _read_profile_json_payload(path)
+        if not isinstance(payload, dict):
+            chain.append(str(path))
+            return {}
+
+        merged_payload: dict[str, Any] = {}
+        inherits_names = _slicer_profile_names_from_value(payload.get("inherits"))
+        if not inherits_names:
+            inherits_names = _slicer_profile_names_from_value(payload.get("from"))
+
+        for inherits_name in inherits_names:
+            parent_path = _resolve_parent_profile_path(inherits_name, path)
+            if parent_path is None:
+                continue
+            parent_payload = _walk(parent_path, depth + 1)
+            merged_payload = _deep_merge_process_profile_payload(merged_payload, parent_payload)
+
+        merged_payload = _deep_merge_process_profile_payload(merged_payload, payload)
+        chain.append(str(path))
+        return merged_payload if isinstance(merged_payload, dict) else {}
+
+    resolved_payload = _walk(start_path, 0)
+    return resolved_payload, chain
+
+
 def _collect_process_settings_catalog(
     executable: str,
     max_files: int = 800,
@@ -2762,7 +2859,15 @@ def _build_support_override_load_settings(
     if not isinstance(process_payload, dict):
         return "", None, "Kunne ikke laese valgt process-profil som JSON."
 
-    patched_payload = dict(process_payload)
+    resolved_payload, _resolved_chain = _resolve_effective_process_profile_payload(
+        executable,
+        process_json,
+        machine_json=machine_json,
+    )
+    patched_payload = dict(resolved_payload) if isinstance(resolved_payload, dict) and resolved_payload else dict(process_payload)
+    # Make temp profile self-contained to avoid runtime inherits lookup failures.
+    patched_payload.pop("inherits", None)
+    patched_payload.pop("from", None)
     changed = False
 
     if normalized_mode in {"on", "off"}:
