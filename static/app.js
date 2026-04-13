@@ -3103,11 +3103,6 @@
     const sectionName = String(entry.category.section || "");
     const canonical = canonicalSliceProcessKey(entry.key);
 
-    // Keep Support mode/type/style in the dedicated quick panel to avoid duplicate controls.
-    if (canonical === "enable_support" || canonical === "support_type" || canonical === "support_style") {
-      return false;
-    }
-
     if (sectionName === "Ironing") {
       if (canonical === "ironing_type" || canonical === "enable_ironing") return true;
       return !isSliceProcessIroningDisabled(base, overrides);
