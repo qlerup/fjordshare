@@ -46,6 +46,8 @@
     topStatusFadeTimer: null,
     slicePreview: null,
     slicePreviewLoadToken: 0,
+    slicePlateAssets: null,
+    slicePlateLoadToken: 0,
     infoDrawerHideTimer: null,
     selectMode: false,
     selectedFolderPaths: new Set(),
@@ -680,6 +682,17 @@
       .flat()
       .map((entry) => [String(entry.key || ""), entry])
   );
+  const SLICER_PLATE_MODEL_ALIASES = Object.freeze({
+    "bambu-a1-mini": ["a1m", "a1-mini", "a1mini"],
+    "bambu-a1": ["a1"],
+    "bambu-p1s": ["p1s", "p1", "o1s"],
+    "bambu-p1p": ["p1p", "p1", "o1s"],
+    "bambu-x1": ["x1"],
+    "bambu-x1-carbon": ["x1c", "x1-carbon", "x1"],
+    "bambu-x1e": ["x1e", "x1"],
+    "bambu-h2d": ["h2d", "h2c"],
+    "bambu-h2d-pro": ["h2dpro", "h2d-pro", "h2d", "h2c"],
+  });
   const KNOWN_PRINTER_MODELS = Object.freeze([
     { key: "", name: "Auto / fra profil", width_mm: 0, depth_mm: 0 },
     { key: "bambu-h2d", name: "Bambu Lab H2D (350×320)", width_mm: 350, depth_mm: 320 },
@@ -1604,6 +1617,100 @@
     return parsedDefault;
   }
 
+  function pickSliceBedMapEntryByProfileName(rawMap, profileName = "") {
+    if (!rawMap || typeof rawMap !== "object") return null;
+    const selected = String(profileName || "").trim();
+    if (!selected) return null;
+
+    const direct = rawMap[selected];
+    if (direct && typeof direct === "object") return direct;
+
+    const wanted = normalizeProfileToken(selected);
+    if (!wanted) return null;
+    for (const [name, value] of Object.entries(rawMap)) {
+      if (normalizeProfileToken(name) !== wanted) continue;
+      if (value && typeof value === "object") return value;
+    }
+    return null;
+  }
+
+  function resolveSelectedSlicePlateModelKey() {
+    const selectedPrinter = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
+    const mapFromSettings = state.slicerSettings && typeof state.slicerSettings === "object"
+      ? state.slicerSettings.printer_bed_map
+      : null;
+    const mapFromProfiles = state.sliceProfiles && typeof state.sliceProfiles === "object"
+      ? state.sliceProfiles.printer_bed_map_raw
+      : null;
+
+    const mappedEntry = pickSliceBedMapEntryByProfileName(mapFromSettings || {}, selectedPrinter)
+      || pickSliceBedMapEntryByProfileName(mapFromProfiles || {}, selectedPrinter);
+    if (mappedEntry && typeof mappedEntry === "object") {
+      const mappedModel = String(mappedEntry.model_key || "").trim().toLowerCase();
+      if (mappedModel) return mappedModel;
+    }
+
+    const bed = resolveSelectedSliceBedSize();
+    return guessBedMapModelKey(selectedPrinter, bed.width_mm, bed.depth_mm);
+  }
+
+  function normalizeSlicerPlateAssets(items) {
+    const list = Array.isArray(items) ? items : [];
+    return list
+      .map((item) => {
+        if (!item || typeof item !== "object") return null;
+        const name = String(item.name || "").trim();
+        const stem = String(item.stem || "").trim() || name.replace(/\.[^.]+$/, "");
+        const ext = String(item.ext || "").trim().toLowerCase();
+        const url = String(item.url || "").trim();
+        if (!name || !ext || !url) return null;
+        return { name, stem, ext, url };
+      })
+      .filter(Boolean);
+  }
+
+  async function loadSlicerPlateAssets(force = false) {
+    if (!force && Array.isArray(state.slicePlateAssets)) return state.slicePlateAssets;
+    const data = await api("/api/slicer/plates");
+    const assets = normalizeSlicerPlateAssets(data && data.items);
+    state.slicePlateAssets = assets;
+    return assets;
+  }
+
+  function plateTokensForModel(modelKey = "") {
+    const key = String(modelKey || "").trim().toLowerCase();
+    const aliases = Array.isArray(SLICER_PLATE_MODEL_ALIASES[key]) ? SLICER_PLATE_MODEL_ALIASES[key] : [];
+    const tokens = [key, ...aliases]
+      .map((value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, ""))
+      .filter(Boolean);
+    return Array.from(new Set(tokens));
+  }
+
+  function pickSlicerPlateAssetForModel(modelKey = "", assets = []) {
+    const key = String(modelKey || "").trim().toLowerCase();
+    if (!key) return null;
+    const list = Array.isArray(assets) ? assets : [];
+    if (!list.length) return null;
+    const tokens = plateTokensForModel(key);
+    if (!tokens.length) return null;
+
+    const candidates = list
+      .filter((asset) => asset && (asset.ext === ".stl" || asset.ext === ".obj"))
+      .map((asset) => {
+        const stemToken = String(asset.stem || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+        let score = 0;
+        tokens.forEach((token) => {
+          if (stemToken.includes(token)) score += token.length;
+        });
+        const extBias = asset.ext === ".stl" ? 2 : 1;
+        return { asset, score, extBias };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => (b.score - a.score) || (b.extBias - a.extBias) || String(a.asset.name).localeCompare(String(b.asset.name), "da"));
+
+    return candidates.length ? candidates[0].asset : null;
+  }
+
   function clampSliceRotationDeg(value) {
     const numeric = Number(value || 0);
     if (!Number.isFinite(numeric)) return 0;
@@ -1862,6 +1969,190 @@
     renderSlicePreview();
   }
 
+  function setSlicePreviewBedVisualMode(showDefaultBed = true) {
+    const preview = state.slicePreview;
+    if (!preview) return;
+    const visible = !!showDefaultBed;
+    if (preview.bedMesh) preview.bedMesh.visible = visible;
+    if (preview.bedOutline) preview.bedOutline.visible = visible;
+  }
+
+  function clearSlicePreviewPlate(preview = state.slicePreview) {
+    if (!preview) return;
+    if (preview.scene && preview.plateGroup) {
+      preview.scene.remove(preview.plateGroup);
+      disposeSlicePreviewObject(preview.plateGroup);
+      preview.plateGroup = null;
+    }
+    preview.activePlateUrl = "";
+  }
+
+  function placeSlicePlateGroupOnBed(preview, group) {
+    if (!preview || !group || !preview.THREE) return;
+    const THREE = preview.THREE;
+    const bedWidth = Math.max(40, Number(preview.bedWidthMm || DEFAULT_SLICE_BED_SIZE_MM.width_mm));
+    const bedDepth = Math.max(40, Number(preview.bedDepthMm || DEFAULT_SLICE_BED_SIZE_MM.depth_mm));
+
+    group.updateMatrixWorld(true);
+    const rawBox = new THREE.Box3().setFromObject(group);
+    if (!rawBox || rawBox.isEmpty()) return;
+    const rawSize = rawBox.getSize(new THREE.Vector3());
+
+    let scale = 1;
+    if (rawSize.x > 0.001 && rawSize.y > 0.001) {
+      const scaleX = bedWidth / rawSize.x;
+      const scaleY = bedDepth / rawSize.y;
+      const fitScale = Math.min(scaleX, scaleY);
+      if (Number.isFinite(fitScale) && fitScale > 0) {
+        scale = Math.max(0.03, Math.min(80, fitScale));
+      }
+    }
+    group.scale.setScalar(scale);
+
+    group.updateMatrixWorld(true);
+    const placedBox = new THREE.Box3().setFromObject(group);
+    if (!placedBox || placedBox.isEmpty()) return;
+    const center = placedBox.getCenter(new THREE.Vector3());
+    group.position.set(group.position.x - center.x, group.position.y - center.y, group.position.z - placedBox.min.z + 0.01);
+  }
+
+  async function loadSlicePreviewPlateAsset(asset, token = state.slicePlateLoadToken) {
+    const preview = await ensureSlicePreviewRenderer();
+    if (!preview || !asset || !asset.url) return false;
+    if (token !== state.slicePlateLoadToken) return false;
+
+    clearSlicePreviewPlate(preview);
+
+    const modules = await ensureThreeModules();
+    const { THREE, STLLoader, OBJLoader } = modules;
+    const ext = String(asset.ext || "").toLowerCase();
+    const assetUrl = String(asset.url || "").trim();
+    if (!assetUrl) return false;
+
+    let group = null;
+    if (ext === ".stl") {
+      const geometry = await new Promise((resolve, reject) => {
+        const loader = new STLLoader();
+        loader.load(assetUrl, resolve, undefined, reject);
+      });
+      if (token !== state.slicePlateLoadToken) {
+        if (geometry && typeof geometry.dispose === "function") geometry.dispose();
+        return false;
+      }
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({
+          color: 0x2f3d4f,
+          roughness: 0.88,
+          metalness: 0.08,
+          transparent: true,
+          opacity: 0.96,
+          side: THREE.DoubleSide,
+        })
+      );
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry),
+        new THREE.LineBasicMaterial({ color: 0x7ea2d6, transparent: true, opacity: 0.58 })
+      );
+      edges.position.z = 0.03;
+      group = new THREE.Group();
+      group.add(mesh);
+      group.add(edges);
+    } else if (ext === ".obj") {
+      const object = await new Promise((resolve, reject) => {
+        const loader = new OBJLoader();
+        loader.load(assetUrl, resolve, undefined, reject);
+      });
+      if (token !== state.slicePlateLoadToken) {
+        disposeSlicePreviewObject(object);
+        return false;
+      }
+      object.traverse((node) => {
+        if (!node || !node.isMesh) return;
+        const geometry = node.geometry || null;
+        if (geometry && typeof geometry.computeVertexNormals === "function") {
+          try {
+            geometry.computeVertexNormals();
+          } catch (_err) {}
+        }
+        if (node.material && typeof node.material.dispose === "function") {
+          try {
+            node.material.dispose();
+          } catch (_err) {}
+        }
+        node.material = new THREE.MeshStandardMaterial({
+          color: 0x2f3d4f,
+          roughness: 0.88,
+          metalness: 0.08,
+          transparent: true,
+          opacity: 0.96,
+          side: THREE.DoubleSide,
+        });
+      });
+      group = object;
+    } else {
+      return false;
+    }
+
+    if (!group || token !== state.slicePlateLoadToken || !state.slicePreview) {
+      disposeSlicePreviewObject(group);
+      return false;
+    }
+
+    placeSlicePlateGroupOnBed(preview, group);
+    preview.scene.add(group);
+    preview.plateGroup = group;
+    preview.activePlateUrl = assetUrl;
+    setSlicePreviewBedVisualMode(false);
+    renderSlicePreview();
+    return true;
+  }
+
+  async function refreshSlicePreviewPlateFromSelection() {
+    const preview = state.slicePreview;
+    if (!preview) return;
+    const selectedModelKey = resolveSelectedSlicePlateModelKey();
+    if (!selectedModelKey) {
+      state.slicePlateLoadToken += 1;
+      clearSlicePreviewPlate(preview);
+      setSlicePreviewBedVisualMode(true);
+      renderSlicePreview();
+      return;
+    }
+
+    const loadToken = ++state.slicePlateLoadToken;
+    let assets = [];
+    try {
+      assets = await loadSlicerPlateAssets();
+    } catch (_err) {
+      assets = [];
+    }
+    if (loadToken !== state.slicePlateLoadToken || !state.slicePreview) return;
+
+    const asset = pickSlicerPlateAssetForModel(selectedModelKey, assets);
+    if (!asset) {
+      clearSlicePreviewPlate(state.slicePreview);
+      setSlicePreviewBedVisualMode(true);
+      renderSlicePreview();
+      return;
+    }
+
+    try {
+      const loaded = await loadSlicePreviewPlateAsset(asset, loadToken);
+      if (!loaded && loadToken === state.slicePlateLoadToken) {
+        clearSlicePreviewPlate(state.slicePreview);
+        setSlicePreviewBedVisualMode(true);
+        renderSlicePreview();
+      }
+    } catch (_err) {
+      if (loadToken !== state.slicePlateLoadToken) return;
+      clearSlicePreviewPlate(state.slicePreview);
+      setSlicePreviewBedVisualMode(true);
+      renderSlicePreview();
+    }
+  }
+
   function refreshSlicePreviewBedFromSelection() {
     const bed = resolveSelectedSliceBedSize();
     if (els.slicePreviewBed) {
@@ -1876,11 +2167,13 @@
       if (String(els.sliceBedDepthInput.value || "") !== String(d)) els.sliceBedDepthInput.value = String(d);
     }
     updateSlicePreviewBedSize(bed.width_mm, bed.depth_mm);
+    refreshSlicePreviewPlateFromSelection().catch(() => {});
   }
 
   function clearSlicePreview() {
     const preview = state.slicePreview;
     if (!preview) return;
+    state.slicePlateLoadToken += 1;
 
     if (preview.resizeObserver && preview.canvas) {
       try {
@@ -1912,6 +2205,8 @@
       disposeSlicePreviewObject(preview.modelGroup);
       preview.modelGroup = null;
     }
+
+    clearSlicePreviewPlate(preview);
 
     if (preview.bedOutline && preview.scene) {
       preview.scene.remove(preview.bedOutline);
@@ -2011,6 +2306,8 @@
       bedMesh,
       bedOutline,
       modelGroup: null,
+      plateGroup: null,
+      activePlateUrl: "",
       bedWidthMm: Number(DEFAULT_SLICE_BED_SIZE_MM.width_mm),
       bedDepthMm: Number(DEFAULT_SLICE_BED_SIZE_MM.depth_mm),
       halfBase: Math.max(DEFAULT_SLICE_BED_SIZE_MM.width_mm, DEFAULT_SLICE_BED_SIZE_MM.depth_mm) * 0.66,
@@ -2187,6 +2484,9 @@
       filament_profiles: toStringList(profiles.filament_profiles),
       printer_beds: parseSlicePrinterBeds(profiles.printer_beds),
       printer_bed_map: parseSlicePrinterBeds(profiles.printer_bed_map),
+      printer_bed_map_raw: (profiles.printer_bed_map && typeof profiles.printer_bed_map === "object")
+        ? profiles.printer_bed_map
+        : {},
       parse_error: String(data.parse_error || ""),
       source: String(data.source || ""),
       config_path: String(data.config_path || ""),
@@ -2220,6 +2520,7 @@
     if (!file || !file.can_slice || state.role !== "admin") return;
 
     state.currentSliceFileId = Number(file.id || 0);
+    state.slicePlateAssets = null;
     if (els.sliceModalFileName) els.sliceModalFileName.textContent = String(file.filename || "-");
     if (els.sliceModal) els.sliceModal.classList.remove("hidden");
     setSliceModalRotation({ x: 0, y: 0, z: 0 });

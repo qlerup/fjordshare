@@ -78,6 +78,8 @@ SLICER_PROFILE_LEGACY_FILAMENT_PATH = SLICER_PROFILE_DIR / "filament.json"
 SLICER_PROFILE_LEGACY_CONFIG_PATH = SLICER_PROFILE_DIR / "config.ini"
 SLICER_PROFILE_ALLOWED_CONFIG_EXTS = {".ini", ".cfg", ".conf", ".txt"}
 SLICER_PROFILE_MAX_BYTES = int(str(os.getenv("SLICER_PROFILE_MAX_BYTES", str(5 * 1024 * 1024))) or str(5 * 1024 * 1024))
+SLICER_PLATE_ASSET_DIR = ROOT_DIR / "static" / "slicer-plates"
+SLICER_PLATE_ASSET_ALLOWED_EXTS = {".stl", ".obj", ".glb", ".gltf", ".3mf"}
 
 PERMISSION_RANK = {"view": 1, "upload": 2, "manage": 3}
 RANK_PERMISSION = {v: k for (k, v) in PERMISSION_RANK.items()}
@@ -2339,8 +2341,8 @@ def _normalize_lift_mm(value: Any) -> float:
     return round(parsed, 3)
 
 
-def _normalize_slicer_printer_bed_map(raw: Any) -> dict[str, dict[str, float]]:
-    out: dict[str, dict[str, float]] = {}
+def _normalize_slicer_printer_bed_map(raw: Any) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
     if not isinstance(raw, dict):
         return out
 
@@ -2361,10 +2363,18 @@ def _normalize_slicer_printer_bed_map(raw: Any) -> dict[str, dict[str, float]]:
                 depth_mm = _normalize_bed_size_mm(nums[1])
 
         if width_mm > 0.0 and depth_mm > 0.0:
-            out[name] = {
+            entry: dict[str, Any] = {
                 "width_mm": float(width_mm),
                 "depth_mm": float(depth_mm),
             }
+            if isinstance(value, dict):
+                manufacturer = str(value.get("manufacturer") or "").strip()[:80]
+                model_key = str(value.get("model_key") or "").strip().lower()[:120]
+                if manufacturer:
+                    entry["manufacturer"] = manufacturer
+                if model_key:
+                    entry["model_key"] = re.sub(r"[^a-z0-9._-]+", "-", model_key).strip("-")
+            out[name] = entry
 
     return out
 
@@ -2386,7 +2396,7 @@ def _normalize_slicer_printer_bed_hidden(raw: Any) -> list[str]:
     return out
 
 
-def _load_slicer_printer_bed_map() -> dict[str, dict[str, float]]:
+def _load_slicer_printer_bed_map() -> dict[str, dict[str, Any]]:
     raw = str(get_setting(SLICER_PRINTER_BED_MAP_SETTING_KEY, "") or "").strip()
     if not raw:
         return {}
@@ -2397,7 +2407,7 @@ def _load_slicer_printer_bed_map() -> dict[str, dict[str, float]]:
     return _normalize_slicer_printer_bed_map(payload)
 
 
-def _save_slicer_printer_bed_map(mapping: Any) -> dict[str, dict[str, float]]:
+def _save_slicer_printer_bed_map(mapping: Any) -> dict[str, dict[str, Any]]:
     normalized = _normalize_slicer_printer_bed_map(mapping)
     set_setting(
         SLICER_PRINTER_BED_MAP_SETTING_KEY,
@@ -5102,6 +5112,39 @@ def api_slice_profiles():
             "parse_error": str(data.get("parse_error") or ""),
         }
     )
+
+
+@app.route("/api/slicer/plates", methods=["GET"])
+@login_required
+def api_slicer_plates():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    items: list[dict[str, Any]] = []
+    try:
+        if SLICER_PLATE_ASSET_DIR.exists():
+            for path in sorted(SLICER_PLATE_ASSET_DIR.iterdir(), key=lambda p: p.name.lower()):
+                if not path.is_file():
+                    continue
+                name = path.name
+                ext = path.suffix.lower()
+                if ext not in SLICER_PLATE_ASSET_ALLOWED_EXTS:
+                    continue
+                rel = f"slicer-plates/{name}"
+                items.append(
+                    {
+                        "name": name,
+                        "stem": path.stem,
+                        "ext": ext,
+                        "size": int(path.stat().st_size),
+                        "updated_at": datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "url": url_for("static", filename=rel),
+                    }
+                )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke læse slicer plate assets: {exc}"}), 500
+
+    return jsonify({"ok": True, "items": items})
 
 
 @app.route("/api/files/<int:file_id>/slice", methods=["POST"])

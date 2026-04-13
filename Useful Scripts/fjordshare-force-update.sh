@@ -172,7 +172,8 @@ sync_runtime_code_changes() {
 	synced_static=0
 	synced_templates=0
 
-	for path in $changed_list; do
+	while IFS= read -r path; do
+		[ -n "$path" ] || continue
 		case "$path" in
 			Dockerfile|docker-compose.yml|requirements.txt|.dockerignore|home/*)
 				continue
@@ -201,7 +202,9 @@ sync_runtime_code_changes() {
 				fi
 				;;
 		esac
-	done
+	done <<EOF
+$changed_list
+EOF
 
 	if [ "$synced_any" -eq 1 ]; then
 		echo "==> Genstarter fjordshare for at loade ny kode"

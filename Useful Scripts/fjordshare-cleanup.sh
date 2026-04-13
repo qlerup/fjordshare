@@ -83,8 +83,4 @@ echo "=== Rydder unused netvaerk ==="
 docker network prune -f || true
 
 echo
-echo "=== Status bagefter ==="
-df -h /volume1
-docker ps -a
-docker image ls
-
+echo "=== Oprydning faerdig ==="
