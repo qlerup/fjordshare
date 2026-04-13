@@ -2708,6 +2708,18 @@
     renderSlicePreview();
   }
 
+  function getSlicePreviewPlateTopZ(preview = state.slicePreview) {
+    if (!preview || !preview.THREE || !preview.plateGroup) return 0;
+    try {
+      const box = new preview.THREE.Box3().setFromObject(preview.plateGroup);
+      if (!box || box.isEmpty()) return 0;
+      const topZ = Number(box.max.z);
+      return Number.isFinite(topZ) ? topZ : 0;
+    } catch (_err) {
+      return 0;
+    }
+  }
+
   function updateSlicePreviewFootprint() {
     const preview = state.slicePreview;
     if (!preview || !preview.modelGroup || !preview.THREE) {
@@ -2726,8 +2738,9 @@
     const widthMm = Math.max(0, Number(box.max.x) - Number(box.min.x));
     const depthMm = Math.max(0, Number(box.max.y) - Number(box.min.y));
     const fits = widthMm <= (preview.bedWidthMm + 0.05) && depthMm <= (preview.bedDepthMm + 0.05);
-    const minZ = Number(box.min.z);
-    const maxZ = Number(box.max.z);
+    const plateTopZ = getSlicePreviewPlateTopZ(preview);
+    const minZ = Number(box.min.z) - plateTopZ;
+    const maxZ = Number(box.max.z) - plateTopZ;
 
     setSlicePreviewFootprint(
       `Model footprint: ${formatNumberCompact(widthMm)} x ${formatNumberCompact(depthMm)} mm (${fits ? "fits" : "outside bed"})`,
@@ -2830,12 +2843,10 @@
     const placedBox = new THREE.Box3().setFromObject(group);
     if (!placedBox || placedBox.isEmpty()) return;
     const center = placedBox.getCenter(new THREE.Vector3());
-    // Keep the printable top surface at Z=0 so model snap/preview matches visually.
-    // Some meshes use top≈maxZ, others top≈minZ; pick the side closest to Z=0.
-    const topSurfaceZ = Math.abs(Number(placedBox.max.z)) <= Math.abs(Number(placedBox.min.z))
-      ? Number(placedBox.max.z)
-      : Number(placedBox.min.z);
+    // Treat highest Z as printable top and place that top surface at Z=0.
+    const topSurfaceZ = Number(placedBox.max.z);
     group.position.set(group.position.x - center.x, group.position.y - center.y, group.position.z - topSurfaceZ);
+    group.updateMatrixWorld(true);
   }
 
   async function loadSlicePreviewPlateAsset(asset, token = state.slicePlateLoadToken) {
@@ -2927,6 +2938,7 @@
     preview.plateGroup = group;
     preview.activePlateUrl = assetUrl;
     setSlicePreviewBedVisualMode(false);
+    applySlicePreviewRotation();
     renderSlicePreview();
     return true;
   }
@@ -2939,6 +2951,7 @@
       state.slicePlateLoadToken += 1;
       clearSlicePreviewPlate(preview);
       setSlicePreviewBedVisualMode(true);
+      applySlicePreviewRotation();
       renderSlicePreview();
       return;
     }
@@ -2956,6 +2969,7 @@
     if (!asset) {
       clearSlicePreviewPlate(state.slicePreview);
       setSlicePreviewBedVisualMode(true);
+      applySlicePreviewRotation();
       renderSlicePreview();
       return;
     }
@@ -2965,12 +2979,14 @@
       if (!loaded && loadToken === state.slicePlateLoadToken) {
         clearSlicePreviewPlate(state.slicePreview);
         setSlicePreviewBedVisualMode(true);
+        applySlicePreviewRotation();
         renderSlicePreview();
       }
     } catch (_err) {
       if (loadToken !== state.slicePlateLoadToken) return;
       clearSlicePreviewPlate(state.slicePreview);
       setSlicePreviewBedVisualMode(true);
+      applySlicePreviewRotation();
       renderSlicePreview();
     }
   }
@@ -3277,6 +3293,7 @@
     if (!preview || !preview.modelGroup) return;
     const rotation = currentSliceRotation();
     const liftMm = currentSliceLiftMm();
+    const plateTopZ = getSlicePreviewPlateTopZ(preview);
     preview.syncingRotation = true;
     preview.modelGroup.rotation.set(
       (rotation.x * Math.PI) / 180,
@@ -3291,9 +3308,9 @@
       const box = getSliceModelBounds(preview);
       const minZ = box ? Number(box.min.z) : 0;
       const snappedOffset = Number.isFinite(minZ) ? (-minZ) : 0;
-      preview.modelGroup.position.z = snappedOffset + liftMm;
+      preview.modelGroup.position.z = plateTopZ + snappedOffset + liftMm;
     } catch (_err) {
-      preview.modelGroup.position.z = liftMm;
+      preview.modelGroup.position.z = plateTopZ + liftMm;
     }
     preview.syncingRotation = false;
 
