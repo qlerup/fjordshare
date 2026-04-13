@@ -1932,6 +1932,9 @@
   function sliceProcessKeyLooksBoolean(key) {
     const normalized = String(key || "").trim().toLowerCase();
     if (!normalized) return false;
+    if (/^(prime_tower|wipe_tower|prime_tower_skip_points|prime_tower_internal_ribs|prime_tower_rib_wall|prime_tower_fillet_wall|purge_into_objects_infill|purge_into_objects_support|purge_into_infill|purge_into_support|flush_into_infill|flush_into_support|spiral_vase|reduce_infill_retraction)$/.test(normalized)) {
+      return true;
+    }
     return /(^|_)(enable|enabled|is|has|use|only|avoid|detect|combination|embedding|slow_down|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_top_surfaces|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental|remove|dont|independent|z_overrides)($|_)/.test(normalized);
   }
 
@@ -2175,6 +2178,29 @@
     support_first_layer_gap: "support_object_first_layer_gap",
     support_z_overrides_xy: "z_overrides_xy",
     support_independent_layer_height: "independent_support_layer_height",
+    skirt_line_count: "skirt_loops",
+    skirt_loop_count: "skirt_loops",
+    brim_gap: "brim_object_gap",
+    brim_separation: "brim_object_gap",
+    brim_object_distance: "brim_object_gap",
+    prime_tower_enable: "enable_prime_tower",
+    prime_tower: "enable_prime_tower",
+    wipe_tower: "enable_prime_tower",
+    purge_into_infill: "purge_into_objects_infill",
+    purge_into_support: "purge_into_objects_support",
+    flush_into_infill: "purge_into_objects_infill",
+    flush_into_support: "purge_into_objects_support",
+    print_order: "print_sequence",
+    spiral_mode: "spiral_vase",
+    timelapse: "timelapse_type",
+    fuzzy_skin_mode: "fuzzy_skin",
+    fuzzy_skin_distance: "fuzzy_skin_point_distance",
+    fuzzy_skin_point_dist: "fuzzy_skin_point_distance",
+    beam_interlocking: "use_beam_interlocking",
+    interlocking_depth: "interlocking_depth_of_a_segmented_region",
+    post_process: "post_processing_scripts",
+    post_process_script: "post_processing_scripts",
+    post_process_scripts: "post_processing_scripts",
   };
 
   const SLICE_PROCESS_FALLBACK_BASE_SETTINGS = {
@@ -2313,6 +2339,37 @@
     support_object_first_layer_gap: 0.2,
     dont_support_bridges: false,
     independent_support_layer_height: true,
+    skirt_loops: 0,
+    skirt_height: 1,
+    brim_type: "auto",
+    brim_width: 5,
+    brim_object_gap: 0.1,
+    enable_prime_tower: true,
+    prime_tower_skip_points: true,
+    prime_tower_internal_ribs: false,
+    prime_tower_width: 60,
+    prime_tower_max_speed: 90,
+    prime_tower_brim_width: "auto",
+    prime_tower_infill_gap: 150,
+    prime_tower_rib_wall: true,
+    prime_tower_extra_rib_length: 0,
+    prime_tower_rib_width: 8,
+    prime_tower_fillet_wall: true,
+    purge_into_objects_infill: false,
+    purge_into_objects_support: true,
+    slicing_mode: "regular",
+    print_sequence: "by_layer",
+    spiral_vase: false,
+    timelapse_type: "traditional",
+    fuzzy_skin: "none",
+    fuzzy_skin_point_distance: 0.8,
+    fuzzy_skin_thickness: 0.3,
+    enable_clumping_detection_by_probing: false,
+    use_beam_interlocking: false,
+    interlocking_depth_of_a_segmented_region: 0,
+    reduce_infill_retraction: true,
+    post_processing_scripts: "",
+    notes: "",
   };
 
   const SLICE_PROCESS_FALLBACK_SETTING_OPTIONS = {
@@ -2340,6 +2397,12 @@
     support_filament_raft_interface: ["default"],
     base_pattern: ["default", "rectilinear", "grid", "concentric", "honeycomb"],
     interface_pattern: ["default", "rectilinear", "grid", "concentric"],
+    brim_type: ["auto", "outer_only", "inner_only", "outer_and_inner", "none"],
+    prime_tower_brim_width: ["auto", 0, 2, 4, 6, 8, 10],
+    slicing_mode: ["regular"],
+    print_sequence: ["by_layer", "by_object"],
+    timelapse_type: ["traditional", "smooth"],
+    fuzzy_skin: ["none", "contour", "all"],
   };
 
   const SLICE_PROCESS_LABEL_OVERRIDES = {
@@ -2525,6 +2588,60 @@
     dont_support_bridges: "Don't support bridges",
     independent_support_layer_height: "Independent support layer height",
     support_independent_layer_height: "Independent support layer height",
+    skirt_loops: "Skirt loops",
+    skirt_line_count: "Skirt loops",
+    skirt_loop_count: "Skirt loops",
+    skirt_height: "Skirt height",
+    brim_type: "Brim type",
+    brim_width: "Brim width",
+    brim_object_gap: "Brim-object gap",
+    brim_gap: "Brim-object gap",
+    brim_separation: "Brim-object gap",
+    brim_object_distance: "Brim-object gap",
+    enable_prime_tower: "Enable",
+    prime_tower_enable: "Enable",
+    prime_tower: "Enable",
+    wipe_tower: "Enable",
+    prime_tower_skip_points: "Skip points",
+    prime_tower_internal_ribs: "Internal ribs",
+    prime_tower_width: "Width",
+    prime_tower_max_speed: "Max speed",
+    prime_tower_brim_width: "Brim width",
+    prime_tower_infill_gap: "Infill gap",
+    prime_tower_rib_wall: "Rib wall",
+    prime_tower_extra_rib_length: "Extra rib length",
+    prime_tower_rib_width: "Rib width",
+    prime_tower_fillet_wall: "Fillet wall",
+    purge_into_objects_infill: "Purge into objects' infill",
+    purge_into_infill: "Purge into objects' infill",
+    flush_into_infill: "Purge into objects' infill",
+    purge_into_objects_support: "Purge into objects' support",
+    purge_into_support: "Purge into objects' support",
+    flush_into_support: "Purge into objects' support",
+    slicing_mode: "Slicing mode",
+    print_sequence: "Print sequence",
+    print_order: "Print sequence",
+    spiral_vase: "Spiral vase",
+    spiral_mode: "Spiral vase",
+    timelapse_type: "Timelapse",
+    timelapse: "Timelapse",
+    fuzzy_skin: "Fuzzy skin",
+    fuzzy_skin_mode: "Fuzzy skin",
+    fuzzy_skin_point_distance: "Fuzzy skin point distance",
+    fuzzy_skin_distance: "Fuzzy skin point distance",
+    fuzzy_skin_point_dist: "Fuzzy skin point distance",
+    fuzzy_skin_thickness: "Fuzzy skin thickness",
+    enable_clumping_detection_by_probing: "Enable clumping detection by probing",
+    use_beam_interlocking: "Use beam interlocking",
+    beam_interlocking: "Use beam interlocking",
+    interlocking_depth_of_a_segmented_region: "Interlocking depth of a segmented region",
+    interlocking_depth: "Interlocking depth of a segmented region",
+    reduce_infill_retraction: "Reduce infill retraction",
+    post_processing_scripts: "Post-processing scripts",
+    post_process: "Post-processing scripts",
+    post_process_script: "Post-processing scripts",
+    post_process_scripts: "Post-processing scripts",
+    notes: "Notes",
   };
 
   const SLICE_PROCESS_QUALITY_ROW_ORDER = {
@@ -2731,6 +2848,70 @@
     support_independent_layer_height: 180,
   };
 
+  const SLICE_PROCESS_OTHERS_ROW_ORDER = {
+    skirt_loops: 10,
+    skirt_line_count: 10,
+    skirt_loop_count: 10,
+    skirt_height: 20,
+    brim_type: 30,
+    brim_width: 40,
+    brim_object_gap: 50,
+    brim_gap: 50,
+    brim_separation: 50,
+    brim_object_distance: 50,
+
+    enable_prime_tower: 10,
+    prime_tower_enable: 10,
+    prime_tower: 10,
+    wipe_tower: 10,
+    prime_tower_skip_points: 20,
+    prime_tower_internal_ribs: 30,
+    prime_tower_width: 40,
+    prime_tower_max_speed: 50,
+    prime_tower_brim_width: 60,
+    prime_tower_infill_gap: 70,
+    prime_tower_rib_wall: 80,
+    prime_tower_extra_rib_length: 90,
+    prime_tower_rib_width: 100,
+    prime_tower_fillet_wall: 110,
+
+    purge_into_objects_infill: 10,
+    purge_into_infill: 10,
+    flush_into_infill: 10,
+    purge_into_objects_support: 20,
+    purge_into_support: 20,
+    flush_into_support: 20,
+
+    slicing_mode: 10,
+    print_sequence: 20,
+    print_order: 20,
+    spiral_vase: 30,
+    spiral_mode: 30,
+    timelapse_type: 40,
+    timelapse: 40,
+    fuzzy_skin: 50,
+    fuzzy_skin_mode: 50,
+    fuzzy_skin_point_distance: 60,
+    fuzzy_skin_distance: 60,
+    fuzzy_skin_point_dist: 60,
+    fuzzy_skin_thickness: 70,
+
+    enable_clumping_detection_by_probing: 10,
+    use_beam_interlocking: 20,
+    beam_interlocking: 20,
+    interlocking_depth_of_a_segmented_region: 30,
+    interlocking_depth: 30,
+
+    reduce_infill_retraction: 10,
+
+    post_processing_scripts: 10,
+    post_process: 10,
+    post_process_script: 10,
+    post_process_scripts: 10,
+
+    notes: 10,
+  };
+
   function setSliceProcessSettingsActiveTab(tab, rerender = true) {
     const wanted = String(tab || "").trim().toLowerCase();
     state.sliceProcessSettingsActiveTab = SLICE_PROCESS_TAB_ORDER.includes(wanted) ? wanted : "quality";
@@ -2795,6 +2976,38 @@
       if (normalizedValue === "grid") return "Grid";
       if (normalizedValue === "concentric") return "Concentric";
       if (normalizedValue === "honeycomb") return "Honeycomb";
+    }
+
+    if (canonical === "brim_type") {
+      if (normalizedValue === "auto") return "Auto";
+      if (normalizedValue === "outer_only") return "Outer only";
+      if (normalizedValue === "inner_only") return "Inner only";
+      if (normalizedValue === "outer_and_inner" || normalizedValue === "all") return "Outer and inner";
+      if (normalizedValue === "none" || normalizedValue === "no_brim" || normalizedValue === "off") return "None";
+    }
+
+    if (canonical === "prime_tower_brim_width") {
+      if (normalizedValue === "auto") return "Auto";
+    }
+
+    if (canonical === "slicing_mode") {
+      if (normalizedValue === "regular") return "Regular";
+    }
+
+    if (canonical === "print_sequence") {
+      if (normalizedValue === "by_layer") return "By layer";
+      if (normalizedValue === "by_object") return "By object";
+    }
+
+    if (canonical === "timelapse_type") {
+      if (normalizedValue === "traditional") return "Traditional";
+      if (normalizedValue === "smooth") return "Smooth";
+    }
+
+    if (canonical === "fuzzy_skin") {
+      if (normalizedValue === "none" || normalizedValue.startsWith("none")) return "None";
+      if (normalizedValue === "contour") return "Contour";
+      if (normalizedValue === "all") return "All";
     }
 
     if (canonical === "wall_generator") {
@@ -2927,6 +3140,9 @@
 
   function sliceProcessSettingUnit(key) {
     const normalized = normalizeSliceProcessKey(key);
+    if (normalized === "skirt_loops") return "loops";
+    if (normalized === "skirt_height") return "layers";
+    if (normalized === "prime_tower_infill_gap") return "%";
     if (processKeyMatches(normalized, [/minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/])) return "mm2";
     if (processKeyMatches(normalized, [/length_of_sparse_infill_anchor/, /maximum_length_of_sparse_infill_anchor/, /sparse_infill_anchor_length/])) {
       return "mm or %";
@@ -2946,7 +3162,7 @@
     if (processKeyMatches(normalized, [/(^|_)(density|overlap)($|_)/])) return "%";
     if (processKeyMatches(normalized, [/(^|_)flow($|_)/])) return "%";
     if (processKeyMatches(normalized, [/(^|_)speed($|_)/])) return "mm/s";
-    if (processKeyMatches(normalized, [/(^|_)(height|width|spacing|inset|radius|resolution|distance|offset|compensation|thickness|length|gap)($|_)/])) {
+    if (processKeyMatches(normalized, [/(^|_)(height|width|spacing|inset|radius|resolution|distance|offset|compensation|thickness|length|gap|depth)($|_)/])) {
       return "mm";
     }
     return "";
@@ -2991,6 +3207,38 @@
 
     if (processKeyMatches(normalized, [/accel/, /acceleration/])) {
       return { tab: "speed", section: "Acceleration", sectionOrder: 40 };
+    }
+
+    if (processKeyMatches(normalized, [/^skirt_loops$/, /^skirt_line_count$/, /^skirt_loop_count$/, /^skirt_height$/, /^brim_type$/, /^brim_width$/, /^brim_object_gap$/, /^brim_gap$/, /^brim_separation$/, /^brim_object_distance$/])) {
+      return { tab: "others", section: "Bed adhesion", sectionOrder: 10 };
+    }
+
+    if (processKeyMatches(normalized, [/^enable_prime_tower$/, /^prime_tower_enable$/, /^prime_tower$/, /^wipe_tower$/, /^prime_tower_skip_points$/, /^prime_tower_internal_ribs$/, /^prime_tower_width$/, /^prime_tower_max_speed$/, /^prime_tower_brim_width$/, /^prime_tower_infill_gap$/, /^prime_tower_rib_wall$/, /^prime_tower_extra_rib_length$/, /^prime_tower_rib_width$/, /^prime_tower_fillet_wall$/])) {
+      return { tab: "others", section: "Prime tower", sectionOrder: 20 };
+    }
+
+    if (processKeyMatches(normalized, [/^purge_into_objects_infill$/, /^purge_into_infill$/, /^flush_into_infill$/, /^purge_into_objects_support$/, /^purge_into_support$/, /^flush_into_support$/])) {
+      return { tab: "others", section: "Purge options", sectionOrder: 30 };
+    }
+
+    if (processKeyMatches(normalized, [/^slicing_mode$/, /^print_sequence$/, /^print_order$/, /^spiral_vase$/, /^spiral_mode$/, /^timelapse_type$/, /^timelapse$/, /^fuzzy_skin$/, /^fuzzy_skin_mode$/, /^fuzzy_skin_point_distance$/, /^fuzzy_skin_distance$/, /^fuzzy_skin_point_dist$/, /^fuzzy_skin_thickness$/])) {
+      return { tab: "others", section: "Special mode", sectionOrder: 40 };
+    }
+
+    if (processKeyMatches(normalized, [/^enable_clumping_detection_by_probing$/, /^use_beam_interlocking$/, /^beam_interlocking$/, /^interlocking_depth_of_a_segmented_region$/, /^interlocking_depth$/])) {
+      return { tab: "others", section: "Advanced", sectionOrder: 50 };
+    }
+
+    if (processKeyMatches(normalized, [/^reduce_infill_retraction$/])) {
+      return { tab: "others", section: "G-code output", sectionOrder: 60 };
+    }
+
+    if (processKeyMatches(normalized, [/^post_processing_scripts$/, /^post_process$/, /^post_process_script$/, /^post_process_scripts$/])) {
+      return { tab: "others", section: "Post-processing scripts", sectionOrder: 70 };
+    }
+
+    if (processKeyMatches(normalized, [/^notes$/])) {
+      return { tab: "others", section: "Notes", sectionOrder: 80 };
     }
 
     if (processKeyMatches(normalized, [/^enable_support$/, /^support_type$/, /^support_style$/, /^support_threshold_angle$/, /^support_on_build_plate_only$/, /^support_buildplate_only$/, /^support_on_buildplate_only$/, /^remove_small_overhangs$/, /^support_remove_small_overhangs$/])) {
@@ -3062,6 +3310,11 @@
         return SLICE_PROCESS_SUPPORT_ROW_ORDER[normalized];
       }
     }
+    if (section === "Bed adhesion" || section === "Prime tower" || section === "Purge options" || section === "Special mode" || section === "Advanced" || section === "G-code output" || section === "Post-processing scripts" || section === "Notes") {
+      if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_OTHERS_ROW_ORDER, normalized)) {
+        return SLICE_PROCESS_OTHERS_ROW_ORDER[normalized];
+      }
+    }
     return 500;
   }
 
@@ -3069,6 +3322,7 @@
     const keyEsc = esc(key);
     const labelEsc = esc(meta.label);
     const unit = valueType === "number" ? sliceProcessSettingUnit(key) : "";
+    const canonical = canonicalSliceProcessKey(key);
 
     if (valueType === "bool") {
       return `
@@ -3078,6 +3332,21 @@
             <input type="checkbox" data-slice-setting-key="${keyEsc}" data-slice-setting-type="bool" ${currentValue ? "checked" : ""}>
             <span>${currentValue ? "On" : "Off"}</span>
           </label>
+        </div>
+      `;
+    }
+
+    if (valueType === "string" && (canonical === "post_processing_scripts" || canonical === "notes")) {
+      const isNotes = canonical === "notes";
+      const textareaClass = `input slice-process-setting-textarea${isNotes ? " is-notes" : ""}`;
+      const rows = isNotes ? 8 : 4;
+      const valueText = String(currentValue == null ? "" : currentValue);
+      return `
+        <div class="slice-process-setting-row wide-control ${hasOverride ? "changed" : ""}">
+          <div class="slice-process-setting-key">${labelEsc}</div>
+          <div class="slice-process-setting-control">
+            <textarea class="${textareaClass}" rows="${rows}" data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}">${esc(valueText)}</textarea>
+          </div>
         </div>
       `;
     }
@@ -9014,6 +9283,10 @@
           return;
         }
         if (input instanceof HTMLInputElement) {
+          updateSliceProcessSettingOverride(key, input.value, valueType);
+          return;
+        }
+        if (input instanceof HTMLTextAreaElement) {
           updateSliceProcessSettingOverride(key, input.value, valueType);
           return;
         }

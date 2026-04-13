@@ -2188,6 +2188,11 @@ input[type="checkbox"] {
   border-bottom: 1px solid rgba(70, 81, 101, 0.24);
 }
 
+.slice-process-setting-row.wide-control {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
 .slice-process-setting-row.changed {
   background: rgba(26, 73, 51, 0.24);
 }
@@ -2213,6 +2218,16 @@ input[type="checkbox"] {
 .slice-process-setting-control .input,
 .slice-process-setting-control .select {
   width: 100%;
+}
+
+.slice-process-setting-textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+}
+
+.slice-process-setting-textarea.is-notes {
+  min-height: 220px;
 }
 
 .slice-process-setting-unit {
