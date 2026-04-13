@@ -530,7 +530,7 @@
               <label for="slicePrinterSelect">Printer</label>
               <select id="slicePrinterSelect" class="select"></select>
             </div>
-            <div class="slice-modal-field">
+            <div class="slice-modal-field hidden" aria-hidden="true">
               <label for="slicePrintProfileSelect">Printprofil</label>
               <select id="slicePrintProfileSelect" class="select"></select>
             </div>
@@ -576,6 +576,17 @@
 
         <div class="slice-studio-card">
           <div class="slice-studio-card-title">Process settings (redigér profil)</div>
+          <div class="slice-process-profile-head">
+            <label for="sliceProcessProfileSelect">Printprofil</label>
+            <select id="sliceProcessProfileSelect" class="select"></select>
+          </div>
+          <div id="sliceProcessTabBar" class="slice-process-tab-bar" role="tablist" aria-label="Process faner">
+            <button class="slice-process-tab active" type="button" role="tab" aria-selected="true" data-slice-process-tab="quality">Quality</button>
+            <button class="slice-process-tab" type="button" role="tab" aria-selected="false" data-slice-process-tab="strength">Strength</button>
+            <button class="slice-process-tab" type="button" role="tab" aria-selected="false" data-slice-process-tab="speed">Speed</button>
+            <button class="slice-process-tab" type="button" role="tab" aria-selected="false" data-slice-process-tab="support">Support</button>
+            <button class="slice-process-tab" type="button" role="tab" aria-selected="false" data-slice-process-tab="others">Others</button>
+          </div>
           <div class="slice-process-settings-head">
             <input id="sliceProcessSettingsSearchInput" class="input" type="search" placeholder="Søg i settings...">
             <button id="sliceProcessSettingsResetBtn" class="btn" type="button">Nulstil ændringer</button>

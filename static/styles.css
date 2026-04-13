@@ -1807,7 +1807,7 @@ input[type="checkbox"] {
 .slice-studio-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -1823,7 +1823,7 @@ input[type="checkbox"] {
   overflow: auto;
   display: grid;
   gap: 10px;
-  padding-right: 4px;
+  padding-right: 0;
 }
 
 .slice-studio-card {
@@ -2095,25 +2095,64 @@ input[type="checkbox"] {
   align-items: center;
 }
 
+.slice-process-profile-head {
+  display: grid;
+  gap: 6px;
+}
+
+.slice-process-profile-head label {
+  font-size: 0.75rem;
+  color: #94a6c8;
+}
+
+.slice-process-tab-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-bottom: 2px;
+  border-bottom: 1px solid rgba(95, 109, 134, 0.35);
+}
+
+.slice-process-tab {
+  border: 0;
+  background: transparent;
+  color: #8f9db6;
+  font-size: 0.98rem;
+  line-height: 1;
+  padding: 4px 2px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.slice-process-tab:hover {
+  color: #cfd9ea;
+}
+
+.slice-process-tab.active {
+  color: #dce9ff;
+  border-bottom-color: #3cd27a;
+}
+
 .slice-process-settings-list {
   border: 1px solid #364051;
   border-radius: 10px;
-  max-height: 300px;
+  max-height: 56vh;
   overflow: auto;
   background: rgba(13, 19, 29, 0.68);
+  padding: 4px 0;
+}
+
+.slice-process-setting-empty {
+  padding: 12px 10px;
 }
 
 .slice-process-setting-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(120px, 220px);
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
   gap: 8px;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid rgba(70, 81, 101, 0.35);
-}
-
-.slice-process-setting-row:last-child {
-  border-bottom: 0;
+  border-bottom: 1px solid rgba(70, 81, 101, 0.24);
 }
 
 .slice-process-setting-row.changed {
@@ -2121,9 +2160,33 @@ input[type="checkbox"] {
 }
 
 .slice-process-setting-key {
-  font-size: 0.79rem;
+  font-size: 0.96rem;
   color: #aeb9cf;
-  word-break: break-all;
+  line-height: 1.2;
+}
+
+.slice-process-setting-control {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+}
+
+.slice-process-setting-control.has-unit {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.slice-process-setting-control .input,
+.slice-process-setting-control .select {
+  width: 100%;
+}
+
+.slice-process-setting-unit {
+  font-size: 0.8rem;
+  color: #8fa4c8;
+  min-width: 32px;
+  text-align: right;
 }
 
 .slice-process-setting-bool {
@@ -2132,6 +2195,29 @@ input[type="checkbox"] {
   justify-content: flex-start;
   gap: 6px;
   min-height: 34px;
+}
+
+.slice-process-group {
+  border-top: 1px solid rgba(90, 102, 126, 0.38);
+  padding-top: 8px;
+  margin-top: 6px;
+}
+
+.slice-process-group .slice-process-setting-row:last-child {
+  border-bottom: 0;
+}
+
+.slice-process-group:first-child {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 2px;
+}
+
+.slice-process-group-title {
+  margin: 0 8px 4px;
+  font-size: 1.02rem;
+  color: #d8e4f7;
+  font-weight: 700;
 }
 
 .slice-modal-field .select:disabled {
@@ -2325,7 +2411,7 @@ input[type="checkbox"] {
   }
 
   .slice-studio-layout {
-    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
   }
 
   .slice-preview-canvas {

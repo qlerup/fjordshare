@@ -30,6 +30,7 @@
     sliceRotation: { x: 0, y: 0, z: 0 },
     sliceProcessSettingsBase: {},
     sliceProcessSettingsProfileKey: "",
+    sliceProcessSettingsActiveTab: "quality",
     sliceProcessSettingsOptions: {},
     sliceProcessSettingsOverrides: {},
     sliceProcessSettingsLoadToken: 0,
@@ -188,6 +189,8 @@
     sliceSupportModeSelect: document.getElementById("sliceSupportModeSelect"),
     sliceSupportTypeSelect: document.getElementById("sliceSupportTypeSelect"),
     sliceSupportStyleSelect: document.getElementById("sliceSupportStyleSelect"),
+    sliceProcessProfileSelect: document.getElementById("sliceProcessProfileSelect"),
+    sliceProcessTabBar: document.getElementById("sliceProcessTabBar"),
     sliceProcessSettingsSearchInput: document.getElementById("sliceProcessSettingsSearchInput"),
     sliceProcessSettingsResetBtn: document.getElementById("sliceProcessSettingsResetBtn"),
     sliceProcessSettingsMeta: document.getElementById("sliceProcessSettingsMeta"),
@@ -1512,6 +1515,20 @@
     selectEl.innerHTML = html;
   }
 
+  function syncSliceProcessProfileSelectFromMain() {
+    if (!els.slicePrintProfileSelect || !els.sliceProcessProfileSelect) return;
+    const mainValue = String(els.slicePrintProfileSelect.value || "");
+    const hasOption = Array.from(els.sliceProcessProfileSelect.options || []).some((opt) => String(opt.value || "") === mainValue);
+    els.sliceProcessProfileSelect.value = hasOption ? mainValue : "";
+  }
+
+  function syncMainPrintProfileSelectFromProcess() {
+    if (!els.slicePrintProfileSelect || !els.sliceProcessProfileSelect) return;
+    const wanted = String(els.sliceProcessProfileSelect.value || "");
+    const hasOption = Array.from(els.slicePrintProfileSelect.options || []).some((opt) => String(opt.value || "") === wanted);
+    els.slicePrintProfileSelect.value = hasOption ? wanted : "";
+  }
+
   function renderKnownPrinterSelect(selectEl, selectedKey = "") {
     if (!selectEl) return;
     const models = KNOWN_PRINTER_MODELS; // built-ins first
@@ -1866,10 +1883,34 @@
     return `${printer}|${print}|${filament}`;
   }
 
-  function normalizeSliceProcessSettingScalar(value) {
+  function sliceProcessKeyLooksBoolean(key) {
+    const normalized = String(key || "").trim().toLowerCase();
+    if (!normalized) return false;
+    return /(^|_)(enable|enabled|is|has|use|only|avoid|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation)($|_)/.test(normalized);
+  }
+
+  function normalizeSliceProcessSettingScalar(value, key = "") {
     if (typeof value === "boolean") return value;
     if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string") return value;
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (!text) return "";
+      const lower = text.toLowerCase();
+      if (lower === "true" || lower === "false") return lower === "true";
+      if (lower === "on" || lower === "off") return lower === "on";
+      if (lower === "yes" || lower === "no") return lower === "yes";
+
+      if (sliceProcessKeyLooksBoolean(key) && (text === "0" || text === "1")) {
+        return text === "1";
+      }
+
+      if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) {
+        const n = Number(text);
+        if (Number.isFinite(n)) return n;
+      }
+
+      return text;
+    }
     return null;
   }
 
@@ -1880,7 +1921,7 @@
       const key = String(keyRaw || "").trim();
       if (!key) return;
       if (key.length > 120) return;
-      const value = normalizeSliceProcessSettingScalar(valueRaw);
+      const value = normalizeSliceProcessSettingScalar(valueRaw, key);
       if (value === null) return;
       out[key] = value;
     });
@@ -1898,7 +1939,7 @@
       const normalized = [];
       const seen = new Set();
       values.forEach((itemRaw) => {
-        const item = normalizeSliceProcessSettingScalar(itemRaw);
+        const item = normalizeSliceProcessSettingScalar(itemRaw, key);
         if (item === null) return;
         const signature = `${typeof item}:${String(item)}`;
         if (seen.has(signature)) return;
@@ -1966,6 +2007,293 @@
     return normalized;
   }
 
+  const SLICE_PROCESS_TAB_ORDER = ["quality", "strength", "speed", "support", "others"];
+  const SLICE_PROCESS_TAB_LABELS = {
+    quality: "Quality",
+    strength: "Strength",
+    speed: "Speed",
+    support: "Support",
+    others: "Others",
+  };
+
+  const SLICE_PROCESS_LABEL_OVERRIDES = {
+    layer_height: "Layer height",
+    initial_layer_height: "Initial layer height",
+    initial_layer_print_height: "Initial layer height",
+    first_layer_height: "Initial layer height",
+    line_width: "Default",
+    default_line_width: "Default",
+    initial_layer_line_width: "Initial layer",
+    outer_wall_line_width: "Outer wall",
+    inner_wall_line_width: "Inner wall",
+    top_surface_line_width: "Top surface",
+    sparse_infill_line_width: "Sparse infill",
+    internal_solid_infill_line_width: "Internal solid infill",
+    support_line_width: "Support",
+    seam_position: "Seam position",
+    seam_placement_away_from_overhangs: "Seam placement away from overhangs (experimental)",
+    smart_scarf_seam_application: "Smart scarf seam application",
+    scarf_application_angle_threshold: "Scarf application angle threshold",
+    scarf_around_entire_wall: "Scarf around entire wall",
+    scarf_steps: "Scarf steps",
+    scarf_joint_for_inner_walls: "Scarf joint for inner walls",
+    override_filament_scarf_seam_setting: "Override filament scarf seam setting",
+    role_based_wipe_speed: "Role-based wipe speed",
+    slice_gap_closing_radius: "Slice gap closing radius",
+    resolution: "Resolution",
+    arc_fitting: "Arc fitting",
+    xy_hole_compensation: "X-Y hole compensation",
+    x_y_hole_compensation: "X-Y hole compensation",
+    xy_contour_compensation: "X-Y contour compensation",
+    x_y_contour_compensation: "X-Y contour compensation",
+    auto_circle_contour_hole_compensation: "Auto circle contour-hole compensation",
+    elephant_foot_compensation: "Elephant foot compensation",
+    precise_z_height: "Precise Z height",
+    ironing_type: "Ironing Type",
+    ironing_pattern: "Ironing Pattern",
+    ironing_speed: "Ironing speed",
+    ironing_flow: "Ironing flow",
+    ironing_line_spacing: "Ironing line spacing",
+    ironing_inset: "Ironing inset",
+    wall_generator: "Wall generator",
+    order_of_walls: "Order of walls",
+    print_infill_first: "Print infill first",
+    bridge_flow: "Bridge flow",
+    thick_bridges: "Thick bridges",
+    only_one_wall_on_top_surfaces: "Only one wall on top surfaces",
+    only_one_wall_on_first_layer: "Only one wall on first layer",
+    smooth_speed_discontinuity_area: "Smooth speed discontinuity area",
+    smooth_coefficient: "Smooth coefficient",
+    avoid_crossing_wall: "Avoid crossing wall",
+    smoothing_wall_speed_along_z_experimental: "Smoothing wall speed along Z (experimental)",
+  };
+
+  const SLICE_PROCESS_QUALITY_ROW_ORDER = {
+    layer_height: 10,
+    initial_layer_height: 20,
+    initial_layer_print_height: 20,
+    first_layer_height: 20,
+    line_width: 10,
+    default_line_width: 10,
+    initial_layer_line_width: 20,
+    outer_wall_line_width: 30,
+    inner_wall_line_width: 40,
+    top_surface_line_width: 50,
+    sparse_infill_line_width: 60,
+    internal_solid_infill_line_width: 70,
+    support_line_width: 80,
+    seam_position: 10,
+    seam_placement_away_from_overhangs: 20,
+    smart_scarf_seam_application: 30,
+    scarf_application_angle_threshold: 40,
+    scarf_around_entire_wall: 50,
+    scarf_steps: 60,
+    scarf_joint_for_inner_walls: 70,
+    override_filament_scarf_seam_setting: 80,
+    role_based_wipe_speed: 90,
+    slice_gap_closing_radius: 10,
+    resolution: 20,
+    arc_fitting: 30,
+    xy_hole_compensation: 40,
+    x_y_hole_compensation: 40,
+    xy_contour_compensation: 50,
+    x_y_contour_compensation: 50,
+    auto_circle_contour_hole_compensation: 60,
+    elephant_foot_compensation: 70,
+    precise_z_height: 80,
+    ironing_type: 10,
+    ironing_pattern: 20,
+    ironing_speed: 30,
+    ironing_flow: 40,
+    ironing_line_spacing: 50,
+    ironing_inset: 60,
+    wall_generator: 10,
+    order_of_walls: 10,
+    print_infill_first: 20,
+    bridge_flow: 30,
+    thick_bridges: 40,
+    only_one_wall_on_top_surfaces: 50,
+    only_one_wall_on_first_layer: 60,
+    smooth_speed_discontinuity_area: 70,
+    smooth_coefficient: 80,
+    avoid_crossing_wall: 90,
+    smoothing_wall_speed_along_z_experimental: 100,
+  };
+
+  function setSliceProcessSettingsActiveTab(tab, rerender = true) {
+    const wanted = String(tab || "").trim().toLowerCase();
+    state.sliceProcessSettingsActiveTab = SLICE_PROCESS_TAB_ORDER.includes(wanted) ? wanted : "quality";
+    syncSliceProcessSettingsTabUi();
+    if (rerender) renderSliceProcessSettingsList();
+    return state.sliceProcessSettingsActiveTab;
+  }
+
+  function syncSliceProcessSettingsTabUi() {
+    if (!els.sliceProcessTabBar) return;
+    const active = String(state.sliceProcessSettingsActiveTab || "quality");
+    const buttons = Array.from(els.sliceProcessTabBar.querySelectorAll("[data-slice-process-tab]"));
+    buttons.forEach((button) => {
+      const tab = String(button.getAttribute("data-slice-process-tab") || "").toLowerCase();
+      const selected = tab === active;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-selected", selected ? "true" : "false");
+      button.setAttribute("tabindex", selected ? "0" : "-1");
+    });
+  }
+
+  function normalizeSliceProcessKey(key) {
+    return String(key || "").trim().toLowerCase();
+  }
+
+  function processKeyMatches(key, patterns) {
+    return patterns.some((pattern) => pattern.test(key));
+  }
+
+  function sliceProcessSettingLabel(key) {
+    const normalized = normalizeSliceProcessKey(key);
+    if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_LABEL_OVERRIDES, normalized)) {
+      return SLICE_PROCESS_LABEL_OVERRIDES[normalized];
+    }
+    const words = normalized.replace(/_/g, " ").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return String(key || "");
+    return words.map((word, idx) => {
+      if (word === "xy") return "X-Y";
+      if (word === "z") return "Z";
+      if (idx === 0) return word.charAt(0).toUpperCase() + word.slice(1);
+      return word;
+    }).join(" ");
+  }
+
+  function sliceProcessSettingUnit(key) {
+    const normalized = normalizeSliceProcessKey(key);
+    if (processKeyMatches(normalized, [/(^|_)angle($|_)/])) return "deg";
+    if (processKeyMatches(normalized, [/(^|_)flow($|_)/])) return "%";
+    if (processKeyMatches(normalized, [/(^|_)speed($|_)/])) return "mm/s";
+    if (processKeyMatches(normalized, [/(^|_)(height|width|spacing|inset|radius|resolution|distance|offset|compensation|thickness|length|gap)($|_)/])) {
+      return "mm";
+    }
+    return "";
+  }
+
+  function sliceProcessSettingCategory(key) {
+    const normalized = normalizeSliceProcessKey(key);
+
+    if (processKeyMatches(normalized, [/^layer_height$/, /^initial_layer_(print_)?height$/, /^first_layer_height$/])) {
+      return { tab: "quality", section: "Layer height", sectionOrder: 10 };
+    }
+    if (processKeyMatches(normalized, [/^line_width$/, /_line_width$/])) {
+      return { tab: "quality", section: "Line width", sectionOrder: 20 };
+    }
+    if (processKeyMatches(normalized, [/^seam_/, /scarf/, /role_based_wipe/])) {
+      return { tab: "quality", section: "Seam", sectionOrder: 30 };
+    }
+    if (processKeyMatches(normalized, [/slice_gap_closing_radius/, /^resolution$/, /^arc_fitting$/, /_hole_compensation$/, /_contour_compensation$/, /elephant_foot_compensation/, /precise_z_height/])) {
+      return { tab: "quality", section: "Precision", sectionOrder: 40 };
+    }
+    if (processKeyMatches(normalized, [/^ironing_/, /^enable_ironing$/])) {
+      return { tab: "quality", section: "Ironing", sectionOrder: 50 };
+    }
+    if (processKeyMatches(normalized, [/^wall_generator$/])) {
+      return { tab: "quality", section: "Wall generator", sectionOrder: 60 };
+    }
+    if (processKeyMatches(normalized, [/order_of_walls/, /print_infill_first/, /bridge_flow/, /thick_bridges/, /only_one_wall_/, /^smooth_/, /avoid_crossing_wall/, /smoothing_wall_speed_along_z/])) {
+      return { tab: "quality", section: "Advanced", sectionOrder: 70 };
+    }
+
+    if (processKeyMatches(normalized, [/support/, /raft/, /brim/, /skirt/, /overhang/])) {
+      return { tab: "support", section: "Support", sectionOrder: 10 };
+    }
+
+    if (processKeyMatches(normalized, [/infill/, /wall_count/, /wall_loops/, /perimeter/, /shell/, /top_layers/, /bottom_layers/, /strength/])) {
+      return { tab: "strength", section: "Strength", sectionOrder: 10 };
+    }
+
+    if (processKeyMatches(normalized, [/(^|_)speed($|_)/, /accel/, /acceleration/, /travel/, /jerk/, /velocity/, /volumetric/])) {
+      return { tab: "speed", section: "Speed", sectionOrder: 10 };
+    }
+
+    return { tab: "others", section: "Other settings", sectionOrder: 90 };
+  }
+
+  function sliceProcessSettingRowOrder(key, section) {
+    const normalized = normalizeSliceProcessKey(key);
+    if (section === "Layer height" || section === "Line width" || section === "Seam" || section === "Precision" || section === "Ironing" || section === "Wall generator" || section === "Advanced") {
+      if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_QUALITY_ROW_ORDER, normalized)) {
+        return SLICE_PROCESS_QUALITY_ROW_ORDER[normalized];
+      }
+    }
+    return 500;
+  }
+
+  function buildSliceProcessSettingRowHtml(key, baseValue, currentValue, hasOverride, valueType, optionsByKey, meta) {
+    const keyEsc = esc(key);
+    const labelEsc = esc(meta.label);
+    const unit = valueType === "number" ? sliceProcessSettingUnit(key) : "";
+
+    if (valueType === "bool") {
+      return `
+        <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+          <div class="slice-process-setting-key">${labelEsc}</div>
+          <label class="slice-process-setting-bool">
+            <input type="checkbox" data-slice-setting-key="${keyEsc}" data-slice-setting-type="bool" ${currentValue ? "checked" : ""}>
+            <span>${currentValue ? "On" : "Off"}</span>
+          </label>
+        </div>
+      `;
+    }
+
+    const mergedOptions = [];
+    const mergedSeen = new Set();
+    const pushOption = (rawValue) => {
+      const normalized = normalizeSliceProcessSettingScalar(rawValue, key);
+      if (normalized === null) return;
+      const signature = `${typeof normalized}:${String(normalized)}`;
+      if (mergedSeen.has(signature)) return;
+      mergedSeen.add(signature);
+      mergedOptions.push(normalized);
+    };
+    const rawOptions = Array.isArray(optionsByKey[key]) ? optionsByKey[key] : [];
+    rawOptions.forEach(pushOption);
+    pushOption(baseValue);
+    if (hasOverride) pushOption(currentValue);
+
+    const unitHtml = unit ? `<span class="slice-process-setting-unit">${esc(unit)}</span>` : "";
+    if (mergedOptions.length > 1) {
+      const optionsHtml = mergedOptions
+        .map((optionValue) => {
+          const attrValue = sliceProcessValueToAttr(optionValue);
+          const labelText = sliceProcessValueToText(optionValue) || "(tom)";
+          const selected = sliceProcessValueEquals(currentValue, optionValue) ? " selected" : "";
+          return `<option value="${esc(attrValue)}"${selected}>${esc(labelText)}</option>`;
+        })
+        .join("");
+      return `
+        <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+          <div class="slice-process-setting-key">${labelEsc}</div>
+          <div class="slice-process-setting-control ${unit ? "has-unit" : ""}">
+            <select class="select" data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}">
+              ${optionsHtml}
+            </select>
+            ${unitHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    const inputType = valueType === "number" ? "number" : "text";
+    const valueText = valueType === "number" ? String(currentValue) : sliceProcessValueToText(currentValue);
+    const stepAttr = valueType === "number" ? " step=\"any\"" : "";
+    return `
+      <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+        <div class="slice-process-setting-key">${labelEsc}</div>
+        <div class="slice-process-setting-control ${unit ? "has-unit" : ""}">
+          <input class="input" type="${inputType}"${stepAttr} data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}" value="${esc(valueText)}">
+          ${unitHtml}
+        </div>
+      </div>
+    `;
+  }
+
   function renderSliceProcessSettingsList() {
     if (!els.sliceProcessSettingsList) return;
     const base = state.sliceProcessSettingsBase && typeof state.sliceProcessSettingsBase === "object"
@@ -1977,86 +2305,92 @@
     const overrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
       ? state.sliceProcessSettingsOverrides
       : {};
+    const activeTab = setSliceProcessSettingsActiveTab(state.sliceProcessSettingsActiveTab, false);
+    const activeTabLabel = SLICE_PROCESS_TAB_LABELS[activeTab] || "Settings";
     const search = String((els.sliceProcessSettingsSearchInput && els.sliceProcessSettingsSearchInput.value) || "").trim().toLowerCase();
     const keys = Object.keys(base).sort((a, b) => a.localeCompare(b, "da"));
-    const filtered = search
-      ? keys.filter((key) => key.toLowerCase().includes(search))
-      : keys;
+    const categorizedAll = keys.map((key) => {
+      const category = sliceProcessSettingCategory(key);
+      return {
+        key,
+        category,
+        label: sliceProcessSettingLabel(key),
+        labelLower: sliceProcessSettingLabel(key).toLowerCase(),
+      };
+    });
+    const allTabCount = categorizedAll.filter((entry) => entry.category.tab === activeTab).length;
+    const filtered = categorizedAll.filter((entry) => {
+      if (entry.category.tab !== activeTab) return false;
+      if (!search) return true;
+      if (entry.key.toLowerCase().includes(search)) return true;
+      if (entry.labelLower.includes(search)) return true;
+      if (String(entry.category.section || "").toLowerCase().includes(search)) return true;
+      return false;
+    });
 
     if (!filtered.length) {
-      els.sliceProcessSettingsList.innerHTML = `<div class="slice-process-setting-row"><div class="hint">Ingen settings matcher søgningen.</div><div></div></div>`;
+      els.sliceProcessSettingsList.innerHTML = `<div class="slice-process-setting-empty hint">Ingen settings matcher denne fane/søgning.</div>`;
     } else {
-      const rows = filtered.map((key) => {
-        const baseValue = base[key];
-        const hasOverride = Object.prototype.hasOwnProperty.call(overrides, key);
-        const currentValue = hasOverride ? overrides[key] : baseValue;
-        const valueType = sliceProcessValueInputType(baseValue);
-        const keyEsc = esc(key);
-        if (valueType === "bool") {
-          return `
-            <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
-              <div class="slice-process-setting-key">${keyEsc}</div>
-              <label class="slice-process-setting-bool">
-                <input type="checkbox" data-slice-setting-key="${keyEsc}" data-slice-setting-type="bool" ${currentValue ? "checked" : ""}>
-                <span>${currentValue ? "On" : "Off"}</span>
-              </label>
-            </div>
-          `;
+      const sorted = filtered
+        .map((entry) => {
+          const sectionOrder = Number(entry.category.sectionOrder || 900);
+          const rowOrder = sliceProcessSettingRowOrder(entry.key, entry.category.section);
+          return { ...entry, sectionOrder, rowOrder };
+        })
+        .sort((a, b) => {
+          if (a.sectionOrder !== b.sectionOrder) return a.sectionOrder - b.sectionOrder;
+          if (a.rowOrder !== b.rowOrder) return a.rowOrder - b.rowOrder;
+          return a.label.localeCompare(b.label, "da");
+        });
+
+      const sections = new Map();
+      sorted.forEach((entry) => {
+        const sectionName = String(entry.category.section || "Other settings");
+        if (!sections.has(sectionName)) {
+          sections.set(sectionName, []);
         }
-
-        const mergedOptions = [];
-        const mergedSeen = new Set();
-        const pushOption = (rawValue) => {
-          const normalized = normalizeSliceProcessSettingScalar(rawValue);
-          if (normalized === null) return;
-          const signature = `${typeof normalized}:${String(normalized)}`;
-          if (mergedSeen.has(signature)) return;
-          mergedSeen.add(signature);
-          mergedOptions.push(normalized);
-        };
-        const rawOptions = Array.isArray(optionsByKey[key]) ? optionsByKey[key] : [];
-        rawOptions.forEach(pushOption);
-        pushOption(baseValue);
-        if (hasOverride) pushOption(currentValue);
-
-        if (mergedOptions.length > 1) {
-          const optionsHtml = mergedOptions
-            .map((optionValue) => {
-              const attrValue = sliceProcessValueToAttr(optionValue);
-              const labelText = sliceProcessValueToText(optionValue) || "(tom)";
-              const selected = sliceProcessValueEquals(currentValue, optionValue) ? " selected" : "";
-              return `<option value="${esc(attrValue)}"${selected}>${esc(labelText)}</option>`;
-            })
-            .join("");
-          return `
-            <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
-              <div class="slice-process-setting-key">${keyEsc}</div>
-              <select class="select" data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}">
-                ${optionsHtml}
-              </select>
-            </div>
-          `;
-        }
-
-        const inputType = valueType === "number" ? "number" : "text";
-        const valueText = valueType === "number" ? String(currentValue) : sliceProcessValueToText(currentValue);
-        const stepAttr = valueType === "number" ? ` step="any"` : "";
-        return `
-          <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
-            <div class="slice-process-setting-key">${keyEsc}</div>
-            <input class="input" type="${inputType}"${stepAttr} data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}" value="${esc(valueText)}">
-          </div>
-        `;
+        sections.get(sectionName).push(entry);
       });
-      els.sliceProcessSettingsList.innerHTML = rows.join("");
+
+      const sectionHtml = [];
+      sections.forEach((entries, sectionName) => {
+        const rowsHtml = entries
+          .map((entry) => {
+            const key = entry.key;
+            const baseValue = base[key];
+            const hasOverride = Object.prototype.hasOwnProperty.call(overrides, key);
+            const currentValue = hasOverride ? overrides[key] : baseValue;
+            const valueType = sliceProcessValueInputType(baseValue);
+            return buildSliceProcessSettingRowHtml(
+              key,
+              baseValue,
+              currentValue,
+              hasOverride,
+              valueType,
+              optionsByKey,
+              { label: entry.label }
+            );
+          })
+          .join("");
+
+        sectionHtml.push(`
+          <section class="slice-process-group">
+            <h4 class="slice-process-group-title">${esc(sectionName)}</h4>
+            ${rowsHtml}
+          </section>
+        `);
+      });
+
+      els.sliceProcessSettingsList.innerHTML = sectionHtml.join("");
     }
 
     const changedCount = Object.keys(overrides).length;
     if (els.sliceProcessSettingsMeta) {
       const totalCount = keys.length;
       const shownCount = filtered.length;
-      els.sliceProcessSettingsMeta.textContent = `Settings: ${shownCount}/${totalCount} vist | Ændret: ${changedCount}`;
+      els.sliceProcessSettingsMeta.textContent = `Settings: ${shownCount}/${allTabCount} i ${activeTabLabel} | Total: ${totalCount} | Ændret: ${changedCount}`;
     }
+    syncSliceProcessSettingsTabUi();
   }
 
   async function loadSliceProcessSettings(force = false) {
@@ -3171,7 +3505,9 @@
     state.sliceProcessSettingsOptions = {};
     state.sliceProcessSettingsOverrides = {};
     state.sliceProcessSettingsProfileKey = "";
+    state.sliceProcessSettingsActiveTab = "quality";
     state.sliceProcessSettingsLoadToken += 1;
+    syncSliceProcessSettingsTabUi();
     if (els.sliceProcessSettingsSearchInput) els.sliceProcessSettingsSearchInput.value = "";
     if (els.sliceProcessOverridesInput) els.sliceProcessOverridesInput.value = "";
     if (els.sliceProcessSettingsList) els.sliceProcessSettingsList.innerHTML = "";
@@ -3209,7 +3545,9 @@
     state.sliceProcessSettingsOptions = {};
     state.sliceProcessSettingsOverrides = {};
     state.sliceProcessSettingsProfileKey = "";
+    state.sliceProcessSettingsActiveTab = "quality";
     state.sliceProcessSettingsLoadToken += 1;
+    syncSliceProcessSettingsTabUi();
     if (els.sliceModalFileName) els.sliceModalFileName.textContent = String(file.filename || "-");
     if (els.sliceModal) els.sliceModal.classList.remove("hidden");
     setSliceToolMode("rotate");
@@ -3240,11 +3578,14 @@
       const profiles = await loadSliceProfiles(true);
       renderSliceSelect(els.slicePrinterSelect, profiles.printers, "Auto / fra config");
       renderSliceSelect(els.slicePrintProfileSelect, profiles.print_profiles, "Auto / fra config");
+      renderSliceSelect(els.sliceProcessProfileSelect, profiles.print_profiles, "Auto / fra config");
       renderSliceSelect(els.sliceFilamentProfileSelect, profiles.filament_profiles, "Auto / fra config");
 
       setSliceSelectValue(els.slicePrinterSelect, state.lastSliceSelection.printer_profile);
       setSliceSelectValue(els.slicePrintProfileSelect, state.lastSliceSelection.print_profile);
+      setSliceSelectValue(els.sliceProcessProfileSelect, state.lastSliceSelection.print_profile);
       setSliceSelectValue(els.sliceFilamentProfileSelect, state.lastSliceSelection.filament_profile);
+      syncSliceProcessProfileSelectFromMain();
       // Render known printer options and try to guess from selected printer name
       if (els.sliceKnownPrinterSelect) {
         const guessed = guessKnownModelFromProfileName((els.slicePrinterSelect && els.slicePrinterSelect.value) || "");
@@ -3291,6 +3632,7 @@
     } catch (err) {
       renderSliceSelect(els.slicePrinterSelect, [], "Auto / fra config");
       renderSliceSelect(els.slicePrintProfileSelect, [], "Auto / fra config");
+      renderSliceSelect(els.sliceProcessProfileSelect, [], "Auto / fra config");
       renderSliceSelect(els.sliceFilamentProfileSelect, [], "Auto / fra config");
       state.sliceProcessSettingsBase = {};
       state.sliceProcessSettingsOptions = {};
@@ -7388,6 +7730,15 @@
     }
     if (els.slicePrintProfileSelect) {
       els.slicePrintProfileSelect.addEventListener("change", () => {
+        syncSliceProcessProfileSelectFromMain();
+        loadSliceProcessSettings(true).catch((err) => {
+          showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
+        });
+      });
+    }
+    if (els.sliceProcessProfileSelect) {
+      els.sliceProcessProfileSelect.addEventListener("change", () => {
+        syncMainPrintProfileSelectFromProcess();
         loadSliceProcessSettings(true).catch((err) => {
           showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
         });
@@ -7435,6 +7786,14 @@
       els.sliceProcessSettingsResetBtn.addEventListener("click", () => {
         state.sliceProcessSettingsOverrides = {};
         renderSliceProcessSettingsList();
+      });
+    }
+    if (els.sliceProcessTabBar) {
+      els.sliceProcessTabBar.addEventListener("click", (event) => {
+        const btn = event.target instanceof HTMLElement ? event.target.closest("[data-slice-process-tab]") : null;
+        if (!btn) return;
+        const tab = String(btn.getAttribute("data-slice-process-tab") || "").toLowerCase();
+        setSliceProcessSettingsActiveTab(tab, true);
       });
     }
     if (els.sliceProcessSettingsList) {
