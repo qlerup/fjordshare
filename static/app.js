@@ -2159,8 +2159,11 @@
     overhang_speed_2: "overhang_speed_50",
     overhang_speed_3: "overhang_speed_75",
     overhang_speed_4: "overhang_speed_100",
+    overhang_totally_speed: "overhang_speed_100",
+    enable_overhang_speed: "slow_down_for_overhangs",
     support_buildplate_only: "support_on_build_plate_only",
     support_on_buildplate_only: "support_on_build_plate_only",
+    support_critical_regions: "support_critical_regions_only",
     support_enable: "enable_support",
     enable_support_material: "enable_support",
     support_material: "enable_support",
@@ -2319,6 +2322,7 @@
     support_style: "default",
     support_threshold_angle: 25,
     support_on_build_plate_only: false,
+    support_critical_regions_only: false,
     remove_small_overhangs: true,
     raft_layers: 0,
     support_filament_raft_base: "default",
@@ -2555,6 +2559,8 @@
     support_on_build_plate_only: "On build plate only",
     support_buildplate_only: "On build plate only",
     support_on_buildplate_only: "On build plate only",
+    support_critical_regions_only: "Support critical regions only",
+    support_critical_regions: "Support critical regions only",
     remove_small_overhangs: "Remove small overhangs",
     support_remove_small_overhangs: "Remove small overhangs",
     raft_layers: "Raft layers",
@@ -2810,8 +2816,10 @@
     support_on_build_plate_only: 50,
     support_buildplate_only: 50,
     support_on_buildplate_only: 50,
-    remove_small_overhangs: 60,
-    support_remove_small_overhangs: 60,
+    support_critical_regions_only: 60,
+    support_critical_regions: 60,
+    remove_small_overhangs: 70,
+    support_remove_small_overhangs: 70,
 
     raft_layers: 10,
 
@@ -3166,7 +3174,7 @@
   }
 
   function sliceProcessSettingCategory(key) {
-    const normalized = normalizeSliceProcessKey(key);
+    const normalized = canonicalSliceProcessKey(key);
 
     if (processKeyMatches(normalized, [/layer_height/, /^initial_layer_(print_)?height$/, /^first_layer_height$/])) {
       return { tab: "quality", section: "Layer height", sectionOrder: 10 };
@@ -3238,7 +3246,7 @@
       return { tab: "others", section: "Notes", sectionOrder: 80 };
     }
 
-    if (processKeyMatches(normalized, [/^enable_support$/, /^support_type$/, /^support_style$/, /^support_threshold_angle$/, /^support_on_build_plate_only$/, /^support_buildplate_only$/, /^support_on_buildplate_only$/, /^remove_small_overhangs$/, /^support_remove_small_overhangs$/])) {
+    if (processKeyMatches(normalized, [/^enable_support$/, /^support_type$/, /^support_style$/, /^support_threshold_angle$/, /^support_on_build_plate_only$/, /^support_critical_regions_only$/, /^remove_small_overhangs$/])) {
       return { tab: "support", section: "Support", sectionOrder: 10 };
     }
 
@@ -3254,7 +3262,7 @@
       return { tab: "support", section: "Advanced", sectionOrder: 40 };
     }
 
-    if (processKeyMatches(normalized, [/support/, /raft/, /brim/, /skirt/, /overhang/])) {
+    if (processKeyMatches(normalized, [/support/, /raft/, /brim/, /skirt/])) {
       return { tab: "support", section: "Support", sectionOrder: 50 };
     }
 
