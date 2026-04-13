@@ -4064,7 +4064,7 @@
     }
     // Profiles are presets; slicing uses the effective process settings map.
     const process_overrides = Object.keys(apiBaseSettings).length
-      ? normalizeSliceProcessSettingsMap({ ...apiBaseSettings, ...filteredOverrides })
+      ? { ...filteredOverrides }
       : { ...normalizedOverrides };
     return {
       printer_profile,

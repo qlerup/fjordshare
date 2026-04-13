@@ -2875,10 +2875,14 @@ def _build_support_override_load_settings(
         process_json,
         machine_json=machine_json,
     )
-    patched_payload = dict(resolved_payload) if isinstance(resolved_payload, dict) and resolved_payload else dict(process_payload)
-    # Make temp profile self-contained and force metadata that modern Bambu CLI accepts
-    # for external JSON files loaded through --load-settings.
-    patched_payload.pop("inherits", None)
+    patched_payload = dict(process_payload)
+    override_template_payload = (
+        dict(resolved_payload)
+        if isinstance(resolved_payload, dict) and resolved_payload
+        else dict(process_payload)
+    )
+    # Keep inherits chain so modern Bambu builds can still resolve full process defaults,
+    # but force metadata accepted for external JSON files loaded through --load-settings.
     patched_payload["type"] = "process"
     patched_payload["from"] = "user"
     patched_payload["name"] = selected_process_name
@@ -2942,11 +2946,12 @@ def _build_support_override_load_settings(
 
     if normalized_process_overrides:
         for key, incoming in normalized_process_overrides.items():
-            if key not in patched_payload:
+            if key not in override_template_payload:
                 continue
-            existing = patched_payload.get(key)
+            existing = override_template_payload.get(key)
+            current_value = patched_payload.get(key)
             next_value = _coerce_process_override_value_like(existing, incoming)
-            if existing != next_value:
+            if current_value != next_value:
                 patched_payload[key] = next_value
                 changed = True
 
