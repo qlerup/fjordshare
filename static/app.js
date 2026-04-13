@@ -1504,12 +1504,14 @@
     return values.map((v) => String(v || "").trim()).filter(Boolean);
   }
 
-  function renderSliceSelect(selectEl, options, placeholder = "Vælg") {
+  function renderSliceSelect(selectEl, options, placeholder = "Vælg", includeEmptyOption = true) {
     if (!selectEl) return;
     const list = toStringList(options);
-    const html = [`<option value="">${esc(placeholder)}</option>`]
-      .concat(list.map((value) => `<option value="${esc(value)}">${esc(value)}</option>`))
-      .join("");
+    const optionsHtml = list.map((value) => `<option value="${esc(value)}">${esc(value)}</option>`);
+    const html = (includeEmptyOption
+      ? [`<option value="">${esc(placeholder)}</option>`, ...optionsHtml]
+      : optionsHtml
+    ).join("");
     selectEl.innerHTML = html;
   }
 
@@ -1517,6 +1519,18 @@
     if (!selectEl) return "";
     const first = Array.from(selectEl.options || []).find((opt) => String(opt.value || "").trim());
     return first ? String(first.value || "").trim() : "";
+  }
+
+  function ensureSliceSelectHasValue(selectEl) {
+    if (!selectEl) return "";
+    const current = String(selectEl.value || "").trim();
+    if (current) return current;
+    const first = firstNonEmptySliceSelectValue(selectEl);
+    if (first) {
+      selectEl.value = first;
+      return first;
+    }
+    return "";
   }
 
   function syncSliceProcessProfileSelectFromMain() {
@@ -2129,7 +2143,11 @@
   }
 
   function normalizeSliceProcessKey(key) {
-    return String(key || "").trim().toLowerCase();
+    return String(key || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
   }
 
   function processKeyMatches(key, patterns) {
@@ -2517,7 +2535,9 @@
       try {
         const plateBox = new preview.THREE.Box3().setFromObject(preview.plateGroup);
         if (plateBox && !plateBox.isEmpty()) {
-          const chosenSurface = estimateSlicePlatePrintableSurfaceZ(preview, preview.plateGroup, plateBox);
+          const plateMin = Number(plateBox.min.z);
+          const plateMax = Number(plateBox.max.z);
+          const chosenSurface = Math.abs(plateMax - targetZ) <= Math.abs(plateMin - targetZ) ? plateMax : plateMin;
           if (Number.isFinite(chosenSurface)) {
             const delta = targetZ - chosenSurface;
             if (Math.abs(delta) > 1e-6) {
@@ -3729,7 +3749,7 @@
     syncSliceProcessSettingsTabUi();
     if (els.sliceModalFileName) els.sliceModalFileName.textContent = String(file.filename || "-");
     if (els.sliceModal) els.sliceModal.classList.remove("hidden");
-    setSliceToolMode("rotate");
+    setSliceToolMode("view");
     setSliceModalRotation({ x: 0, y: 0, z: 0 });
     setSliceModalLiftMm(clampSliceLiftMm(state.lastSliceSelection.lift_z_mm, 0));
     if (els.sliceSupportModeSelect) {
@@ -3752,15 +3772,17 @@
 
     try {
       const profiles = await loadSliceProfiles(true);
-      renderSliceSelect(els.slicePrinterSelect, profiles.printers, "Auto / fra config");
+      renderSliceSelect(els.slicePrinterSelect, profiles.printers, "Vælg printer", false);
       renderSliceSelect(els.slicePrintProfileSelect, profiles.print_profiles, "Auto / fra config");
       renderSliceSelect(els.sliceProcessProfileSelect, profiles.print_profiles, "Auto / fra config");
-      renderSliceSelect(els.sliceFilamentProfileSelect, profiles.filament_profiles, "Auto / fra config");
+      renderSliceSelect(els.sliceFilamentProfileSelect, profiles.filament_profiles, "Vælg filamentprofil", false);
 
       setSliceSelectValue(els.slicePrinterSelect, state.lastSliceSelection.printer_profile);
       setSliceSelectValue(els.slicePrintProfileSelect, state.lastSliceSelection.print_profile);
       setSliceSelectValue(els.sliceProcessProfileSelect, state.lastSliceSelection.print_profile);
       setSliceSelectValue(els.sliceFilamentProfileSelect, state.lastSliceSelection.filament_profile);
+      ensureSliceSelectHasValue(els.slicePrinterSelect);
+      ensureSliceSelectHasValue(els.sliceFilamentProfileSelect);
       syncSliceProcessProfileSelectFromMain();
       if (!String((els.sliceProcessProfileSelect && els.sliceProcessProfileSelect.value) || "").trim()) {
         const firstExplicitProcessProfile = firstNonEmptySliceSelectValue(els.sliceProcessProfileSelect)
@@ -3816,10 +3838,10 @@
       }
       if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
     } catch (err) {
-      renderSliceSelect(els.slicePrinterSelect, [], "Auto / fra config");
+      renderSliceSelect(els.slicePrinterSelect, [], "Vælg printer", false);
       renderSliceSelect(els.slicePrintProfileSelect, [], "Auto / fra config");
       renderSliceSelect(els.sliceProcessProfileSelect, [], "Auto / fra config");
-      renderSliceSelect(els.sliceFilamentProfileSelect, [], "Auto / fra config");
+      renderSliceSelect(els.sliceFilamentProfileSelect, [], "Vælg filamentprofil", false);
       state.sliceProcessSettingsBase = {};
       state.sliceProcessSettingsOptions = {};
       state.sliceProcessSettingsOverrides = {};
