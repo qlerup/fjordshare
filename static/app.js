@@ -1979,6 +1979,9 @@
     // Keep backend values authoritative; fallback only fills missing keys.
     const fallbackBase = normalizeSliceProcessSettingsMap(SLICE_PROCESS_FALLBACK_BASE_SETTINGS);
     const mergedBase = { ...fallbackBase, ...baseFromApi };
+    if (typeof mergedBase.wall_generator === "string" && normalizeSliceProcessKey(mergedBase.wall_generator) === "auto") {
+      mergedBase.wall_generator = "classic";
+    }
 
     const fallbackOptions = normalizeSliceProcessSettingsOptionsMap(SLICE_PROCESS_FALLBACK_SETTING_OPTIONS);
     const mergedOptions = { ...optionsFromApi };
@@ -1995,6 +1998,24 @@
         mergedOptions[key] = normalizedMerged[key];
       }
     });
+
+    const wallGeneratorRaw = [
+      mergedBase.wall_generator,
+      ...(Array.isArray(mergedOptions.wall_generator) ? mergedOptions.wall_generator : []),
+    ].map((value) => {
+      if (typeof value === "string" && normalizeSliceProcessKey(value) === "auto") {
+        return "classic";
+      }
+      return value;
+    });
+    const wallGeneratorOptions = normalizeSliceProcessSettingsOptionsMap({
+      wall_generator: wallGeneratorRaw,
+    });
+    if (Array.isArray(wallGeneratorOptions.wall_generator) && wallGeneratorOptions.wall_generator.length > 1) {
+      mergedOptions.wall_generator = wallGeneratorOptions.wall_generator;
+    } else {
+      delete mergedOptions.wall_generator;
+    }
 
     return {
       apiBase: baseFromApi,
@@ -2056,6 +2077,12 @@
     initial_layer_print_height: "initial_layer_height",
     first_layer_height: "initial_layer_height",
     default_line_width: "line_width",
+    perimeter_generator: "wall_generator",
+    wall_transition_threshold_angle: "wall_transitioning_threshold_angle",
+    wall_transition_filter_margin: "wall_transitioning_filter_margin",
+    wall_transitioning_length: "wall_transition_length",
+    min_wall_width: "minimum_wall_width",
+    min_feature_size: "minimum_feature_size",
   };
 
   const SLICE_PROCESS_FALLBACK_BASE_SETTINGS = {
@@ -2093,7 +2120,13 @@
     ironing_line_spacing: 0.1,
     ironing_inset: 0.15,
     prime_tower_flat_ironing: true,
-    wall_generator: "auto",
+    wall_generator: "classic",
+    wall_transitioning_threshold_angle: 10,
+    wall_transitioning_filter_margin: 25,
+    wall_transition_length: 100,
+    wall_distribution_count: 1,
+    minimum_wall_width: 85,
+    minimum_feature_size: 25,
     order_of_walls: "inner_outer",
     print_infill_first: false,
     bridge_flow: 1,
@@ -2108,7 +2141,7 @@
 
   const SLICE_PROCESS_FALLBACK_SETTING_OPTIONS = {
     seam_position: ["aligned", "nearest", "rear", "random"],
-    wall_generator: ["auto", "classic", "arachne"],
+    wall_generator: ["classic", "arachne"],
     order_of_walls: ["inner_outer", "outer_inner", "inner_outer_inner"],
     ironing_type: ["none", "top", "topmost_surface", "all_top_surfaces"],
     ironing_pattern: ["rectilinear", "concentric", "zig_zag"],
@@ -2160,6 +2193,17 @@
     ironing_inset: "Ironing inset",
     prime_tower_flat_ironing: "Prime tower flat ironing",
     wall_generator: "Wall generator",
+    perimeter_generator: "Wall generator",
+    wall_transitioning_threshold_angle: "Wall transitioning threshold angle",
+    wall_transition_threshold_angle: "Wall transitioning threshold angle",
+    wall_transitioning_filter_margin: "Wall transitioning filter margin",
+    wall_transition_filter_margin: "Wall transitioning filter margin",
+    wall_transition_length: "Wall transition length",
+    wall_distribution_count: "Wall distribution count",
+    minimum_wall_width: "Minimum wall width",
+    min_wall_width: "Minimum wall width",
+    minimum_feature_size: "Minimum feature size",
+    min_feature_size: "Minimum feature size",
     order_of_walls: "Order of walls",
     print_infill_first: "Print infill first",
     bridge_flow: "Bridge flow",
@@ -2213,6 +2257,17 @@
     ironing_inset: 60,
     prime_tower_flat_ironing: 70,
     wall_generator: 10,
+    perimeter_generator: 10,
+    wall_transitioning_threshold_angle: 20,
+    wall_transition_threshold_angle: 20,
+    wall_transitioning_filter_margin: 30,
+    wall_transition_filter_margin: 30,
+    wall_transition_length: 40,
+    wall_distribution_count: 50,
+    minimum_wall_width: 60,
+    min_wall_width: 60,
+    minimum_feature_size: 70,
+    min_feature_size: 70,
     order_of_walls: 10,
     print_infill_first: 20,
     bridge_flow: 30,
@@ -2264,6 +2319,11 @@
   function sliceProcessSettingOptionLabel(key, optionValue) {
     const canonical = canonicalSliceProcessKey(key);
     const normalizedValue = normalizeSliceProcessKey(optionValue);
+
+    if (canonical === "wall_generator") {
+      if (normalizedValue === "classic" || normalizedValue === "auto") return "Classic";
+      if (normalizedValue === "arachne") return "Arachne";
+    }
 
     if (canonical === "ironing_type") {
       if (normalizedValue === "none" || normalizedValue === "no_ironing") return "No ironing";
@@ -2326,15 +2386,30 @@
     return false;
   }
 
+  function isSliceProcessWallGeneratorArachne(base, overrides) {
+    const generator = sliceProcessCurrentValueByCanonicalKey("wall_generator", base, overrides);
+    if (typeof generator === "string") {
+      const key = normalizeSliceProcessKey(generator);
+      return key === "arachne";
+    }
+    return false;
+  }
+
   function shouldRenderSliceProcessSettingEntry(entry, base, overrides) {
     if (!entry || !entry.category) return true;
     const sectionName = String(entry.category.section || "");
-    if (sectionName !== "Ironing") return true;
-
     const canonical = canonicalSliceProcessKey(entry.key);
-    if (canonical === "ironing_type" || canonical === "enable_ironing") return true;
+    if (sectionName === "Ironing") {
+      if (canonical === "ironing_type" || canonical === "enable_ironing") return true;
+      return !isSliceProcessIroningDisabled(base, overrides);
+    }
 
-    return !isSliceProcessIroningDisabled(base, overrides);
+    if (sectionName === "Wall generator") {
+      if (canonical === "wall_generator") return true;
+      return isSliceProcessWallGeneratorArachne(base, overrides);
+    }
+
+    return true;
   }
 
   function processKeyMatches(key, patterns) {
@@ -2359,6 +2434,9 @@
   function sliceProcessSettingUnit(key) {
     const normalized = normalizeSliceProcessKey(key);
     if (processKeyMatches(normalized, [/(^|_)angle($|_)/])) return "deg";
+    if (processKeyMatches(normalized, [/(^|_)(filter_margin|transition_length|minimum_wall_width|min_wall_width|minimum_feature_size|min_feature_size)($|_)/])) {
+      return "%";
+    }
     if (processKeyMatches(normalized, [/(^|_)flow($|_)/])) return "%";
     if (processKeyMatches(normalized, [/(^|_)speed($|_)/])) return "mm/s";
     if (processKeyMatches(normalized, [/(^|_)(height|width|spacing|inset|radius|resolution|distance|offset|compensation|thickness|length|gap)($|_)/])) {
@@ -2385,7 +2463,7 @@
     if (processKeyMatches(normalized, [/ironing/, /^enable_ironing$/])) {
       return { tab: "quality", section: "Ironing", sectionOrder: 50 };
     }
-    if (processKeyMatches(normalized, [/wall_generator/, /perimeter_generator/])) {
+    if (processKeyMatches(normalized, [/wall_generator/, /perimeter_generator/, /wall_transition/, /wall_distribution/, /minimum_wall_width/, /min_wall_width/, /minimum_feature_size/, /min_feature_size/])) {
       return { tab: "quality", section: "Wall generator", sectionOrder: 60 };
     }
     if (processKeyMatches(normalized, [/order_of_walls/, /print_infill_first/, /bridge_flow/, /thick_bridges/, /only_one_wall_/, /^smooth_/, /smooth_coefficient/, /avoid_crossing_wall/, /smoothing_wall_speed_along_z/])) {
