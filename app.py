@@ -2086,6 +2086,293 @@ def _resolve_selected_profile_jsons(
     return machine_json, process_json, filament_json
 
 
+_PROCESS_PROFILE_META_KEYS = {
+    "type",
+    "from",
+    "name",
+    "inherits",
+    "setting_id",
+    "print_settings_id",
+    "process_settings_id",
+    "printer_settings_id",
+    "filament_settings_id",
+    "instantiation",
+    "description",
+    "author",
+    "version",
+    "created_at",
+    "updated_at",
+    "uuid",
+    "compatible_printers",
+    "compatible_printer",
+    "compatible_processes",
+    "compatible_process",
+    "compatible_print_profiles",
+    "compatible_print_profile",
+    "compatible_prints",
+    "compatible_print",
+    "compatible_machines",
+    "compatible_machine",
+}
+
+_PROCESS_SETTINGS_CONTAINER_KEYS = (
+    "settings",
+    "setting_values",
+    "values",
+    "process_settings",
+    "print_settings",
+    "config",
+    "parameters",
+    "params",
+)
+
+
+def _normalize_process_setting_scalar(value: Any) -> Optional[Any]:
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            number = float(value)
+        except Exception:
+            return None
+        if not math.isfinite(number):
+            return None
+        if isinstance(value, int):
+            return int(value)
+        return round(number, 6)
+    if isinstance(value, str):
+        return str(value)
+    return None
+
+
+def _dedupe_process_setting_scalars(values: Iterable[Any], max_items: int = 128) -> list[Any]:
+    out: list[Any] = []
+    seen: set[str] = set()
+    for raw in values:
+        normalized = _normalize_process_setting_scalar(raw)
+        if normalized is None:
+            continue
+        key = f"{type(normalized).__name__}:{normalized}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized)
+        if len(out) >= max_items:
+            break
+    return out
+
+
+def _extract_process_setting_value_and_options(raw_value: Any) -> tuple[Optional[Any], list[Any]]:
+    scalar = _normalize_process_setting_scalar(raw_value)
+    if scalar is not None:
+        return scalar, []
+
+    if isinstance(raw_value, (list, tuple)):
+        choices = _dedupe_process_setting_scalars(raw_value)
+        if not choices:
+            nested_choices: list[Any] = []
+            for item in raw_value:
+                nested_value, _nested_options = _extract_process_setting_value_and_options(item)
+                if nested_value is not None:
+                    nested_choices.append(nested_value)
+            choices = _dedupe_process_setting_scalars(nested_choices)
+        if not choices:
+            return None, []
+        if len(choices) == 1:
+            return choices[0], []
+        return choices[0], choices
+
+    if isinstance(raw_value, dict):
+        preferred_value: Optional[Any] = None
+        for key in ("current", "selected", "value", "default"):
+            if key not in raw_value:
+                continue
+            preferred_value = _normalize_process_setting_scalar(raw_value.get(key))
+            if preferred_value is not None:
+                break
+
+        choices: list[Any] = []
+        for key in ("options", "choices", "enum", "allowed_values", "values", "items"):
+            if key not in raw_value:
+                continue
+            value = raw_value.get(key)
+            if isinstance(value, (list, tuple)):
+                choices = _dedupe_process_setting_scalars(value)
+                if not choices:
+                    nested_choices: list[Any] = []
+                    for item in value:
+                        nested_value, _nested_options = _extract_process_setting_value_and_options(item)
+                        if nested_value is not None:
+                            nested_choices.append(nested_value)
+                    choices = _dedupe_process_setting_scalars(nested_choices)
+            else:
+                parsed_single = _normalize_process_setting_scalar(value)
+                choices = [parsed_single] if parsed_single is not None else []
+            if choices:
+                break
+
+        if preferred_value is None and choices:
+            preferred_value = choices[0]
+
+        if preferred_value is None:
+            return None, []
+
+        if choices:
+            normalized_choices = _dedupe_process_setting_scalars([preferred_value, *choices])
+            if len(normalized_choices) > 1:
+                return preferred_value, normalized_choices
+        return preferred_value, []
+
+    return None, []
+
+
+def _extract_effective_process_settings_from_payload(payload: Optional[dict[str, Any]]) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    if not isinstance(payload, dict):
+        return {}, {}
+
+    settings: dict[str, Any] = {}
+    setting_options: dict[str, list[Any]] = {}
+
+    def _record_mapping(mapping: Any, include_meta_keys: bool) -> None:
+        if not isinstance(mapping, dict):
+            return
+        for key_raw, value_raw in mapping.items():
+            key = str(key_raw or "").strip()[:120]
+            if not key:
+                continue
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+                continue
+            if not include_meta_keys and key in _PROCESS_PROFILE_META_KEYS:
+                continue
+
+            value, options = _extract_process_setting_value_and_options(value_raw)
+            if value is None:
+                continue
+
+            settings[key] = value
+            if len(options) > 1:
+                setting_options[key] = options
+
+            if len(settings) >= 2500:
+                return
+
+    _record_mapping(payload, include_meta_keys=False)
+
+    for container_key in _PROCESS_SETTINGS_CONTAINER_KEYS:
+        nested = payload.get(container_key)
+        if isinstance(nested, dict):
+            _record_mapping(nested, include_meta_keys=True)
+            if len(settings) >= 2500:
+                break
+
+    return settings, setting_options
+
+
+def _candidate_process_profile_dirs(executable: str) -> list[Path]:
+    out: list[Path] = []
+    if SLICER_PROFILE_PRINT_SETTINGS_DIR.exists() and SLICER_PROFILE_PRINT_SETTINGS_DIR.is_dir():
+        out.append(SLICER_PROFILE_PRINT_SETTINGS_DIR)
+
+    discovered_root = _find_bambu_profile_root(executable)
+    if discovered_root:
+        discovered_process_dir = discovered_root / "process"
+        if discovered_process_dir.exists() and discovered_process_dir.is_dir():
+            out.append(discovered_process_dir)
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in out:
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+    return deduped
+
+
+def _resolve_effective_process_profile_settings(
+    executable: str,
+    process_json: str,
+    machine_json: str = "",
+    max_depth: int = 12,
+) -> tuple[dict[str, Any], dict[str, list[Any]], list[str]]:
+    start_path = Path(str(process_json or "").strip())
+    if not start_path.exists() or not start_path.is_file():
+        return {}, {}, []
+
+    profile_dirs = _candidate_process_profile_dirs(executable)
+    if not profile_dirs:
+        profile_dirs = [start_path.parent]
+
+    chain: list[str] = []
+    visited: set[str] = set()
+
+    def _resolve_parent_profile_path(inherits_name: str, current_path: Path) -> Optional[Path]:
+        requested = str(inherits_name or "").strip()
+        if not requested:
+            return None
+
+        for profile_dir in profile_dirs:
+            candidate = _pick_profile_json(
+                profile_dir,
+                requested,
+                fallback_first=False,
+                machine_profile_json=machine_json,
+            )
+            if candidate:
+                candidate_path = Path(candidate)
+                if candidate_path.exists() and candidate_path.is_file():
+                    return candidate_path
+
+        same_dir = _pick_profile_json(
+            current_path.parent,
+            requested,
+            fallback_first=False,
+            machine_profile_json=machine_json,
+        )
+        if same_dir:
+            candidate_path = Path(same_dir)
+            if candidate_path.exists() and candidate_path.is_file():
+                return candidate_path
+        return None
+
+    def _walk(path: Path, depth: int) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+        if depth > max_depth:
+            return {}, {}
+
+        path_key = str(path.resolve())
+        if path_key in visited:
+            return {}, {}
+        visited.add(path_key)
+
+        payload = _read_profile_json_payload(path)
+        if not isinstance(payload, dict):
+            chain.append(str(path))
+            return {}, {}
+
+        merged_settings: dict[str, Any] = {}
+        merged_options: dict[str, list[Any]] = {}
+
+        inherits_name = _slicer_profile_name_from_value(payload.get("inherits"))
+        if inherits_name:
+            parent_path = _resolve_parent_profile_path(inherits_name, path)
+            if parent_path is not None:
+                parent_settings, parent_options = _walk(parent_path, depth + 1)
+                merged_settings.update(parent_settings)
+                merged_options.update(parent_options)
+
+        current_settings, current_options = _extract_effective_process_settings_from_payload(payload)
+        merged_settings.update(current_settings)
+        for key, options in current_options.items():
+            merged_options[key] = options
+
+        chain.append(str(path))
+        return merged_settings, merged_options
+
+    resolved_settings, resolved_options = _walk(start_path, 0)
+    return resolved_settings, resolved_options, chain
+
+
 def _build_modern_profile_args(
     executable: str,
     printer_profile: str,
@@ -2210,6 +2497,18 @@ def _coerce_process_override_value_like(existing: Any, incoming: Any) -> Any:
         if isinstance(incoming, bool):
             return "true" if incoming else "false"
         return str(incoming)
+
+    if isinstance(existing, (list, tuple)):
+        existing_items = list(existing)
+        if not existing_items:
+            return [incoming]
+
+        template = existing_items[0]
+        if isinstance(template, (list, tuple, dict)):
+            return [incoming]
+
+        coerced_item = _coerce_process_override_value_like(template, incoming)
+        return [coerced_item for _ in existing_items]
 
     return incoming
 
@@ -5217,7 +5516,7 @@ def api_slice_process_settings():
 
     try:
         executable = _resolve_bambustudio_executable()
-        _machine_json, process_json, _filament_json = _resolve_selected_profile_jsons(
+        machine_json, process_json, _filament_json = _resolve_selected_profile_jsons(
             executable,
             printer_profile,
             print_profile,
@@ -5228,40 +5527,40 @@ def api_slice_process_settings():
         return jsonify({"ok": False, "error": f"Kunne ikke finde process-profil: {exc}"}), 500
 
     if not process_json:
-        return jsonify({"ok": True, "settings": {}, "process_profile": "", "process_path": ""})
+        return jsonify({
+            "ok": True,
+            "settings": {},
+            "setting_options": {},
+            "process_profile": "",
+            "process_path": "",
+            "inherits_chain": [],
+        })
 
-    payload = _read_profile_json_payload(Path(process_json))
-    if not isinstance(payload, dict):
-        return jsonify({"ok": True, "settings": {}, "process_profile": Path(process_json).stem, "process_path": process_json})
+    settings, setting_options, inherits_chain = _resolve_effective_process_profile_settings(
+        executable,
+        process_json,
+        machine_json=machine_json,
+    )
 
-    settings: dict[str, Any] = {}
-    for key_raw, value_raw in payload.items():
-        key = str(key_raw or "").strip()[:120]
-        if not key:
+    # Keep dropdown payload compact while preserving meaningful options.
+    compact_options: dict[str, list[Any]] = {}
+    for key, options in setting_options.items():
+        if key not in settings:
             continue
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
+        if not isinstance(options, list):
             continue
-        if isinstance(value_raw, bool):
-            settings[key] = value_raw
-        elif isinstance(value_raw, (int, float)) and not isinstance(value_raw, bool):
-            try:
-                number = float(value_raw)
-            except Exception:
-                continue
-            if not math.isfinite(number):
-                continue
-            settings[key] = value_raw
-        elif isinstance(value_raw, str):
-            settings[key] = value_raw
-        if len(settings) >= 1200:
-            break
+        deduped = _dedupe_process_setting_scalars(options, max_items=64)
+        if len(deduped) > 1:
+            compact_options[key] = deduped
 
     return jsonify(
         {
             "ok": True,
             "settings": settings,
+            "setting_options": compact_options,
             "process_profile": Path(process_json).stem,
             "process_path": process_json,
+            "inherits_chain": inherits_chain,
         }
     )
 

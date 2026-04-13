@@ -30,6 +30,7 @@
     sliceRotation: { x: 0, y: 0, z: 0 },
     sliceProcessSettingsBase: {},
     sliceProcessSettingsProfileKey: "",
+    sliceProcessSettingsOptions: {},
     sliceProcessSettingsOverrides: {},
     sliceProcessSettingsLoadToken: 0,
     currentSlicerUploadKind: "",
@@ -1886,6 +1887,31 @@
     return out;
   }
 
+  function normalizeSliceProcessSettingsOptionsMap(raw) {
+    if (!raw || typeof raw !== "object") return {};
+    const out = {};
+    Object.entries(raw).forEach(([keyRaw, valuesRaw]) => {
+      const key = String(keyRaw || "").trim();
+      if (!key) return;
+      if (key.length > 120) return;
+      const values = Array.isArray(valuesRaw) ? valuesRaw : [valuesRaw];
+      const normalized = [];
+      const seen = new Set();
+      values.forEach((itemRaw) => {
+        const item = normalizeSliceProcessSettingScalar(itemRaw);
+        if (item === null) return;
+        const signature = `${typeof item}:${String(item)}`;
+        if (seen.has(signature)) return;
+        seen.add(signature);
+        normalized.push(item);
+      });
+      if (normalized.length > 1) {
+        out[key] = normalized;
+      }
+    });
+    return out;
+  }
+
   function sliceProcessValueEquals(a, b) {
     if (typeof a === "number" && typeof b === "number") {
       return Math.abs(a - b) < 1e-9;
@@ -1903,6 +1929,12 @@
     if (typeof value === "boolean") return value ? "true" : "false";
     if (typeof value === "number") return formatNumberCompact(value);
     return String(value || "");
+  }
+
+  function sliceProcessValueToAttr(value) {
+    if (typeof value === "boolean") return value ? "true" : "false";
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "0";
+    return String(value == null ? "" : value);
   }
 
   function parseSliceProcessOverrideByType(baseValue, rawValue, valueType = "string") {
@@ -1939,6 +1971,9 @@
     const base = state.sliceProcessSettingsBase && typeof state.sliceProcessSettingsBase === "object"
       ? state.sliceProcessSettingsBase
       : {};
+    const optionsByKey = state.sliceProcessSettingsOptions && typeof state.sliceProcessSettingsOptions === "object"
+      ? state.sliceProcessSettingsOptions
+      : {};
     const overrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
       ? state.sliceProcessSettingsOverrides
       : {};
@@ -1968,6 +2003,41 @@
             </div>
           `;
         }
+
+        const mergedOptions = [];
+        const mergedSeen = new Set();
+        const pushOption = (rawValue) => {
+          const normalized = normalizeSliceProcessSettingScalar(rawValue);
+          if (normalized === null) return;
+          const signature = `${typeof normalized}:${String(normalized)}`;
+          if (mergedSeen.has(signature)) return;
+          mergedSeen.add(signature);
+          mergedOptions.push(normalized);
+        };
+        const rawOptions = Array.isArray(optionsByKey[key]) ? optionsByKey[key] : [];
+        rawOptions.forEach(pushOption);
+        pushOption(baseValue);
+        if (hasOverride) pushOption(currentValue);
+
+        if (mergedOptions.length > 1) {
+          const optionsHtml = mergedOptions
+            .map((optionValue) => {
+              const attrValue = sliceProcessValueToAttr(optionValue);
+              const labelText = sliceProcessValueToText(optionValue) || "(tom)";
+              const selected = sliceProcessValueEquals(currentValue, optionValue) ? " selected" : "";
+              return `<option value="${esc(attrValue)}"${selected}>${esc(labelText)}</option>`;
+            })
+            .join("");
+          return `
+            <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}">
+              <div class="slice-process-setting-key">${keyEsc}</div>
+              <select class="select" data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}">
+                ${optionsHtml}
+              </select>
+            </div>
+          `;
+        }
+
         const inputType = valueType === "number" ? "number" : "text";
         const valueText = valueType === "number" ? String(currentValue) : sliceProcessValueToText(currentValue);
         const stepAttr = valueType === "number" ? ` step="any"` : "";
@@ -2013,6 +2083,7 @@
     if (token !== state.sliceProcessSettingsLoadToken) return;
     state.sliceProcessSettingsProfileKey = profileKey;
     state.sliceProcessSettingsBase = normalizeSliceProcessSettingsMap(data && data.settings);
+    state.sliceProcessSettingsOptions = normalizeSliceProcessSettingsOptionsMap(data && data.setting_options);
     state.sliceProcessSettingsOverrides = {};
     renderSliceProcessSettingsList();
     showStatus(els.sliceProcessSettingsStatus, "");
@@ -3048,6 +3119,7 @@
     clearSlicePreview();
     state.currentSliceFileId = 0;
     state.sliceProcessSettingsBase = {};
+    state.sliceProcessSettingsOptions = {};
     state.sliceProcessSettingsOverrides = {};
     state.sliceProcessSettingsProfileKey = "";
     state.sliceProcessSettingsLoadToken += 1;
@@ -3085,6 +3157,7 @@
     state.currentSliceFileId = Number(file.id || 0);
     state.slicePlateAssets = null;
     state.sliceProcessSettingsBase = {};
+    state.sliceProcessSettingsOptions = {};
     state.sliceProcessSettingsOverrides = {};
     state.sliceProcessSettingsProfileKey = "";
     state.sliceProcessSettingsLoadToken += 1;
@@ -3143,6 +3216,12 @@
         state.sliceProcessSettingsOverrides = rememberedForCurrent;
         renderSliceProcessSettingsList();
       } catch (processErr) {
+        state.sliceProcessSettingsBase = {};
+        state.sliceProcessSettingsOptions = {};
+        state.sliceProcessSettingsOverrides = {};
+        if (els.sliceProcessSettingsList) {
+          els.sliceProcessSettingsList.innerHTML = "";
+        }
         if (els.sliceProcessSettingsMeta) {
           els.sliceProcessSettingsMeta.textContent = "Kunne ikke indlæse process settings.";
         }
@@ -3164,6 +3243,9 @@
       renderSliceSelect(els.slicePrinterSelect, [], "Auto / fra config");
       renderSliceSelect(els.slicePrintProfileSelect, [], "Auto / fra config");
       renderSliceSelect(els.sliceFilamentProfileSelect, [], "Auto / fra config");
+      state.sliceProcessSettingsBase = {};
+      state.sliceProcessSettingsOptions = {};
+      state.sliceProcessSettingsOverrides = {};
       showStatus(els.sliceModalStatus, err.message || "Kunne ikke hente slice-profiler", "error");
       if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
       refreshSlicePreviewBedFromSelection();
@@ -7317,6 +7399,10 @@
           return;
         }
         if (input instanceof HTMLInputElement) {
+          updateSliceProcessSettingOverride(key, input.value, valueType);
+          return;
+        }
+        if (input instanceof HTMLSelectElement) {
           updateSliceProcessSettingOverride(key, input.value, valueType);
         }
       });
