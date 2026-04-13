@@ -4053,10 +4053,19 @@
     const apiBaseSettings = state.sliceProcessSettingsBaseApi && typeof state.sliceProcessSettingsBaseApi === "object"
       ? state.sliceProcessSettingsBaseApi
       : {};
+    const normalizedOverrides = normalizeSliceProcessSettingsMap(settingsOverrides);
+    const filteredOverrides = {};
+    if (Object.keys(apiBaseSettings).length) {
+      Object.entries(normalizedOverrides).forEach(([key, value]) => {
+        if (Object.prototype.hasOwnProperty.call(apiBaseSettings, key)) {
+          filteredOverrides[key] = value;
+        }
+      });
+    }
     // Profiles are presets; slicing uses the effective process settings map.
     const process_overrides = Object.keys(apiBaseSettings).length
-      ? normalizeSliceProcessSettingsMap({ ...apiBaseSettings, ...settingsOverrides })
-      : { ...settingsOverrides };
+      ? normalizeSliceProcessSettingsMap({ ...apiBaseSettings, ...filteredOverrides })
+      : { ...normalizedOverrides };
     return {
       printer_profile,
       print_profile,

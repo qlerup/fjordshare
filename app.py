@@ -2942,6 +2942,8 @@ def _build_support_override_load_settings(
 
     if normalized_process_overrides:
         for key, incoming in normalized_process_overrides.items():
+            if key not in patched_payload:
+                continue
             existing = patched_payload.get(key)
             next_value = _coerce_process_override_value_like(existing, incoming)
             if existing != next_value:
