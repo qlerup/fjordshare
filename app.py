@@ -3054,30 +3054,46 @@ def _build_support_override_load_settings(
     runtime_compat_changed = False
     user_nozzle_diameter_values, user_nozzle_flow_values = _compose_user_nozzle_values()
 
+    def _process_settings_container() -> Optional[dict[str, Any]]:
+        for container_key in _PROCESS_SETTINGS_CONTAINER_KEYS:
+            container = patched_payload.get(container_key)
+            if isinstance(container, dict):
+                return container
+        return None
+
     def _set_runtime_value(key: str, value: Any) -> None:
         nonlocal runtime_compat_changed
         if value is None:
             return
         if isinstance(value, str) and not value.strip():
             return
+        settings_container = _process_settings_container()
+        if isinstance(settings_container, dict):
+            if key not in settings_container or settings_container.get(key) != value:
+                settings_container[key] = value
+                runtime_compat_changed = True
+            if key in patched_payload and patched_payload.get(key) != value:
+                patched_payload[key] = value
+                runtime_compat_changed = True
+            return
         if patched_payload.get(key) != value:
             patched_payload[key] = value
             runtime_compat_changed = True
 
     for runtime_key in ("nozzle_volume_type", "different_extruder", "new_printer_name"):
-        if runtime_key in patched_payload:
+        settings_container = _process_settings_container()
+        has_runtime_key = runtime_key in patched_payload or (isinstance(settings_container, dict) and runtime_key in settings_container)
+        if has_runtime_key and not (runtime_key == "nozzle_volume_type" and user_nozzle_diameter_values):
             continue
         if runtime_key == "nozzle_volume_type":
             guessed_nozzle_value = ",".join(user_nozzle_diameter_values) if user_nozzle_diameter_values else ""
             if not guessed_nozzle_value:
                 guessed_nozzle_value = _guess_nozzle_volume_type_value()
             if guessed_nozzle_value is not None:
-                patched_payload[runtime_key] = guessed_nozzle_value
-                runtime_compat_changed = True
+                _set_runtime_value(runtime_key, guessed_nozzle_value)
                 continue
         if runtime_key in template_settings:
-            patched_payload[runtime_key] = template_settings.get(runtime_key)
-            runtime_compat_changed = True
+            _set_runtime_value(runtime_key, template_settings.get(runtime_key))
 
     if user_nozzle_diameter_values:
         diameter_csv = ",".join(user_nozzle_diameter_values)
