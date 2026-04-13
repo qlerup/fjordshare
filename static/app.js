@@ -4,6 +4,8 @@
   document.body.classList.add("app-mode");
 
   const boot = document.getElementById("bootstrap");
+  const DEFAULT_SLICE_NOZZLE_DIAMETER = "0.4";
+  const DEFAULT_SLICE_NOZZLE_FLOW = "standard";
   const state = {
     username: (boot && boot.dataset.username) || "",
     role: ((boot && boot.dataset.role) || "user").toLowerCase(),
@@ -46,10 +48,10 @@
       support_mode: "auto",
       support_type: "",
       support_style: "",
-      nozzle_left_diameter: "",
-      nozzle_right_diameter: "",
-      nozzle_left_flow: "",
-      nozzle_right_flow: "",
+      nozzle_left_diameter: DEFAULT_SLICE_NOZZLE_DIAMETER,
+      nozzle_right_diameter: DEFAULT_SLICE_NOZZLE_DIAMETER,
+      nozzle_left_flow: DEFAULT_SLICE_NOZZLE_FLOW,
+      nozzle_right_flow: DEFAULT_SLICE_NOZZLE_FLOW,
       rotation_x_degrees: 0,
       rotation_y_degrees: 0,
       rotation_z_degrees: 0,
@@ -4931,10 +4933,10 @@
     if (els.sliceSupportModeSelect) els.sliceSupportModeSelect.value = "auto";
     if (els.sliceSupportTypeSelect) els.sliceSupportTypeSelect.value = "";
     if (els.sliceSupportStyleSelect) els.sliceSupportStyleSelect.value = "";
-    if (els.sliceNozzleLeftDiameterSelect) els.sliceNozzleLeftDiameterSelect.value = "";
-    if (els.sliceNozzleRightDiameterSelect) els.sliceNozzleRightDiameterSelect.value = "";
-    if (els.sliceNozzleLeftFlowSelect) els.sliceNozzleLeftFlowSelect.value = "";
-    if (els.sliceNozzleRightFlowSelect) els.sliceNozzleRightFlowSelect.value = "";
+    if (els.sliceNozzleLeftDiameterSelect) els.sliceNozzleLeftDiameterSelect.value = DEFAULT_SLICE_NOZZLE_DIAMETER;
+    if (els.sliceNozzleRightDiameterSelect) els.sliceNozzleRightDiameterSelect.value = DEFAULT_SLICE_NOZZLE_DIAMETER;
+    if (els.sliceNozzleLeftFlowSelect) els.sliceNozzleLeftFlowSelect.value = DEFAULT_SLICE_NOZZLE_FLOW;
+    if (els.sliceNozzleRightFlowSelect) els.sliceNozzleRightFlowSelect.value = DEFAULT_SLICE_NOZZLE_FLOW;
     updateSliceSupportControlsUi();
     if (els.slicePreviewBed) {
       els.slicePreviewBed.textContent = `Plade: ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.width_mm)} x ${formatNumberCompact(DEFAULT_SLICE_BED_SIZE_MM.depth_mm)} mm`;
@@ -4976,16 +4978,28 @@
       els.sliceSupportStyleSelect.value = normalizeSliceSupportStyle(state.lastSliceSelection.support_style || "");
     }
     if (els.sliceNozzleLeftDiameterSelect) {
-      els.sliceNozzleLeftDiameterSelect.value = normalizeSliceNozzleDiameter(state.lastSliceSelection.nozzle_left_diameter || "");
+      const normalizedNozzleLeftDiameter = normalizeSliceNozzleDiameter(
+        state.lastSliceSelection.nozzle_left_diameter || DEFAULT_SLICE_NOZZLE_DIAMETER
+      );
+      els.sliceNozzleLeftDiameterSelect.value = normalizedNozzleLeftDiameter || DEFAULT_SLICE_NOZZLE_DIAMETER;
     }
     if (els.sliceNozzleRightDiameterSelect) {
-      els.sliceNozzleRightDiameterSelect.value = normalizeSliceNozzleDiameter(state.lastSliceSelection.nozzle_right_diameter || "");
+      const normalizedNozzleRightDiameter = normalizeSliceNozzleDiameter(
+        state.lastSliceSelection.nozzle_right_diameter || DEFAULT_SLICE_NOZZLE_DIAMETER
+      );
+      els.sliceNozzleRightDiameterSelect.value = normalizedNozzleRightDiameter || DEFAULT_SLICE_NOZZLE_DIAMETER;
     }
     if (els.sliceNozzleLeftFlowSelect) {
-      els.sliceNozzleLeftFlowSelect.value = normalizeSliceNozzleFlow(state.lastSliceSelection.nozzle_left_flow || "");
+      const normalizedNozzleLeftFlow = normalizeSliceNozzleFlow(
+        state.lastSliceSelection.nozzle_left_flow || DEFAULT_SLICE_NOZZLE_FLOW
+      );
+      els.sliceNozzleLeftFlowSelect.value = normalizedNozzleLeftFlow || DEFAULT_SLICE_NOZZLE_FLOW;
     }
     if (els.sliceNozzleRightFlowSelect) {
-      els.sliceNozzleRightFlowSelect.value = normalizeSliceNozzleFlow(state.lastSliceSelection.nozzle_right_flow || "");
+      const normalizedNozzleRightFlow = normalizeSliceNozzleFlow(
+        state.lastSliceSelection.nozzle_right_flow || DEFAULT_SLICE_NOZZLE_FLOW
+      );
+      els.sliceNozzleRightFlowSelect.value = normalizedNozzleRightFlow || DEFAULT_SLICE_NOZZLE_FLOW;
     }
     if (els.sliceProcessSettingsSearchInput) {
       els.sliceProcessSettingsSearchInput.value = "";
