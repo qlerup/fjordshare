@@ -2125,6 +2125,79 @@ def _resolve_selected_profile_jsons(
     return machine_json, process_json, filament_json
 
 
+def _count_profile_extruder_hint_items(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, (list, tuple, set)):
+        compact = [item for item in value if str(item or "").strip()]
+        return len(compact)
+    if isinstance(value, dict):
+        best = 0
+        for nested in value.values():
+            best = max(best, _count_profile_extruder_hint_items(nested))
+        return best
+
+    text = str(value or "").strip()
+    if not text:
+        return 0
+
+    split_tokens = [part.strip() for part in re.split(r"[;,|]", text) if part.strip()]
+    if len(split_tokens) > 1:
+        return len(split_tokens)
+
+    numeric_tokens = _extract_float_numbers(value, max_items=8)
+    if len(numeric_tokens) > 1:
+        return len(numeric_tokens)
+
+    return 1
+
+
+def _infer_required_extruder_count_for_slice(machine_json: str, process_json: str) -> int:
+    detected = 0
+
+    for json_path in (machine_json, process_json):
+        path = Path(str(json_path or "").strip())
+        if not path.exists() or not path.is_file():
+            continue
+        payload = _read_profile_json_payload(path)
+        if not isinstance(payload, dict):
+            continue
+
+        count_value = payload.get("extruder_count")
+        if count_value is not None:
+            try:
+                parsed_count = int(float(str(count_value).strip()))
+            except Exception:
+                parsed_count = 0
+            detected = max(detected, parsed_count)
+
+        for hint_key in ("print_extruder_id", "printer_extruder_id"):
+            if hint_key not in payload:
+                continue
+            detected = max(detected, _count_profile_extruder_hint_items(payload.get(hint_key)))
+
+    profile_text = f"{machine_json} {process_json}".lower()
+    if "h2d" in profile_text:
+        detected = max(detected, 2)
+    elif detected <= 1 and any(token in profile_text for token in ("dual", "idex")):
+        detected = 2
+
+    return max(1, detected)
+
+
+def _expand_load_filaments_for_extruders(load_filaments: str, extruder_count: int) -> str:
+    parts = [part.strip() for part in str(load_filaments or "").split(";") if part.strip()]
+    if not parts:
+        return ""
+    wanted = max(1, int(extruder_count or 1))
+    if len(parts) >= wanted:
+        return ";".join(parts[:wanted])
+    expanded = list(parts)
+    while len(expanded) < wanted:
+        expanded.append(expanded[-1])
+    return ";".join(expanded)
+
+
 _PROCESS_PROFILE_META_KEYS = {
     "type",
     "from",
@@ -2721,7 +2794,9 @@ def _build_modern_profile_args(
             args.extend(["--load-settings", machine_json])
 
     if not effective_load_filaments and filament_json:
-        args.extend(["--load-filaments", filament_json])
+        required_extruders = _infer_required_extruder_count_for_slice(machine_json, process_json)
+        effective_filaments = _expand_load_filaments_for_extruders(filament_json, required_extruders)
+        args.extend(["--load-filaments", effective_filaments])
 
     return args
 
@@ -3315,8 +3390,63 @@ def _build_support_override_load_settings(
             return _coerce_process_override_value_like(source.get("extruder_count"), desired_count)
         return str(max(0, int(desired_count)))
 
-    def _typed_nozzle_volume_type_for_process(desired_value: str) -> Any:
-        return str(desired_value or "").strip()
+    def _split_csv_tokens(value: Any) -> list[str]:
+        text = str(value or "").strip()
+        if not text:
+            return []
+        return [part.strip() for part in re.split(r"[;,|]", text) if part.strip()]
+
+    def _typed_nozzle_volume_type_for_process(desired_values: list[str], preferred_key: str = "") -> Any:
+        expanded = _expand_nozzle_volume_values(desired_values)
+        if not expanded:
+            return ""
+        settings_container = _process_settings_container()
+        key_order = [preferred_key] if preferred_key else []
+        key_order.extend([k for k in ("nozzle_volume_type", "default_nozzle_volume_type") if k not in key_order])
+        for source in (settings_container, patched_payload, process_payload, override_template_payload, resolved_payload):
+            if not isinstance(source, dict):
+                continue
+            for key in key_order:
+                if key not in source:
+                    continue
+                existing = source.get(key)
+                if isinstance(existing, (list, tuple, set)):
+                    return list(expanded)
+                if isinstance(existing, str):
+                    text = existing.strip()
+                    if text.startswith("[") and text.endswith("]"):
+                        return list(expanded)
+                    return ",".join(expanded)
+                return ",".join(expanded)
+        if len(expanded) > 1:
+            return list(expanded)
+        return expanded[0]
+
+    def _typed_nozzle_diameter_for_process(desired_values: list[str], preferred_key: str = "") -> Any:
+        expanded = _expand_values_for_extruders(desired_values)
+        if not expanded:
+            return ""
+        settings_container = _process_settings_container()
+        key_order = [preferred_key] if preferred_key else []
+        key_order.extend([k for k in ("nozzle_diameter", "nozzle_diameters") if k not in key_order])
+        for source in (settings_container, patched_payload, process_payload, override_template_payload, resolved_payload):
+            if not isinstance(source, dict):
+                continue
+            for key in key_order:
+                if key not in source:
+                    continue
+                existing = source.get(key)
+                if isinstance(existing, (list, tuple, set)):
+                    return list(expanded)
+                if isinstance(existing, str):
+                    text = existing.strip()
+                    if text.startswith("[") and text.endswith("]"):
+                        return list(expanded)
+                    return ",".join(expanded)
+                return ",".join(expanded)
+        if len(expanded) > 1:
+            return list(expanded)
+        return expanded[0]
 
     def _process_has_key(key: str) -> bool:
         settings_container = _process_settings_container()
@@ -3335,11 +3465,13 @@ def _build_support_override_load_settings(
     effective_nozzle_volume_type_value = ",".join(user_nozzle_flow_values) if user_nozzle_flow_values else ""
     if not effective_nozzle_volume_type_value:
         effective_nozzle_volume_type_value = _guess_nozzle_volume_type_value() or ""
+    effective_nozzle_diameter_values = _expand_values_for_extruders(_split_csv_tokens(effective_nozzle_diameter_value))
+    effective_nozzle_volume_type_values = _expand_nozzle_volume_values(_split_csv_tokens(effective_nozzle_volume_type_value))
 
     if detected_extruder_count > 0:
         _set_runtime_value("extruder_count", _typed_extruder_count_for_process(detected_extruder_count))
 
-    if effective_nozzle_volume_type_value:
+    if effective_nozzle_volume_type_values:
         nozzle_volume_keys = [
             key
             for key in ("nozzle_volume_type", "default_nozzle_volume_type")
@@ -3350,7 +3482,7 @@ def _build_support_override_load_settings(
         for nozzle_volume_key in nozzle_volume_keys:
             _set_runtime_value(
                 nozzle_volume_key,
-                _typed_nozzle_volume_type_for_process(effective_nozzle_volume_type_value),
+                _typed_nozzle_volume_type_for_process(effective_nozzle_volume_type_values, preferred_key=nozzle_volume_key),
             )
 
     for runtime_key in ("different_extruder", "new_printer_name"):
@@ -3361,7 +3493,7 @@ def _build_support_override_load_settings(
         if runtime_key in template_settings:
             _set_runtime_value(runtime_key, template_settings.get(runtime_key))
 
-    if effective_nozzle_diameter_value:
+    if effective_nozzle_diameter_values:
         nozzle_diameter_keys = [
             key
             for key in ("nozzle_diameter", "nozzle_diameters")
@@ -3370,7 +3502,7 @@ def _build_support_override_load_settings(
         if not nozzle_diameter_keys:
             nozzle_diameter_keys = ["nozzle_diameter"]
         for key in nozzle_diameter_keys:
-            _set_runtime_value(key, effective_nozzle_diameter_value)
+            _set_runtime_value(key, _typed_nozzle_diameter_for_process(effective_nozzle_diameter_values, preferred_key=key))
 
     distinct_diameters = {v for v in user_nozzle_diameter_values if str(v or "").strip()}
     distinct_flows = {v for v in user_nozzle_flow_values if str(v or "").strip()}
