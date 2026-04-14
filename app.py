@@ -3044,14 +3044,6 @@ def _build_support_override_load_settings(
             for hint_key in (
                 "printer_extruder_id",
                 "print_extruder_id",
-                "extruder_variant_list",
-                "printer_extruder_variant",
-                "print_extruder_variant",
-                "nozzle_diameter",
-                "nozzle_diameters",
-                "nozzle_size",
-                "nozzle_sizes",
-                "nozzle_volume_type",
             ):
                 if hint_key not in source:
                     continue
@@ -3059,10 +3051,12 @@ def _build_support_override_load_settings(
                 if hint_count > detected:
                     detected = hint_count
 
-        if detected <= 1:
-            profile_text = f"{printer_profile} {selected_process_name}".lower()
-            if any(token in profile_text for token in ("h2d", "dual", "idex")):
-                detected = 2
+        profile_text = f"{printer_profile} {selected_process_name}".lower()
+        if "h2d" in profile_text:
+            # H2D is dual extruder; force a stable value and avoid noisy hints.
+            detected = 2
+        elif detected <= 1 and any(token in profile_text for token in ("dual", "idex")):
+            detected = 2
         return detected
 
     detected_extruder_count = _detect_extruder_count()
