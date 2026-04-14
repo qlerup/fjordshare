@@ -3202,9 +3202,25 @@ def _build_support_override_load_settings(
             patched_machine_payload[key] = value
             machine_runtime_changed = True
 
+    def _typed_extruder_count_for_process(desired_count: int) -> Any:
+        settings_container = _process_settings_container()
+        for source in (settings_container, patched_payload, template_settings, override_template_payload):
+            if not isinstance(source, dict) or "extruder_count" not in source:
+                continue
+            return _coerce_process_override_value_like(source.get("extruder_count"), desired_count)
+        return str(max(0, int(desired_count)))
+
+    def _typed_extruder_count_for_machine(desired_count: int) -> Any:
+        settings_container = _machine_settings_container()
+        for source in (settings_container, patched_machine_payload, machine_payload):
+            if not isinstance(source, dict) or "extruder_count" not in source:
+                continue
+            return _coerce_process_override_value_like(source.get("extruder_count"), desired_count)
+        return str(max(0, int(desired_count)))
+
     if detected_extruder_count > 0:
-        _set_runtime_value("extruder_count", detected_extruder_count)
-        _set_machine_runtime_value("extruder_count", detected_extruder_count)
+        _set_runtime_value("extruder_count", _typed_extruder_count_for_process(detected_extruder_count))
+        _set_machine_runtime_value("extruder_count", _typed_extruder_count_for_machine(detected_extruder_count))
 
     for runtime_key in ("nozzle_volume_type", "different_extruder", "new_printer_name"):
         settings_container = _process_settings_container()
