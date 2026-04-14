@@ -3000,6 +3000,32 @@ def _build_support_override_load_settings(
         return out
 
     def _detect_extruder_count() -> int:
+        def _count_hint_items(value: Any) -> int:
+            if value is None:
+                return 0
+            if isinstance(value, (list, tuple, set)):
+                compact = [item for item in value if str(item or "").strip()]
+                return len(compact)
+            if isinstance(value, dict):
+                best = 0
+                for nested in value.values():
+                    best = max(best, _count_hint_items(nested))
+                return best
+
+            text = str(value or "").strip()
+            if not text:
+                return 0
+
+            split_tokens = [part.strip() for part in re.split(r"[;,|]", text) if part.strip()]
+            if len(split_tokens) > 1:
+                return len(split_tokens)
+
+            numeric_tokens = _extract_float_numbers(value, max_items=8)
+            if len(numeric_tokens) > 1:
+                return len(numeric_tokens)
+
+            return 1
+
         detected = 0
         for source in (template_settings, override_template_payload, machine_payload):
             if not isinstance(source, dict):
@@ -3014,6 +3040,29 @@ def _build_support_override_load_settings(
                     parsed_count = 0
             if parsed_count > detected:
                 detected = parsed_count
+
+            for hint_key in (
+                "printer_extruder_id",
+                "print_extruder_id",
+                "extruder_variant_list",
+                "printer_extruder_variant",
+                "print_extruder_variant",
+                "nozzle_diameter",
+                "nozzle_diameters",
+                "nozzle_size",
+                "nozzle_sizes",
+                "nozzle_volume_type",
+            ):
+                if hint_key not in source:
+                    continue
+                hint_count = _count_hint_items(source.get(hint_key))
+                if hint_count > detected:
+                    detected = hint_count
+
+        if detected <= 1:
+            profile_text = f"{printer_profile} {selected_process_name}".lower()
+            if any(token in profile_text for token in ("h2d", "dual", "idex")):
+                detected = 2
         return detected
 
     detected_extruder_count = _detect_extruder_count()
@@ -3152,6 +3201,10 @@ def _build_support_override_load_settings(
         if key not in patched_machine_payload or patched_machine_payload.get(key) != value:
             patched_machine_payload[key] = value
             machine_runtime_changed = True
+
+    if detected_extruder_count > 0:
+        _set_runtime_value("extruder_count", detected_extruder_count)
+        _set_machine_runtime_value("extruder_count", detected_extruder_count)
 
     for runtime_key in ("nozzle_volume_type", "different_extruder", "new_printer_name"):
         settings_container = _process_settings_container()
