@@ -2999,6 +2999,72 @@ def _build_support_override_load_settings(
                 break
         return out
 
+    def _dedupe_text_values(values: Iterable[str], max_items: int = 8) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        for raw in values:
+            text = str(raw or "").strip()
+            if not text:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(text)
+            if len(out) >= max_items:
+                break
+        return out
+
+    def _extract_text_tokens(value: Any, max_items: int = 8) -> list[str]:
+        if value is None:
+            return []
+
+        out: list[str] = []
+        queue: list[Any] = [value]
+
+        while queue and len(out) < max_items:
+            current = queue.pop(0)
+            if current is None:
+                continue
+            if isinstance(current, dict):
+                queue.extend(current.values())
+                continue
+            if isinstance(current, (list, tuple, set)):
+                queue.extend(list(current))
+                continue
+
+            text = str(current or "").strip()
+            if not text:
+                continue
+
+            if text.startswith("[") and text.endswith("]"):
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, (list, tuple, set, dict)):
+                    queue.append(parsed)
+                    continue
+
+            split_tokens = [part.strip() for part in re.split(r"[;,|]", text) if part.strip()]
+            if len(split_tokens) > 1:
+                queue.extend(split_tokens)
+                continue
+
+            out.append(text)
+
+        return _dedupe_text_values(out, max_items=max_items)
+
+    def _is_nozzle_volume_enum_candidate(value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        if text.startswith("<") and text.endswith(">"):
+            return False
+        if re.fullmatch(r"[-+]?\d+(?:\.\d+)?", text):
+            return False
+        return True
+
     def _detect_extruder_count() -> int:
         def _count_hint_items(value: Any) -> int:
             if value is None:
@@ -3073,47 +3139,40 @@ def _build_support_override_load_settings(
             expanded.append(expanded[-1])
         return expanded[:wanted]
 
+    def _expand_nozzle_volume_values(values: list[str]) -> list[str]:
+        compact = [str(v or "").strip() for v in values if _is_nozzle_volume_enum_candidate(v)]
+        if not compact:
+            return []
+        wanted = detected_extruder_count if detected_extruder_count > 0 else len(compact)
+        if wanted <= 1:
+            return [compact[0]]
+        expanded = list(compact)
+        while len(expanded) < wanted:
+            expanded.append(expanded[-1])
+        return expanded[:wanted]
+
     def _guess_nozzle_volume_type_value() -> Optional[str]:
-        nozzle_candidates: list[float] = []
+        nozzle_candidates: list[str] = []
 
         for source in (template_settings, override_template_payload, machine_payload):
             if not isinstance(source, dict):
                 continue
             for key in (
                 "nozzle_volume_type",
-                "nozzle_diameter",
-                "nozzle_diameters",
-                "nozzle_size",
-                "nozzle_sizes",
-                "nozzle",
+                "default_nozzle_volume_type",
+                "nozzle_type",
             ):
                 if key in source:
-                    nozzle_candidates.extend(_extract_float_numbers(source.get(key), max_items=8))
+                    nozzle_candidates.extend(_extract_text_tokens(source.get(key), max_items=8))
 
-        if not nozzle_candidates:
-            match = re.search(
-                r"(\d+(?:\.\d+)?)\s*nozzle",
-                f"{printer_profile} {selected_process_name}",
-                flags=re.IGNORECASE,
-            )
-            if match:
-                try:
-                    nozzle_candidates.append(float(match.group(1)))
-                except Exception:
-                    pass
+        candidate_values = _expand_nozzle_volume_values(_dedupe_text_values(nozzle_candidates, max_items=8))
+        if candidate_values:
+            return ",".join(candidate_values)
 
-        nozzles = _dedupe_numbers(nozzle_candidates, max_items=8)
-        if not nozzles:
-            return None
-
+        fallback_values = ["Standard"]
         if detected_extruder_count > 1:
-            expanded = list(nozzles)
-            while expanded and len(expanded) < detected_extruder_count:
-                expanded.append(expanded[-1])
-            expanded = expanded[:detected_extruder_count] if expanded else [nozzles[0]] * detected_extruder_count
-            return ",".join(f"{value:g}" for value in expanded)
-
-        return f"{nozzles[0]:g}"
+            fallback_values = ["Standard"] * detected_extruder_count
+        return ",".join(fallback_values)
 
     def _compose_user_nozzle_values() -> tuple[list[str], list[str]]:
         diameter_values: list[str] = []
@@ -3212,6 +3271,26 @@ def _build_support_override_load_settings(
             return _coerce_process_override_value_like(source.get("extruder_count"), desired_count)
         return str(max(0, int(desired_count)))
 
+    def _typed_nozzle_volume_type_for_process(desired_value: str) -> Any:
+        settings_container = _process_settings_container()
+        for source in (settings_container, patched_payload, template_settings, override_template_payload):
+            if not isinstance(source, dict):
+                continue
+            for key in ("nozzle_volume_type", "default_nozzle_volume_type", "nozzle_type"):
+                if key in source:
+                    return _coerce_process_override_value_like(source.get(key), desired_value)
+        return desired_value
+
+    def _typed_nozzle_volume_type_for_machine(desired_value: str) -> Any:
+        settings_container = _machine_settings_container()
+        for source in (settings_container, patched_machine_payload, machine_payload):
+            if not isinstance(source, dict):
+                continue
+            for key in ("nozzle_volume_type", "default_nozzle_volume_type", "nozzle_type"):
+                if key in source:
+                    return _coerce_process_override_value_like(source.get(key), desired_value)
+        return desired_value
+
     if detected_extruder_count > 0:
         _set_runtime_value("extruder_count", _typed_extruder_count_for_process(detected_extruder_count))
         _set_machine_runtime_value("extruder_count", _typed_extruder_count_for_machine(detected_extruder_count))
@@ -3219,23 +3298,19 @@ def _build_support_override_load_settings(
     for runtime_key in ("nozzle_volume_type", "different_extruder", "new_printer_name"):
         settings_container = _process_settings_container()
         has_runtime_key = runtime_key in patched_payload or (isinstance(settings_container, dict) and runtime_key in settings_container)
-        if has_runtime_key and not (runtime_key == "nozzle_volume_type" and user_nozzle_diameter_values):
+        if has_runtime_key and runtime_key != "nozzle_volume_type":
             continue
         if runtime_key == "nozzle_volume_type":
-            guessed_nozzle_value = ",".join(user_nozzle_diameter_values) if user_nozzle_diameter_values else ""
-            if not guessed_nozzle_value:
-                guessed_nozzle_value = _guess_nozzle_volume_type_value()
-            if guessed_nozzle_value is not None:
-                _set_runtime_value(runtime_key, guessed_nozzle_value)
-                continue
+            guessed_nozzle_value = _guess_nozzle_volume_type_value()
+            if guessed_nozzle_value:
+                _set_runtime_value(runtime_key, _typed_nozzle_volume_type_for_process(guessed_nozzle_value))
+            continue
         if runtime_key in template_settings:
             _set_runtime_value(runtime_key, template_settings.get(runtime_key))
 
-    guessed_nozzle_value = ",".join(user_nozzle_diameter_values) if user_nozzle_diameter_values else ""
-    if not guessed_nozzle_value:
-        guessed_nozzle_value = _guess_nozzle_volume_type_value() or ""
+    guessed_nozzle_value = _guess_nozzle_volume_type_value() or ""
     if guessed_nozzle_value:
-        _set_machine_runtime_value("nozzle_volume_type", guessed_nozzle_value)
+        _set_machine_runtime_value("nozzle_volume_type", _typed_nozzle_volume_type_for_machine(guessed_nozzle_value))
 
     if user_nozzle_diameter_values:
         diameter_csv = ",".join(user_nozzle_diameter_values)
