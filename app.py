@@ -3065,6 +3065,17 @@ def _build_support_override_load_settings(
             return False
         return True
 
+    def _canonical_nozzle_volume_type_value(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        normalized = text.lower().replace("-", "_").replace(" ", "_")
+        if normalized in {"standard", "normal"}:
+            return "Standard"
+        if normalized in {"high_flow", "highflow"}:
+            return "High Flow"
+        return text
+
     def _detect_extruder_count() -> int:
         def _count_hint_items(value: Any) -> int:
             if value is None:
@@ -3140,7 +3151,8 @@ def _build_support_override_load_settings(
         return expanded[:wanted]
 
     def _expand_nozzle_volume_values(values: list[str]) -> list[str]:
-        compact = [str(v or "").strip() for v in values if _is_nozzle_volume_enum_candidate(v)]
+        canonical_candidates = [_canonical_nozzle_volume_type_value(v) for v in values]
+        compact = [str(v or "").strip() for v in canonical_candidates if _is_nozzle_volume_enum_candidate(v)]
         if not compact:
             return []
         wanted = detected_extruder_count if detected_extruder_count > 0 else len(compact)
@@ -3160,7 +3172,6 @@ def _build_support_override_load_settings(
             for key in (
                 "nozzle_volume_type",
                 "default_nozzle_volume_type",
-                "nozzle_type",
             ):
                 if key in source:
                     nozzle_candidates.extend(_extract_text_tokens(source.get(key), max_items=8))
@@ -3174,6 +3185,47 @@ def _build_support_override_load_settings(
             fallback_values = ["Standard"] * detected_extruder_count
         return ",".join(fallback_values)
 
+    def _guess_nozzle_diameter_value() -> Optional[str]:
+        nozzle_candidates: list[float] = []
+
+        for source in (template_settings, override_template_payload, machine_payload):
+            if not isinstance(source, dict):
+                continue
+            for key in (
+                "nozzle_diameter",
+                "nozzle_diameters",
+                "nozzle_size",
+                "nozzle_sizes",
+                "nozzle",
+            ):
+                if key in source:
+                    nozzle_candidates.extend(_extract_float_numbers(source.get(key), max_items=8))
+
+        if not nozzle_candidates:
+            match = re.search(
+                r"(\d+(?:\.\d+)?)\s*nozzle",
+                f"{printer_profile} {selected_process_name}",
+                flags=re.IGNORECASE,
+            )
+            if match:
+                try:
+                    nozzle_candidates.append(float(match.group(1)))
+                except Exception:
+                    pass
+
+        nozzles = _dedupe_numbers(nozzle_candidates, max_items=8)
+        if not nozzles:
+            return None
+
+        if detected_extruder_count > 1:
+            expanded = list(nozzles)
+            while len(expanded) < detected_extruder_count:
+                expanded.append(expanded[-1])
+            expanded = expanded[:detected_extruder_count]
+            return ",".join(f"{value:g}" for value in expanded)
+
+        return f"{nozzles[0]:g}"
+
     def _compose_user_nozzle_values() -> tuple[list[str], list[str]]:
         diameter_values: list[str] = []
         if normalized_nozzle_left_diameter:
@@ -3181,13 +3233,13 @@ def _build_support_override_load_settings(
         if normalized_nozzle_right_diameter:
             diameter_values.append(normalized_nozzle_right_diameter)
 
-        flow_values: list[str] = []
+        volume_type_values: list[str] = []
         if normalized_nozzle_left_flow:
-            flow_values.append(normalized_nozzle_left_flow)
+            volume_type_values.append(_canonical_nozzle_volume_type_value(normalized_nozzle_left_flow))
         if normalized_nozzle_right_flow:
-            flow_values.append(normalized_nozzle_right_flow)
+            volume_type_values.append(_canonical_nozzle_volume_type_value(normalized_nozzle_right_flow))
 
-        return _expand_values_for_extruders(diameter_values), _expand_values_for_extruders(flow_values)
+        return _expand_values_for_extruders(diameter_values), _expand_nozzle_volume_values(volume_type_values)
 
     runtime_compat_changed = False
     machine_runtime_changed = False
@@ -3272,24 +3324,18 @@ def _build_support_override_load_settings(
         return str(max(0, int(desired_count)))
 
     def _typed_nozzle_volume_type_for_process(desired_value: str) -> Any:
-        settings_container = _process_settings_container()
-        for source in (settings_container, patched_payload, template_settings, override_template_payload):
-            if not isinstance(source, dict):
-                continue
-            for key in ("nozzle_volume_type", "default_nozzle_volume_type", "nozzle_type"):
-                if key in source:
-                    return _coerce_process_override_value_like(source.get(key), desired_value)
-        return desired_value
+        return str(desired_value or "").strip()
 
     def _typed_nozzle_volume_type_for_machine(desired_value: str) -> Any:
-        settings_container = _machine_settings_container()
-        for source in (settings_container, patched_machine_payload, machine_payload):
-            if not isinstance(source, dict):
-                continue
-            for key in ("nozzle_volume_type", "default_nozzle_volume_type", "nozzle_type"):
-                if key in source:
-                    return _coerce_process_override_value_like(source.get(key), desired_value)
-        return desired_value
+        return str(desired_value or "").strip()
+
+    effective_nozzle_diameter_value = ",".join(user_nozzle_diameter_values) if user_nozzle_diameter_values else ""
+    if not effective_nozzle_diameter_value:
+        effective_nozzle_diameter_value = _guess_nozzle_diameter_value() or ""
+
+    effective_nozzle_volume_type_value = ",".join(user_nozzle_flow_values) if user_nozzle_flow_values else ""
+    if not effective_nozzle_volume_type_value:
+        effective_nozzle_volume_type_value = _guess_nozzle_volume_type_value() or ""
 
     if detected_extruder_count > 0:
         _set_runtime_value("extruder_count", _typed_extruder_count_for_process(detected_extruder_count))
@@ -3301,29 +3347,22 @@ def _build_support_override_load_settings(
         if has_runtime_key and runtime_key != "nozzle_volume_type":
             continue
         if runtime_key == "nozzle_volume_type":
-            guessed_nozzle_value = _guess_nozzle_volume_type_value()
-            if guessed_nozzle_value:
-                _set_runtime_value(runtime_key, _typed_nozzle_volume_type_for_process(guessed_nozzle_value))
+            if effective_nozzle_volume_type_value:
+                _set_runtime_value(runtime_key, _typed_nozzle_volume_type_for_process(effective_nozzle_volume_type_value))
             continue
         if runtime_key in template_settings:
             _set_runtime_value(runtime_key, template_settings.get(runtime_key))
 
-    guessed_nozzle_value = _guess_nozzle_volume_type_value() or ""
-    if guessed_nozzle_value:
-        _set_machine_runtime_value("nozzle_volume_type", _typed_nozzle_volume_type_for_machine(guessed_nozzle_value))
+    if effective_nozzle_volume_type_value:
+        _set_machine_runtime_value(
+            "nozzle_volume_type",
+            _typed_nozzle_volume_type_for_machine(effective_nozzle_volume_type_value),
+        )
 
-    if user_nozzle_diameter_values:
-        diameter_csv = ",".join(user_nozzle_diameter_values)
+    if effective_nozzle_diameter_value:
         for key in ("nozzle_diameter", "nozzle_diameters", "nozzle_size", "nozzle_sizes"):
-            _set_runtime_value(key, diameter_csv)
-            _set_machine_runtime_value(key, diameter_csv)
-
-    if user_nozzle_flow_values:
-        flow_csv = ",".join(user_nozzle_flow_values)
-        _set_runtime_value("nozzle_flow_type", flow_csv)
-        _set_runtime_value("nozzle_flow_types", flow_csv)
-        _set_machine_runtime_value("nozzle_flow_type", flow_csv)
-        _set_machine_runtime_value("nozzle_flow_types", flow_csv)
+            _set_runtime_value(key, effective_nozzle_diameter_value)
+            _set_machine_runtime_value(key, effective_nozzle_diameter_value)
 
     distinct_diameters = {v for v in user_nozzle_diameter_values if str(v or "").strip()}
     distinct_flows = {v for v in user_nozzle_flow_values if str(v or "").strip()}
@@ -4674,8 +4713,23 @@ def _slice_debug_profile_snapshot(profile_path: Path) -> dict[str, Any]:
         _slice_debug_collect_values_for_key(payload, key, values, depth=0, max_items=8)
         if values:
             interesting[key] = values
+
+    effective_settings, _effective_options = _extract_effective_process_settings_from_payload(payload)
+    interesting_effective: dict[str, Any] = {}
+    if effective_settings:
+        for key in interesting_keys:
+            if key in effective_settings:
+                interesting_effective[key] = _slice_debug_json_safe(effective_settings.get(key), depth=0)
+        if "default_nozzle_volume_type" in effective_settings:
+            interesting_effective["default_nozzle_volume_type"] = _slice_debug_json_safe(
+                effective_settings.get("default_nozzle_volume_type"),
+                depth=0,
+            )
+
     if interesting:
         snapshot["interesting"] = interesting
+    if interesting_effective:
+        snapshot["interesting_effective"] = interesting_effective
 
     return snapshot
 
