@@ -56,11 +56,13 @@ except Exception:
 
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data")).resolve()
+_UPLOAD_ROOT_ENV = str(os.getenv("UPLOAD_ROOT", os.getenv("UPLOAD_DIR", "")) or "").strip()
+_THUMBS_DIR_ENV = str(os.getenv("THUMBS_DIR", os.getenv("THUMB_DIR", "")) or "").strip()
 BAMBU_DIR = DATA_DIR / "bambu"
 BAMBU_SLICE_DEBUG_DIR = BAMBU_DIR / "slice-debug"
-UPLOAD_ROOT = DATA_DIR / "uploads"
+UPLOAD_ROOT = Path(_UPLOAD_ROOT_ENV or str(DATA_DIR / "uploads")).resolve()
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
-THUMBS_DIR = DATA_DIR / "thumbs"
+THUMBS_DIR = Path(_THUMBS_DIR_ENV or str(DATA_DIR / "thumbs")).resolve()
 FILE_ATTACHMENTS_DIR = DATA_DIR / "file_attachments"
 DB_PATH = DATA_DIR / "fjordshare.db"
 SLICER_PROFILE_DIR = BAMBU_DIR / "profiles"
@@ -6903,6 +6905,8 @@ def api_health():
             "service": "fjordshare",
             "users": users_count(),
             "data_dir": str(DATA_DIR),
+            "upload_root": str(UPLOAD_ROOT),
+            "thumbs_dir": str(THUMBS_DIR),
         }
     )
 

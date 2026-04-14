@@ -73,6 +73,31 @@ The following Bambu presets are included for automatic X/Y defaults:
 
 ## Run Locally With Docker
 
+### Fastest Setup (Recommended)
+
+```bash
+ssh <user>@<server-ip>
+cd ~
+git clone https://github.com/qlerup/fjordshare.git
+cd fjordshare
+chmod +x scripts/fresh_setup.sh
+./scripts/fresh_setup.sh
+```
+
+This wizard guides you through split storage setup (NAS uploads + local app data), optional NFS `/etc/fstab`, and starts Docker Compose.
+
+Re-run later:
+
+```bash
+# full guided wizard again
+./scripts/fresh_setup.sh
+
+# only preflight + start (reuse existing .env)
+./scripts/fresh_setup.sh --start-only
+```
+
+### Manual Setup
+
 ```bash
 cd fjordshare
 cp .env.example .env
@@ -81,11 +106,14 @@ docker compose up -d --build
 
 Then open:
 
-- `http://localhost:9090` (or the port configured in `.env`)
+- `http://<server-ip>:9090` (or the port configured in `.env`)
+- `http://localhost:9090` if you are on the server itself
 
 ## Important Environment Variables (.env)
 
 - `DATA_DIR`
+- `UPLOADS_HOST_DIR`
+- `THUMBS_HOST_DIR`
 - `BAMBUSTUDIO_BIN` (default: `bambu-studio`)
 - `BAMBUSTUDIO_TIMEOUT_SEC` (default: `1800`)
 - `BAMBUSTUDIO_CONFIG_PATH` (optional)
@@ -134,11 +162,23 @@ These scripts support operations, updates, and cleanup for FjordShare NAS deploy
 
 ## Data Paths
 
-Data is stored in the volume mapped to `DATA_DIR`:
+Inside the container:
+
+- app state root: `/data`
+- uploads root: `/uploads`
+- thumbnails root: `/thumbs`
+
+Typical split deployment:
+
+- `${DATA_DIR}` -> `/data` (local disk, DB + internal app state)
+- `${UPLOADS_HOST_DIR}` -> `/uploads` (NAS/NFS for shared files)
+- `${THUMBS_HOST_DIR}` -> `/thumbs` (local or NAS, your choice)
+
+Stored paths:
 
 - database: `/data/fjordshare.db`
-- uploaded files: `/data/uploads`
-- thumbnails: `/data/thumbs`
+- uploaded files: `/uploads`
+- thumbnails: `/thumbs`
 - TUS temp files: `/data/tus_uploads`
 - slicer profiles: `/data/bambu/profiles`
 - sliced output: `/data/bambu/sliced`

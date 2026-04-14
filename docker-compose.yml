@@ -9,6 +9,8 @@
       - "${APP_PORT:-9090}:8080"
     environment:
       DATA_DIR: /data
+      UPLOAD_ROOT: /uploads
+      THUMBS_DIR: /thumbs
       TZ: ${TZ:-Europe/Copenhagen}
       BAMBUSTUDIO_BIN: ${BAMBUSTUDIO_BIN:-bambu-studio}
       BAMBUSTUDIO_CONFIG_PATH: ${BAMBUSTUDIO_CONFIG_PATH:-}
@@ -23,6 +25,8 @@
       UI_VERSION_MARKER: ${UI_VERSION_MARKER:-}
     volumes:
       - "${DATA_DIR:-/volume1/docker/fjordshare/data}:/data"
+      - "${UPLOADS_HOST_DIR:-/volume1/docker/fjordshare/uploads}:/uploads"
+      - "${THUMBS_HOST_DIR:-/volume1/docker/fjordshare/thumbs}:/thumbs"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
       interval: 10s
@@ -30,5 +34,4 @@
       retries: 10
       start_period: 20s
     restart: unless-stopped
-
 
