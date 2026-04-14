@@ -2062,6 +2062,7 @@ def _resolve_selected_profile_jsons(
     print_profile: str,
     filament_profile: str,
     prefer_uploaded: bool = True,
+    auto_pick_when_blank: bool = True,
 ) -> tuple[str, str, str]:
     discovered_profile_root: Optional[Path] = None
 
@@ -2069,9 +2070,9 @@ def _resolve_selected_profile_jsons(
     process_json = ""
     filament_json = ""
 
-    strict_machine = bool(str(printer_profile or "").strip())
-    strict_process = bool(str(print_profile or "").strip())
-    strict_filament = bool(str(filament_profile or "").strip())
+    strict_machine = bool(str(printer_profile or "").strip()) or not auto_pick_when_blank
+    strict_process = bool(str(print_profile or "").strip()) or not auto_pick_when_blank
+    strict_filament = bool(str(filament_profile or "").strip()) or not auto_pick_when_blank
 
     if prefer_uploaded:
         machine_json = _pick_profile_json(
@@ -2682,6 +2683,7 @@ def _build_modern_profile_args(
     filament_profile: str,
     prefer_uploaded: bool = True,
     load_settings_override: str = "",
+    auto_pick_when_blank: bool = True,
 ) -> list[str]:
     args: list[str] = []
 
@@ -2705,6 +2707,7 @@ def _build_modern_profile_args(
             print_profile,
             filament_profile,
             prefer_uploaded=prefer_uploaded,
+            auto_pick_when_blank=auto_pick_when_blank,
         )
 
     if not effective_load_settings and machine_json:
@@ -3620,6 +3623,7 @@ def _slice_stl_to_gcode(
     process_overrides: Optional[dict[str, Any]] = None,
     allow_support_override_fallback: bool = True,
     force_profile_runtime_compat: bool = False,
+    auto_pick_blank_profiles: bool = True,
     debug_trace: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
@@ -3689,6 +3693,7 @@ def _slice_stl_to_gcode(
             "process_overrides_count": len(normalized_process_overrides),
             "allow_support_override_fallback": bool(allow_support_override_fallback),
             "force_profile_runtime_compat": bool(force_profile_runtime_compat),
+            "auto_pick_blank_profiles": bool(auto_pick_blank_profiles),
         },
     )
 
@@ -3743,6 +3748,15 @@ def _slice_stl_to_gcode(
         )
         if support_override_files:
             temp_profile_overrides.extend(support_override_files)
+            _trace(
+                "support-override-payload-snapshot",
+                {
+                    "profiles": [
+                        _slice_debug_profile_snapshot(Path(path))
+                        for path in support_override_files
+                    ],
+                },
+            )
         _trace(
             "support-override-built",
             {
@@ -3859,6 +3873,7 @@ def _slice_stl_to_gcode(
             filament_profile_value,
             prefer_uploaded=True,
             load_settings_override=support_load_settings_override,
+            auto_pick_when_blank=auto_pick_blank_profiles,
         )
         modern_base = [executable, "--slice", "0", *modern_profile_args]
 
@@ -3869,6 +3884,7 @@ def _slice_stl_to_gcode(
             filament_profile_value,
             prefer_uploaded=False,
             load_settings_override=support_load_settings_override,
+            auto_pick_when_blank=auto_pick_blank_profiles,
         )
         fallback_base = [executable, "--slice", "0", *fallback_profile_args]
         _trace(
@@ -4128,6 +4144,7 @@ def _slice_stl_to_gcode(
                         process_overrides=normalized_process_overrides,
                         allow_support_override_fallback=False,
                         force_profile_runtime_compat=force_profile_runtime_compat,
+                        auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
                     )
                     _trace("retry-success", {"strategy": "without-support-override"})
@@ -4176,6 +4193,7 @@ def _slice_stl_to_gcode(
                                 process_overrides=normalized_process_overrides,
                                 allow_support_override_fallback=False,
                                 force_profile_runtime_compat=force_profile_runtime_compat,
+                                auto_pick_blank_profiles=False,
                                 debug_trace=debug_trace,
                             )
                             _trace("retry-success", {"strategy": "auto-process-after-support-fallback"})
@@ -4231,6 +4249,7 @@ def _slice_stl_to_gcode(
                         process_overrides=normalized_process_overrides,
                         allow_support_override_fallback=False,
                         force_profile_runtime_compat=True,
+                        auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
                     )
                     _trace("retry-success", {"strategy": "forced-runtime-compat-override"})
@@ -4283,6 +4302,7 @@ def _slice_stl_to_gcode(
                         bed_depth_mm=normalized_bed_depth,
                         process_overrides=normalized_process_overrides,
                         allow_support_override_fallback=False,
+                        auto_pick_blank_profiles=False,
                         debug_trace=debug_trace,
                     )
                     _trace("retry-success", {"strategy": "auto-process-direct"})
@@ -4327,6 +4347,7 @@ def _slice_stl_to_gcode(
                                 bed_depth_mm=normalized_bed_depth,
                                 process_overrides=normalized_process_overrides,
                                 allow_support_override_fallback=False,
+                                auto_pick_blank_profiles=False,
                                 debug_trace=debug_trace,
                             )
                             _trace("retry-success", {"strategy": "auto-process-and-filament-direct"})
@@ -4428,6 +4449,97 @@ def _slice_debug_json_safe(value: Any, depth: int = 0) -> Any:
         return out_list
 
     return str(value)[:2000]
+
+
+def _slice_debug_collect_values_for_key(
+    node: Any,
+    key: str,
+    out: list[Any],
+    depth: int = 0,
+    max_items: int = 10,
+) -> None:
+    if len(out) >= max_items or depth > 10:
+        return
+    if isinstance(node, dict):
+        for current_key, current_value in node.items():
+            if str(current_key or "").strip() == key and len(out) < max_items:
+                out.append(_slice_debug_json_safe(current_value, depth=0))
+            if len(out) >= max_items:
+                return
+            if isinstance(current_value, (dict, list, tuple)):
+                _slice_debug_collect_values_for_key(current_value, key, out, depth + 1, max_items)
+                if len(out) >= max_items:
+                    return
+        return
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            if len(out) >= max_items:
+                return
+            if isinstance(item, (dict, list, tuple)):
+                _slice_debug_collect_values_for_key(item, key, out, depth + 1, max_items)
+
+
+def _slice_debug_profile_snapshot(profile_path: Path) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "path": str(profile_path),
+        "exists": bool(profile_path.exists() and profile_path.is_file()),
+    }
+    if not snapshot["exists"]:
+        return snapshot
+
+    payload = _read_profile_json_payload(profile_path)
+    if not isinstance(payload, dict):
+        snapshot["parse_error"] = "invalid-json-object"
+        return snapshot
+
+    snapshot["top_level_key_count"] = len(payload)
+    snapshot["top_level_keys"] = sorted([str(key) for key in payload.keys()])[:120]
+
+    meta_keys = (
+        "type",
+        "name",
+        "from",
+        "setting_id",
+        "printer_settings_id",
+        "print_settings_id",
+        "process_settings_id",
+        "filament_settings_id",
+        "inherits",
+        "compatible_printers",
+        "compatible_processes",
+        "compatible_filaments",
+    )
+    meta: dict[str, Any] = {}
+    for key in meta_keys:
+        if key in payload:
+            meta[key] = _slice_debug_json_safe(payload.get(key), depth=0)
+    if meta:
+        snapshot["meta"] = meta
+
+    interesting_keys = (
+        "extruder_count",
+        "different_extruder",
+        "new_printer_name",
+        "nozzle_volume_type",
+        "nozzle_diameter",
+        "nozzle_diameters",
+        "nozzle_size",
+        "nozzle_sizes",
+        "nozzle_flow_type",
+        "nozzle_flow_types",
+        "filament_type",
+        "filament_types",
+    )
+    interesting: dict[str, Any] = {}
+    for key in interesting_keys:
+        values: list[Any] = []
+        _slice_debug_collect_values_for_key(payload, key, values, depth=0, max_items=8)
+        if values:
+            interesting[key] = values
+    if interesting:
+        snapshot["interesting"] = interesting
+
+    return snapshot
 
 
 def _record_slice_debug_event(
