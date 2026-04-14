@@ -3315,19 +3315,18 @@ def _build_support_override_load_settings(
             return _coerce_process_override_value_like(source.get("extruder_count"), desired_count)
         return str(max(0, int(desired_count)))
 
-    def _typed_extruder_count_for_machine(desired_count: int) -> Any:
-        settings_container = _machine_settings_container()
-        for source in (settings_container, patched_machine_payload, machine_payload):
-            if not isinstance(source, dict) or "extruder_count" not in source:
-                continue
-            return _coerce_process_override_value_like(source.get("extruder_count"), desired_count)
-        return str(max(0, int(desired_count)))
-
     def _typed_nozzle_volume_type_for_process(desired_value: str) -> Any:
         return str(desired_value or "").strip()
 
-    def _typed_nozzle_volume_type_for_machine(desired_value: str) -> Any:
-        return str(desired_value or "").strip()
+    def _process_has_key(key: str) -> bool:
+        settings_container = _process_settings_container()
+        if isinstance(settings_container, dict) and key in settings_container:
+            return True
+        if key in patched_payload:
+            return True
+        if key in template_settings:
+            return True
+        return key in override_template_payload
 
     effective_nozzle_diameter_value = ",".join(user_nozzle_diameter_values) if user_nozzle_diameter_values else ""
     if not effective_nozzle_diameter_value:
@@ -3339,30 +3338,39 @@ def _build_support_override_load_settings(
 
     if detected_extruder_count > 0:
         _set_runtime_value("extruder_count", _typed_extruder_count_for_process(detected_extruder_count))
-        _set_machine_runtime_value("extruder_count", _typed_extruder_count_for_machine(detected_extruder_count))
 
-    for runtime_key in ("nozzle_volume_type", "different_extruder", "new_printer_name"):
+    if effective_nozzle_volume_type_value:
+        nozzle_volume_keys = [
+            key
+            for key in ("nozzle_volume_type", "default_nozzle_volume_type")
+            if _process_has_key(key)
+        ]
+        if not nozzle_volume_keys:
+            nozzle_volume_keys = ["nozzle_volume_type"]
+        for nozzle_volume_key in nozzle_volume_keys:
+            _set_runtime_value(
+                nozzle_volume_key,
+                _typed_nozzle_volume_type_for_process(effective_nozzle_volume_type_value),
+            )
+
+    for runtime_key in ("different_extruder", "new_printer_name"):
         settings_container = _process_settings_container()
         has_runtime_key = runtime_key in patched_payload or (isinstance(settings_container, dict) and runtime_key in settings_container)
-        if has_runtime_key and runtime_key != "nozzle_volume_type":
-            continue
-        if runtime_key == "nozzle_volume_type":
-            if effective_nozzle_volume_type_value:
-                _set_runtime_value(runtime_key, _typed_nozzle_volume_type_for_process(effective_nozzle_volume_type_value))
+        if has_runtime_key:
             continue
         if runtime_key in template_settings:
             _set_runtime_value(runtime_key, template_settings.get(runtime_key))
 
-    if effective_nozzle_volume_type_value:
-        _set_machine_runtime_value(
-            "nozzle_volume_type",
-            _typed_nozzle_volume_type_for_machine(effective_nozzle_volume_type_value),
-        )
-
     if effective_nozzle_diameter_value:
-        for key in ("nozzle_diameter", "nozzle_diameters", "nozzle_size", "nozzle_sizes"):
+        nozzle_diameter_keys = [
+            key
+            for key in ("nozzle_diameter", "nozzle_diameters")
+            if _process_has_key(key)
+        ]
+        if not nozzle_diameter_keys:
+            nozzle_diameter_keys = ["nozzle_diameter"]
+        for key in nozzle_diameter_keys:
             _set_runtime_value(key, effective_nozzle_diameter_value)
-            _set_machine_runtime_value(key, effective_nozzle_diameter_value)
 
     distinct_diameters = {v for v in user_nozzle_diameter_values if str(v or "").strip()}
     distinct_flows = {v for v in user_nozzle_flow_values if str(v or "").strip()}
@@ -3374,11 +3382,6 @@ def _build_support_override_load_settings(
         elif "different_extruder" in template_settings:
             desired = _profile_bool_setting_value(template_settings.get("different_extruder"), True)
             _set_runtime_value("different_extruder", desired)
-
-        if isinstance(patched_machine_payload, dict):
-            current_machine_diff = patched_machine_payload.get("different_extruder")
-            desired_machine = _profile_bool_setting_value(current_machine_diff, True)
-            _set_machine_runtime_value("different_extruder", desired_machine)
 
     changed = False
     if runtime_compat_changed:
