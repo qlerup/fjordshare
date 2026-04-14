@@ -20,7 +20,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 from flask import (
     Flask,
@@ -57,6 +57,7 @@ except Exception:
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data")).resolve()
 BAMBU_DIR = DATA_DIR / "bambu"
+BAMBU_SLICE_DEBUG_DIR = BAMBU_DIR / "slice-debug"
 UPLOAD_ROOT = DATA_DIR / "uploads"
 TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 THUMBS_DIR = DATA_DIR / "thumbs"
@@ -101,6 +102,8 @@ BAMBUSTUDIO_FILAMENT_PROFILES = str(os.getenv("BAMBUSTUDIO_FILAMENT_PROFILES", "
 BAMBUSTUDIO_LOAD_SETTINGS = str(os.getenv("BAMBUSTUDIO_LOAD_SETTINGS", "")).strip()
 BAMBUSTUDIO_LOAD_FILAMENTS = str(os.getenv("BAMBUSTUDIO_LOAD_FILAMENTS", "")).strip()
 BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK = str(os.getenv("BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK", "0")).strip().lower() in {"1", "true", "yes", "on"}
+BAMBUSTUDIO_SLICE_DEBUG_ALWAYS = str(os.getenv("BAMBUSTUDIO_SLICE_DEBUG_ALWAYS", "0")).strip().lower() in {"1", "true", "yes", "on"}
+BAMBUSTUDIO_SLICE_DEBUG_MAX_EVENTS = 400
 SLICER_PRINTER_BED_MAP_SETTING_KEY = "slicer_printer_bed_map_v1"
 SLICER_PRINTER_BED_HIDDEN_SETTING_KEY = "slicer_printer_bed_hidden_v1"
 try:
@@ -3617,12 +3620,16 @@ def _slice_stl_to_gcode(
     process_overrides: Optional[dict[str, Any]] = None,
     allow_support_override_fallback: bool = True,
     force_profile_runtime_compat: bool = False,
+    debug_trace: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
 
     executable = _resolve_bambustudio_executable()
     legacy_cmd = [executable]
+    _trace: Callable[[str, Optional[dict[str, Any]]], None] = (
+        lambda event, data=None: _record_slice_debug_event(debug_trace, event, data)
+    )
 
     effective_config_path = _effective_bambustudio_config_path()
     if effective_config_path:
@@ -3655,6 +3662,36 @@ def _slice_stl_to_gcode(
         normalized_support_type = ""
         normalized_support_style = ""
 
+    _trace(
+        "slice-input-normalized",
+        {
+            "input_stl": str(input_stl),
+            "output_gcode": str(output_gcode),
+            "executable": executable,
+            "printer_profile": printer_profile_value,
+            "print_profile": print_profile_value,
+            "filament_profile": filament_profile_value,
+            "rotation_x_degrees": rotation_x_degrees,
+            "rotation_y_degrees": rotation_y_degrees,
+            "rotation_z_degrees": rotation_z_degrees,
+            "lift_z_mm": normalized_lift_z,
+            "support_mode": normalized_support_mode,
+            "support_type": normalized_support_type,
+            "support_style": normalized_support_style,
+            "nozzle_left_diameter": normalized_nozzle_left_diameter,
+            "nozzle_right_diameter": normalized_nozzle_right_diameter,
+            "nozzle_left_flow": normalized_nozzle_left_flow,
+            "nozzle_right_flow": normalized_nozzle_right_flow,
+            "bed_width_mm": bed_width_mm,
+            "bed_depth_mm": bed_depth_mm,
+            "normalized_bed_width_mm": _normalize_bed_size_mm(bed_width_mm),
+            "normalized_bed_depth_mm": _normalize_bed_size_mm(bed_depth_mm),
+            "process_overrides_count": len(normalized_process_overrides),
+            "allow_support_override_fallback": bool(allow_support_override_fallback),
+            "force_profile_runtime_compat": bool(force_profile_runtime_compat),
+        },
+    )
+
     if printer_profile_value:
         legacy_cmd.extend(["--printer-profile", printer_profile_value])
     if print_profile_value:
@@ -3676,6 +3713,13 @@ def _slice_stl_to_gcode(
         or bool(force_profile_runtime_compat)
     )
     legacy_allowed = not support_override_requested
+    _trace(
+        "support-override-check",
+        {
+            "support_override_requested": bool(support_override_requested),
+            "legacy_allowed": bool(legacy_allowed),
+        },
+    )
     if support_override_requested:
         (
             support_load_settings_override,
@@ -3699,6 +3743,14 @@ def _slice_stl_to_gcode(
         )
         if support_override_files:
             temp_profile_overrides.extend(support_override_files)
+        _trace(
+            "support-override-built",
+            {
+                "support_load_settings_override": support_load_settings_override,
+                "support_override_files": [str(path) for path in support_override_files],
+                "support_override_error": support_override_error,
+            },
+        )
         if support_override_error:
             raise RuntimeError(f"Support-override fejl: {support_override_error}")
 
@@ -3723,6 +3775,14 @@ def _slice_stl_to_gcode(
                         normalized_bed_depth = _normalize_bed_size_mm(detected_bed[1])
         except Exception:
             pass
+
+    _trace(
+        "bed-size-effective",
+        {
+            "effective_bed_width_mm": normalized_bed_width,
+            "effective_bed_depth_mm": normalized_bed_depth,
+        },
+    )
 
     requested_transform = (
         abs(float(rotation_x_degrees or 0.0)) >= 1e-6
@@ -3777,6 +3837,20 @@ def _slice_stl_to_gcode(
     else:
         slice_input_candidates.append(("original", input_stl))
 
+    _trace(
+        "slice-input-candidates",
+        {
+            "requested_transform": bool(requested_transform),
+            "candidates": [
+                {
+                    "label": label,
+                    "path": str(path),
+                }
+                for label, path in slice_input_candidates
+            ],
+        },
+    )
+
     try:
         modern_profile_args = _build_modern_profile_args(
             executable,
@@ -3797,6 +3871,16 @@ def _slice_stl_to_gcode(
             load_settings_override=support_load_settings_override,
         )
         fallback_base = [executable, "--slice", "0", *fallback_profile_args]
+        _trace(
+            "profile-args-built",
+            {
+                "modern_profile_args": modern_profile_args,
+                "fallback_profile_args": fallback_profile_args,
+                "fallback_enabled": bool(
+                    BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK and fallback_profile_args != modern_profile_args
+                ),
+            },
+        )
 
         temp_3mf = output_gcode.with_suffix(".gcode.3mf")
         def _build_attempts(slice_input_path: Path) -> list[tuple[str, list[str], str]]:
@@ -3876,6 +3960,21 @@ def _slice_stl_to_gcode(
 
         for candidate_label, candidate_input in slice_input_candidates:
             attempts = _build_attempts(candidate_input)
+            _trace(
+                "attempt-batch",
+                {
+                    "candidate_label": candidate_label,
+                    "candidate_input": str(candidate_input),
+                    "attempts": [
+                        {
+                            "label": attempt_label,
+                            "mode": attempt_mode,
+                            "cmd": attempt_cmd,
+                        }
+                        for attempt_label, attempt_cmd, attempt_mode in attempts
+                    ],
+                },
+            )
             for label, cmd, mode in attempts:
                 try:
                     output_gcode.unlink(missing_ok=True)
@@ -3883,11 +3982,54 @@ def _slice_stl_to_gcode(
                 except Exception:
                     pass
 
+                _trace(
+                    "attempt-start",
+                    {
+                        "candidate_label": candidate_label,
+                        "attempt_label": label,
+                        "mode": mode,
+                        "cmd": cmd,
+                    },
+                )
                 proc, details = _run_bambu_with_runtime_fallback(cmd, executable)
                 details = details.strip()
+                _trace(
+                    "attempt-result",
+                    {
+                        "candidate_label": candidate_label,
+                        "attempt_label": label,
+                        "mode": mode,
+                        "returncode": int(proc.returncode),
+                        "details": details,
+                    },
+                )
 
                 if proc.returncode != 0:
                     details_lower = details.lower()
+                    legacy_profile_option_unsupported = (
+                        label.startswith("legacy-")
+                        and any(
+                            token in details_lower
+                            for token in (
+                                "invalid option --printer-profile",
+                                "invalid option --printer_profile",
+                                "invalid option --print-profile",
+                                "invalid option --print_profile",
+                                "invalid option --filament-profile",
+                                "invalid option --filament_profile",
+                            )
+                        )
+                    )
+                    if legacy_profile_option_unsupported:
+                        _trace(
+                            "legacy-profile-option-unsupported",
+                            {
+                                "candidate_label": candidate_label,
+                                "attempt_label": label,
+                                "details": details,
+                            },
+                        )
+                        continue
                     if "libsoup2 symbols detected" in details_lower and "libsoup3" in details_lower:
                         raise RuntimeError(
                             "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
@@ -3901,6 +4043,15 @@ def _slice_stl_to_gcode(
 
                 if mode == "gcode":
                     if output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0:
+                        _trace(
+                            "slice-success",
+                            {
+                                "source": f"{candidate_label}/{label}",
+                                "mode": mode,
+                                "output_gcode": str(output_gcode),
+                                "output_bytes": int(output_gcode.stat().st_size),
+                            },
+                        )
                         return
                     errors.append(f"{candidate_label}/{label}: kommandoen kørte men lavede ingen G-code output")
                     continue
@@ -3910,6 +4061,16 @@ def _slice_stl_to_gcode(
                         temp_3mf.unlink(missing_ok=True)
                     except Exception:
                         pass
+                    _trace(
+                        "slice-success",
+                        {
+                            "source": f"{candidate_label}/{label}",
+                            "mode": mode,
+                            "output_gcode": str(output_gcode),
+                            "output_bytes": int(output_gcode.stat().st_size) if output_gcode.exists() else 0,
+                            "source_3mf": str(temp_3mf),
+                        },
+                    )
                     return
 
                 if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
@@ -3937,6 +4098,13 @@ def _slice_stl_to_gcode(
                 and has_nozzle_setup_error
             )
             if should_retry_without_support_override:
+                _trace(
+                    "retry-start",
+                    {
+                        "strategy": "without-support-override",
+                        "reason": "nozzle/setup params error with support override",
+                    },
+                )
                 try:
                     _slice_stl_to_gcode(
                         input_stl,
@@ -3960,15 +4128,31 @@ def _slice_stl_to_gcode(
                         process_overrides=normalized_process_overrides,
                         allow_support_override_fallback=False,
                         force_profile_runtime_compat=force_profile_runtime_compat,
+                        debug_trace=debug_trace,
                     )
+                    _trace("retry-success", {"strategy": "without-support-override"})
                     return
                 except Exception as retry_exc:
                     retry_text = str(retry_exc)
+                    _trace(
+                        "retry-failed",
+                        {
+                            "strategy": "without-support-override",
+                            "error": retry_text,
+                        },
+                    )
                     errors.append(f"support-override-fallback: {retry_text[:350]}")
 
                     # Final compatibility fallback for H2D-style nozzle/profile mismatches:
                     # retry with auto process selection (empty print profile).
                     if print_profile_value and "nozzle_volume_type not found" in retry_text.lower():
+                        _trace(
+                            "retry-start",
+                            {
+                                "strategy": "auto-process-after-support-fallback",
+                                "reason": "nozzle_volume_type not found after support fallback",
+                            },
+                        )
                         try:
                             _slice_stl_to_gcode(
                                 input_stl,
@@ -3992,9 +4176,18 @@ def _slice_stl_to_gcode(
                                 process_overrides=normalized_process_overrides,
                                 allow_support_override_fallback=False,
                                 force_profile_runtime_compat=force_profile_runtime_compat,
+                                debug_trace=debug_trace,
                             )
+                            _trace("retry-success", {"strategy": "auto-process-after-support-fallback"})
                             return
                         except Exception as retry2_exc:
+                            _trace(
+                                "retry-failed",
+                                {
+                                    "strategy": "auto-process-after-support-fallback",
+                                    "error": str(retry2_exc),
+                                },
+                            )
                             errors.append(f"process-auto-fallback: {str(retry2_exc)[:350]}")
 
             # If no explicit support/nozzle override file was used, force one
@@ -4008,6 +4201,13 @@ def _slice_stl_to_gcode(
                 and bool(print_profile_value)
             )
             if should_retry_with_forced_compat_override:
+                _trace(
+                    "retry-start",
+                    {
+                        "strategy": "forced-runtime-compat-override",
+                        "reason": "nozzle/setup params error without support override",
+                    },
+                )
                 try:
                     _slice_stl_to_gcode(
                         input_stl,
@@ -4031,9 +4231,18 @@ def _slice_stl_to_gcode(
                         process_overrides=normalized_process_overrides,
                         allow_support_override_fallback=False,
                         force_profile_runtime_compat=True,
+                        debug_trace=debug_trace,
                     )
+                    _trace("retry-success", {"strategy": "forced-runtime-compat-override"})
                     return
                 except Exception as retry_force_compat_exc:
+                    _trace(
+                        "retry-failed",
+                        {
+                            "strategy": "forced-runtime-compat-override",
+                            "error": str(retry_force_compat_exc),
+                        },
+                    )
                     errors.append(f"compat-runtime-override-fallback: {str(retry_force_compat_exc)[:350]}")
 
             # Compatibility fallback even when no explicit support/nozzle override
@@ -4045,6 +4254,13 @@ def _slice_stl_to_gcode(
                 and bool(print_profile_value)
             )
             if should_retry_process_auto:
+                _trace(
+                    "retry-start",
+                    {
+                        "strategy": "auto-process-direct",
+                        "reason": "nozzle/setup params error with explicit process profile",
+                    },
+                )
                 try:
                     _slice_stl_to_gcode(
                         input_stl,
@@ -4067,12 +4283,28 @@ def _slice_stl_to_gcode(
                         bed_depth_mm=normalized_bed_depth,
                         process_overrides=normalized_process_overrides,
                         allow_support_override_fallback=False,
+                        debug_trace=debug_trace,
                     )
+                    _trace("retry-success", {"strategy": "auto-process-direct"})
                     return
                 except Exception as retry_process_auto_exc:
                     retry_process_auto_text = str(retry_process_auto_exc)
+                    _trace(
+                        "retry-failed",
+                        {
+                            "strategy": "auto-process-direct",
+                            "error": retry_process_auto_text,
+                        },
+                    )
                     errors.append(f"process-auto-direct-fallback: {retry_process_auto_text[:350]}")
                     if filament_profile_value and has_nozzle_setup_error:
+                        _trace(
+                            "retry-start",
+                            {
+                                "strategy": "auto-process-and-filament-direct",
+                                "reason": "auto-process retry failed while filament was explicit",
+                            },
+                        )
                         try:
                             _slice_stl_to_gcode(
                                 input_stl,
@@ -4095,9 +4327,18 @@ def _slice_stl_to_gcode(
                                 bed_depth_mm=normalized_bed_depth,
                                 process_overrides=normalized_process_overrides,
                                 allow_support_override_fallback=False,
+                                debug_trace=debug_trace,
                             )
+                            _trace("retry-success", {"strategy": "auto-process-and-filament-direct"})
                             return
                         except Exception as retry_process_filament_auto_exc:
+                            _trace(
+                                "retry-failed",
+                                {
+                                    "strategy": "auto-process-and-filament-direct",
+                                    "error": str(retry_process_filament_auto_exc),
+                                },
+                            )
                             errors.append(
                                 f"process+filament-auto-fallback: {str(retry_process_filament_auto_exc)[:350]}"
                             )
@@ -4111,6 +4352,13 @@ def _slice_stl_to_gcode(
                 guidance += " | STL blev auto-centreret, men objektet er stadig udenfor pladen eller inkompatibelt med valgt profil."
                 if attempted_corner_origin:
                     guidance += " Forsøgte både center-origin og corner-origin placering."
+            _trace(
+                "slice-failed",
+                {
+                    "errors": errors,
+                    "guidance": guidance,
+                },
+            )
             raise RuntimeError(f"BambuStudio fejl: {(' | '.join(errors) + guidance)[:1000]}")
 
         if not output_gcode.exists() or not output_gcode.is_file() or output_gcode.stat().st_size <= 0:
@@ -4145,6 +4393,74 @@ def _archive_completed_slice_output(output_gcode: Path) -> Optional[Path]:
         return None
 
 
+def _slice_debug_json_safe(value: Any, depth: int = 0) -> Any:
+    if depth > 8:
+        return "<max-depth>"
+
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if isinstance(value, str):
+        if len(value) <= 4000:
+            return value
+        return f"{value[:4000]}...<truncated {len(value) - 4000} chars>"
+
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for idx, (key, item) in enumerate(value.items()):
+            if idx >= 200:
+                out["__truncated_items__"] = max(0, len(value) - idx)
+                break
+            out[str(key)[:200]] = _slice_debug_json_safe(item, depth + 1)
+        return out
+
+    if isinstance(value, (list, tuple, set)):
+        seq = list(value)
+        out_list: list[Any] = []
+        for idx, item in enumerate(seq):
+            if idx >= 250:
+                out_list.append(f"... <truncated {len(seq) - idx} items>")
+                break
+            out_list.append(_slice_debug_json_safe(item, depth + 1))
+        return out_list
+
+    return str(value)[:2000]
+
+
+def _record_slice_debug_event(
+    trace: Optional[list[dict[str, Any]]],
+    event: str,
+    data: Optional[dict[str, Any]] = None,
+) -> None:
+    if trace is None:
+        return
+    try:
+        safe_event = str(event or "").strip()[:120] or "event"
+        entry: dict[str, Any] = {"ts": now_iso(), "event": safe_event}
+        if data:
+            entry["data"] = _slice_debug_json_safe(data)
+        trace.append(entry)
+        if len(trace) > BAMBUSTUDIO_SLICE_DEBUG_MAX_EVENTS:
+            del trace[: len(trace) - BAMBUSTUDIO_SLICE_DEBUG_MAX_EVENTS]
+    except Exception:
+        pass
+
+
+def _write_slice_debug_record(file_id: int, payload: dict[str, Any]) -> Optional[Path]:
+    try:
+        BAMBU_SLICE_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        target = BAMBU_SLICE_DEBUG_DIR / f"slice-debug-{stamp}-file-{max(0, int(file_id))}.json"
+        safe_payload = _slice_debug_json_safe(payload)
+        target.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return target
+    except Exception:
+        return None
+
+
 def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     file_id = int(payload.get("file_id") or 0)
     requested_by = str(payload.get("requested_by") or "").strip()
@@ -4169,6 +4485,35 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     bed_width_mm = _normalize_bed_size_mm(payload.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(payload.get("bed_depth_mm"))
     process_overrides = _normalize_slice_process_overrides(payload.get("process_overrides"))
+    slice_debug_trace: list[dict[str, Any]] = []
+    slice_error_text = ""
+    folder_path = ""
+    target_name = ""
+    _record_slice_debug_event(
+        slice_debug_trace,
+        "worker-payload",
+        {
+            "file_id": file_id,
+            "requested_by": requested_by,
+            "printer_profile": printer_profile,
+            "print_profile": print_profile,
+            "filament_profile": filament_profile,
+            "support_mode": support_mode,
+            "support_type": support_type,
+            "support_style": support_style,
+            "nozzle_left_diameter": nozzle_left_diameter,
+            "nozzle_right_diameter": nozzle_right_diameter,
+            "nozzle_left_flow": nozzle_left_flow,
+            "nozzle_right_flow": nozzle_right_flow,
+            "rotation_x_degrees": rotation_x_degrees,
+            "rotation_y_degrees": rotation_y_degrees,
+            "rotation_z_degrees": rotation_z_degrees,
+            "lift_z_mm": lift_z_mm,
+            "bed_width_mm": bed_width_mm,
+            "bed_depth_mm": bed_depth_mm,
+            "process_overrides": process_overrides,
+        },
+    )
     if file_id <= 0:
         return
 
@@ -4176,10 +4521,30 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
         row = conn.execute("SELECT * FROM files WHERE id=?", (file_id,)).fetchone()
 
     if row is None:
+        _record_slice_debug_event(slice_debug_trace, "worker-file-missing", {"file_id": file_id})
         return
+
+    folder_path = normalize_folder_path(str(row["folder_path"] or ""))
+    target_name = str(row["filename"] or "")
+    _record_slice_debug_event(
+        slice_debug_trace,
+        "worker-file-row",
+        {
+            "folder_path": folder_path,
+            "filename": target_name,
+            "ext": str(row["ext"] or "").lower(),
+        },
+    )
 
     ext = str(row["ext"] or "").lower()
     if not _supports_slicing_for_ext(ext):
+        _record_slice_debug_event(
+            slice_debug_trace,
+            "worker-invalid-ext",
+            {
+                "ext": ext,
+            },
+        )
         _set_file_slice_state(file_id, "error", "Slicing understøtter kun STL", actor=requested_by or "system")
         return
 
@@ -4188,11 +4553,18 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     output_path: Optional[Path] = None
     try:
         source_path = file_disk_path(row)
-        folder_path = normalize_folder_path(str(row["folder_path"] or ""))
         _, folder_abs = folder_abs_path(folder_path)
         base_name = Path(str(row["filename"] or "model.stl")).stem
         gcode_name = sanitize_filename(f"{base_name}.gcode")
         output_path = allocate_unique_target(folder_abs, gcode_name)
+        _record_slice_debug_event(
+            slice_debug_trace,
+            "worker-slice-start",
+            {
+                "source_path": str(source_path),
+                "output_path": str(output_path),
+            },
+        )
 
         _slice_stl_to_gcode(
             source_path,
@@ -4214,6 +4586,15 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             bed_width_mm=bed_width_mm,
             bed_depth_mm=bed_depth_mm,
             process_overrides=process_overrides,
+            debug_trace=slice_debug_trace,
+        )
+        _record_slice_debug_event(
+            slice_debug_trace,
+            "worker-slice-complete",
+            {
+                "output_path": str(output_path),
+                "output_bytes": int(output_path.stat().st_size) if output_path.exists() else 0,
+            },
         )
 
         creator = requested_by or str(row["uploaded_by"] or "slicer")
@@ -4243,12 +4624,49 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
 
         _set_file_slice_state(file_id, "ready", "", actor=requested_by or "system")
     except Exception as exc:
+        slice_error_text = str(exc)
+        _record_slice_debug_event(
+            slice_debug_trace,
+            "worker-slice-error",
+            {
+                "error": slice_error_text,
+            },
+        )
         try:
             if output_path and output_path.exists() and output_path.is_file():
                 output_path.unlink(missing_ok=True)
         except Exception:
             pass
-        _set_file_slice_state(file_id, "error", str(exc), actor=requested_by or "system")
+        _set_file_slice_state(file_id, "error", slice_error_text, actor=requested_by or "system")
+    finally:
+        should_write_debug = bool(slice_error_text) or BAMBUSTUDIO_SLICE_DEBUG_ALWAYS
+        if should_write_debug:
+            debug_payload = {
+                "file_id": file_id,
+                "requested_by": requested_by,
+                "status": "error" if slice_error_text else "ready",
+                "error": slice_error_text,
+                "folder_path": folder_path,
+                "target": target_name,
+                "trace": slice_debug_trace,
+            }
+            debug_path = _write_slice_debug_record(file_id, debug_payload)
+            if debug_path is not None:
+                rel_path = str(debug_path)
+                try:
+                    rel_path = str(debug_path.relative_to(DATA_DIR)).replace("\\", "/")
+                except Exception:
+                    pass
+                log_activity(
+                    kind="slice",
+                    action="debug",
+                    message=f"Slice debug gemt ({rel_path})",
+                    level="warn" if slice_error_text else "info",
+                    folder_path=folder_path,
+                    target=target_name,
+                    actor=requested_by or "system",
+                    file_id=file_id,
+                )
 
 
 def _slice_worker_loop() -> None:
