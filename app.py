@@ -2861,6 +2861,17 @@ def _normalize_slice_nozzle_flow(value: Any) -> str:
     return normalized if normalized in {"", "standard", "high_flow"} else ""
 
 
+def _normalize_slice_print_nozzle(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return ""
+    if normalized in {"left", "venstre", "l", "1"}:
+        return "left"
+    if normalized in {"right", "hojre", "højre", "r", "2"}:
+        return "right"
+    return ""
+
+
 def _normalize_slice_process_overrides(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
@@ -7430,6 +7441,7 @@ def api_file_slice(file_id: int):
     nozzle_right_diameter = _normalize_slice_nozzle_diameter(body.get("nozzle_right_diameter"))
     nozzle_left_flow = _normalize_slice_nozzle_flow(body.get("nozzle_left_flow"))
     nozzle_right_flow = _normalize_slice_nozzle_flow(body.get("nozzle_right_flow"))
+    print_nozzle = _normalize_slice_print_nozzle(body.get("print_nozzle"))
     if support_mode == "off":
         support_type = ""
         support_style = ""
@@ -7441,6 +7453,9 @@ def api_file_slice(file_id: int):
     bed_width_mm = _normalize_bed_size_mm(body.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(body.get("bed_depth_mm"))
     process_overrides = _normalize_slice_process_overrides(body.get("process_overrides"))
+    if print_nozzle:
+        process_overrides = dict(process_overrides)
+        process_overrides["print_extruder_id"] = 2 if print_nozzle == "right" else 1
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -7497,6 +7512,8 @@ def api_file_slice(file_id: int):
             f"R={nozzle_right_diameter or 'auto'}/{nozzle_right_flow or 'auto'}",
         ]
         profile_details.append(f"nozzle({' '.join(nozzle_txt)})")
+    if print_nozzle:
+        profile_details.append(f"print_nozzle={print_nozzle}")
     if bed_width_mm > 0.0 and bed_depth_mm > 0.0:
         profile_details.append(f"bed={bed_width_mm}x{bed_depth_mm}mm")
     if process_overrides:
@@ -7550,6 +7567,7 @@ def api_file_slice(file_id: int):
                 "nozzle_right_diameter": nozzle_right_diameter,
                 "nozzle_left_flow": nozzle_left_flow,
                 "nozzle_right_flow": nozzle_right_flow,
+                "print_nozzle": print_nozzle,
                 "rotation_x_degrees": rotation_x_degrees,
                 "rotation_y_degrees": rotation_y_degrees,
                 "rotation_z_degrees": rotation_z_degrees,

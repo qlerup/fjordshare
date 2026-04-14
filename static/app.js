@@ -37,6 +37,7 @@
     sliceProcessSettingsOptions: {},
     sliceProcessSettingsOverrides: {},
     sliceProcessSettingsLoadToken: 0,
+    sliceNozzlePickResolver: null,
     currentSlicerUploadKind: "",
     currentSlicerUploadFiles: [],
     slicerBedMapHiddenNames: new Set(),
@@ -52,6 +53,7 @@
       nozzle_right_diameter: DEFAULT_SLICE_NOZZLE_DIAMETER,
       nozzle_left_flow: DEFAULT_SLICE_NOZZLE_FLOW,
       nozzle_right_flow: DEFAULT_SLICE_NOZZLE_FLOW,
+      print_nozzle: "",
       rotation_x_degrees: 0,
       rotation_y_degrees: 0,
       rotation_z_degrees: 0,
@@ -165,6 +167,11 @@
     sliceModalCloseBtn: document.getElementById("sliceModalCloseBtn"),
     sliceModalCancelBtn: document.getElementById("sliceModalCancelBtn"),
     sliceModalStartBtn: document.getElementById("sliceModalStartBtn"),
+    sliceNozzlePickModal: document.getElementById("sliceNozzlePickModal"),
+    sliceNozzlePickCloseBtn: document.getElementById("sliceNozzlePickCloseBtn"),
+    sliceNozzlePickCancelBtn: document.getElementById("sliceNozzlePickCancelBtn"),
+    sliceNozzlePickLeftBtn: document.getElementById("sliceNozzlePickLeftBtn"),
+    sliceNozzlePickRightBtn: document.getElementById("sliceNozzlePickRightBtn"),
     sliceModalFileName: document.getElementById("sliceModalFileName"),
     sliceModalStatus: document.getElementById("sliceModalStatus"),
     slicePrinterSelect: document.getElementById("slicePrinterSelect"),
@@ -1848,6 +1855,14 @@
     const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
     if (normalized === "normal") return "standard";
     return SLICE_NOZZLE_FLOW_VALUES.has(normalized) ? normalized : "";
+  }
+
+  function normalizeSlicePrintNozzle(value) {
+    const normalized = String(value || "").trim().toLowerCase().replace(/\s+/g, "_").replace(/-/g, "_");
+    if (!normalized) return "";
+    if (normalized === "left" || normalized === "venstre" || normalized === "l" || normalized === "1") return "left";
+    if (normalized === "right" || normalized === "hojre" || normalized === "højre" || normalized === "r" || normalized === "2") return "right";
+    return "";
   }
 
   function clampSliceBedSizeMm(value, fallback = 0) {
@@ -5036,6 +5051,7 @@
   }
 
   function closeSliceModal() {
+    settleSliceNozzlePick("");
     state.slicePreviewLoadToken += 1;
     clearSlicePreview();
     state.currentSliceFileId = 0;
@@ -5075,6 +5091,41 @@
     setSlicePreviewHeight("Model Z: -");
     showStatus(els.sliceModalStatus, "");
     if (els.sliceModal) els.sliceModal.classList.add("hidden");
+  }
+
+  function closeSliceNozzlePickModal() {
+    if (els.sliceNozzlePickModal) els.sliceNozzlePickModal.classList.add("hidden");
+  }
+
+  function settleSliceNozzlePick(value = "") {
+    const normalized = normalizeSlicePrintNozzle(value);
+    const resolver = typeof state.sliceNozzlePickResolver === "function" ? state.sliceNozzlePickResolver : null;
+    state.sliceNozzlePickResolver = null;
+    closeSliceNozzlePickModal();
+    if (resolver) resolver(normalized);
+  }
+
+  function promptSliceNozzlePick(defaultNozzle = "") {
+    const normalizedDefault = normalizeSlicePrintNozzle(defaultNozzle);
+    if (!els.sliceNozzlePickModal) {
+      return Promise.resolve(normalizedDefault || "left");
+    }
+    if (typeof state.sliceNozzlePickResolver === "function") {
+      try {
+        state.sliceNozzlePickResolver("");
+      } catch (_) {
+      }
+      state.sliceNozzlePickResolver = null;
+    }
+    els.sliceNozzlePickModal.classList.remove("hidden");
+    if (normalizedDefault === "right" && els.sliceNozzlePickRightBtn) {
+      els.sliceNozzlePickRightBtn.focus();
+    } else if (els.sliceNozzlePickLeftBtn) {
+      els.sliceNozzlePickLeftBtn.focus();
+    }
+    return new Promise((resolve) => {
+      state.sliceNozzlePickResolver = resolve;
+    });
   }
 
   async function openSliceModal(fileId) {
@@ -5243,6 +5294,7 @@
     const nozzle_right_diameter = normalizeSliceNozzleDiameter((els.sliceNozzleRightDiameterSelect && els.sliceNozzleRightDiameterSelect.value) || "");
     const nozzle_left_flow = normalizeSliceNozzleFlow((els.sliceNozzleLeftFlowSelect && els.sliceNozzleLeftFlowSelect.value) || "");
     const nozzle_right_flow = normalizeSliceNozzleFlow((els.sliceNozzleRightFlowSelect && els.sliceNozzleRightFlowSelect.value) || "");
+    const print_nozzle = normalizeSlicePrintNozzle(state.lastSliceSelection && state.lastSliceSelection.print_nozzle);
     const rotation = currentSliceRotation();
     const bed = resolveSelectedSliceBedSize();
     const settingsOverrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
@@ -5287,6 +5339,7 @@
       nozzle_right_diameter,
       nozzle_left_flow,
       nozzle_right_flow,
+      print_nozzle,
       rotation_x_degrees: rotation.x,
       rotation_y_degrees: rotation.y,
       rotation_z_degrees: rotation.z,
@@ -5528,15 +5581,20 @@
     const nozzleRightDiameter = normalizeSliceNozzleDiameter(profiles.nozzle_right_diameter || "");
     const nozzleLeftFlow = normalizeSliceNozzleFlow(profiles.nozzle_left_flow || "");
     const nozzleRightFlow = normalizeSliceNozzleFlow(profiles.nozzle_right_flow || "");
+    const printNozzle = normalizeSlicePrintNozzle(profiles.print_nozzle || "");
     const rotationX = clampSliceRotationDeg(profiles.rotation_x_degrees);
     const rotationY = clampSliceRotationDeg(profiles.rotation_y_degrees);
     const rotationZ = clampSliceRotationDeg(profiles.rotation_z_degrees);
     const liftZ = clampSliceLiftMm(profiles.lift_z_mm, 0);
     const bedWidth = clampSliceBedSizeMm(profiles.bed_width_mm, 0);
     const bedDepth = clampSliceBedSizeMm(profiles.bed_depth_mm, 0);
-    const processOverrides = profiles.process_overrides && typeof profiles.process_overrides === "object"
+    const processOverridesRaw = profiles.process_overrides && typeof profiles.process_overrides === "object"
       ? normalizeSliceProcessSettingsMap(profiles.process_overrides)
       : {};
+    const processOverrides = { ...processOverridesRaw };
+    if (printNozzle) {
+      processOverrides.print_extruder_id = printNozzle === "right" ? 2 : 1;
+    }
     if (printerProfile) body.printer_profile = printerProfile;
     if (printProfile) body.print_profile = printProfile;
     if (filamentProfile) body.filament_profile = filamentProfile;
@@ -5547,6 +5605,7 @@
     if (nozzleRightDiameter) body.nozzle_right_diameter = nozzleRightDiameter;
     if (nozzleLeftFlow) body.nozzle_left_flow = nozzleLeftFlow;
     if (nozzleRightFlow) body.nozzle_right_flow = nozzleRightFlow;
+    if (printNozzle) body.print_nozzle = printNozzle;
     body.rotation_x_degrees = rotationX;
     body.rotation_y_degrees = rotationY;
     body.rotation_z_degrees = rotationZ;
@@ -9579,7 +9638,7 @@
     updateSliceToolUi();
 
     if (els.sliceModalStartBtn) {
-      els.sliceModalStartBtn.addEventListener("click", () => {
+      els.sliceModalStartBtn.addEventListener("click", async () => {
         const id = Number(state.currentSliceFileId || state.currentInfoFileId || 0);
         if (!id) return;
         let profiles = null;
@@ -9589,39 +9648,53 @@
           showStatus(els.sliceModalStatus, (err && err.message) || "Ugyldige process-indstillinger", "error");
           return;
         }
-        state.lastSliceSelection = {
-          printer_profile: String(profiles.printer_profile || ""),
-          print_profile: String(profiles.print_profile || ""),
-          filament_profile: String(profiles.filament_profile || ""),
-          support_mode: String(profiles.support_mode || "auto"),
-          support_type: String(profiles.support_type || ""),
-          support_style: String(profiles.support_style || ""),
-          nozzle_left_diameter: normalizeSliceNozzleDiameter(profiles.nozzle_left_diameter || ""),
-          nozzle_right_diameter: normalizeSliceNozzleDiameter(profiles.nozzle_right_diameter || ""),
-          nozzle_left_flow: normalizeSliceNozzleFlow(profiles.nozzle_left_flow || ""),
-          nozzle_right_flow: normalizeSliceNozzleFlow(profiles.nozzle_right_flow || ""),
-          rotation_x_degrees: clampSliceRotationDeg(profiles.rotation_x_degrees || 0),
-          rotation_y_degrees: clampSliceRotationDeg(profiles.rotation_y_degrees || 0),
-          rotation_z_degrees: clampSliceRotationDeg(profiles.rotation_z_degrees || 0),
-          lift_z_mm: clampSliceLiftMm(profiles.lift_z_mm, 0),
-          process_overrides: profiles.process_overrides && typeof profiles.process_overrides === "object"
-            ? normalizeSliceProcessSettingsMap(profiles.process_overrides)
-            : {},
-        };
-
         els.sliceModalStartBtn.disabled = true;
-        showStatus(els.sliceModalStatus, "Starter slicing...", "ok");
+        try {
+          const pickedNozzle = await promptSliceNozzlePick(
+            normalizeSlicePrintNozzle(state.lastSliceSelection && state.lastSliceSelection.print_nozzle)
+          );
+          if (!pickedNozzle) {
+            showStatus(els.sliceModalStatus, "Slicing annulleret: vælg venstre eller højre nozzle.", "error");
+            return;
+          }
 
-        sliceFileById(id, profiles)
-          .then(() => {
-            closeSliceModal();
-          })
-          .catch((err) => {
-            showStatus(els.sliceModalStatus, err.message || "Kunne ikke starte slicing", "error");
-          })
-          .finally(() => {
-            if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
-          });
+          const normalizedProcessOverrides = profiles.process_overrides && typeof profiles.process_overrides === "object"
+            ? normalizeSliceProcessSettingsMap(profiles.process_overrides)
+            : {};
+          normalizedProcessOverrides.print_extruder_id = pickedNozzle === "right" ? 2 : 1;
+          profiles = {
+            ...profiles,
+            print_nozzle: pickedNozzle,
+            process_overrides: normalizedProcessOverrides,
+          };
+
+          state.lastSliceSelection = {
+            printer_profile: String(profiles.printer_profile || ""),
+            print_profile: String(profiles.print_profile || ""),
+            filament_profile: String(profiles.filament_profile || ""),
+            support_mode: String(profiles.support_mode || "auto"),
+            support_type: String(profiles.support_type || ""),
+            support_style: String(profiles.support_style || ""),
+            nozzle_left_diameter: normalizeSliceNozzleDiameter(profiles.nozzle_left_diameter || ""),
+            nozzle_right_diameter: normalizeSliceNozzleDiameter(profiles.nozzle_right_diameter || ""),
+            nozzle_left_flow: normalizeSliceNozzleFlow(profiles.nozzle_left_flow || ""),
+            nozzle_right_flow: normalizeSliceNozzleFlow(profiles.nozzle_right_flow || ""),
+            print_nozzle: pickedNozzle,
+            rotation_x_degrees: clampSliceRotationDeg(profiles.rotation_x_degrees || 0),
+            rotation_y_degrees: clampSliceRotationDeg(profiles.rotation_y_degrees || 0),
+            rotation_z_degrees: clampSliceRotationDeg(profiles.rotation_z_degrees || 0),
+            lift_z_mm: clampSliceLiftMm(profiles.lift_z_mm, 0),
+            process_overrides: normalizedProcessOverrides,
+          };
+
+          showStatus(els.sliceModalStatus, "Starter slicing...", "ok");
+          await sliceFileById(id, profiles);
+          closeSliceModal();
+        } catch (err) {
+          showStatus(els.sliceModalStatus, err.message || "Kunne ikke starte slicing", "error");
+        } finally {
+          if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
+        }
       });
     }
     if (els.sliceModal) {
@@ -9631,9 +9704,41 @@
         }
       });
     }
+    if (els.sliceNozzlePickLeftBtn) {
+      els.sliceNozzlePickLeftBtn.addEventListener("click", () => {
+        settleSliceNozzlePick("left");
+      });
+    }
+    if (els.sliceNozzlePickRightBtn) {
+      els.sliceNozzlePickRightBtn.addEventListener("click", () => {
+        settleSliceNozzlePick("right");
+      });
+    }
+    if (els.sliceNozzlePickCloseBtn) {
+      els.sliceNozzlePickCloseBtn.addEventListener("click", () => {
+        settleSliceNozzlePick("");
+      });
+    }
+    if (els.sliceNozzlePickCancelBtn) {
+      els.sliceNozzlePickCancelBtn.addEventListener("click", () => {
+        settleSliceNozzlePick("");
+      });
+    }
+    if (els.sliceNozzlePickModal) {
+      els.sliceNozzlePickModal.addEventListener("click", (event) => {
+        if (event.target === els.sliceNozzlePickModal || event.target.classList.contains("modal-backdrop")) {
+          settleSliceNozzlePick("");
+        }
+      });
+    }
 
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
+      const nozzlePickModalOpen = !!(els.sliceNozzlePickModal && !els.sliceNozzlePickModal.classList.contains("hidden"));
+      if (nozzlePickModalOpen) {
+        settleSliceNozzlePick("");
+        return;
+      }
       const imageModalOpen = !!(els.imagePreviewModal && !els.imagePreviewModal.classList.contains("hidden"));
       if (imageModalOpen) {
         closeImagePreviewModal();
