@@ -80,20 +80,33 @@ ssh <user>@<server-ip>
 cd ~
 git clone https://github.com/qlerup/fjordshare.git
 cd fjordshare
-chmod +x scripts/fresh_setup.sh
-./scripts/fresh_setup.sh
+chmod +x scripts/fresh_setup_lxc.sh
+./scripts/fresh_setup_lxc.sh
 ```
 
-This wizard guides you through split storage setup (NAS uploads + local app data), optional NFS `/etc/fstab`, and starts Docker Compose.
+This wizard is step-by-step and guides you through:
+
+1. Basic app settings (port/timezone)
+2. Upload destination strategy:
+   - NAS path already mounted (for example Proxmox bind mount), or
+   - Script-managed NFS mount in `/etc/fstab`
+3. App data + thumbnail paths
+4. Slicer defaults
+5. Optional strict fs-type checks
+
+After the questions, it runs preflight checks and starts Docker Compose.
 
 Re-run later:
 
 ```bash
 # full guided wizard again
-./scripts/fresh_setup.sh
+./scripts/fresh_setup_lxc.sh
 
 # only preflight + start (reuse existing .env)
-./scripts/fresh_setup.sh --start-only
+./scripts/fresh_setup_lxc.sh --start-only
+
+# backward-compatible alias (still works)
+./scripts/fresh_setup.sh
 ```
 
 ### Manual Setup
@@ -125,6 +138,14 @@ Then open:
 - `BAMBUSTUDIO_LOAD_FILAMENTS` (optional direct load)
 - `BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK` (`1`/`0`)
 - `SLICER_PROFILE_MAX_BYTES`
+- `EXPECT_UPLOADS_FSTYPES` (optional mount validation)
+- `EXPECT_THUMBS_FSTYPES` (optional mount validation)
+- `EXPECT_DATA_FSTYPES` (optional mount validation)
+- `SETUP_NFS_UPLOADS_ENABLED` (`1`/`0`, optional rerun metadata)
+- `SETUP_NFS_EXPORT` (optional rerun metadata)
+- `SETUP_NFS_MOUNT_ROOT` (optional rerun metadata)
+- `SETUP_NFS_UPLOADS_SUBDIR` (optional rerun metadata)
+- `SETUP_NFS_FSTAB_OPTIONS` (optional rerun metadata)
 
 ## Bambu Studio Presets From Local Installation
 
