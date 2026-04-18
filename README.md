@@ -109,6 +109,47 @@ Re-run later:
 ./scripts/fresh_setup.sh
 ```
 
+### Proxmox Host -> LXC Bind-Mount (Manual quick commands)
+
+Use this if you want uploads on NAS via a Proxmox host mount + LXC bind mount.
+
+1. Mount NFS share on the Proxmox host:
+
+```bash
+mkdir -p /mnt/pve/synology-fjordshare
+mount -t nfs 10.10.0.161:/volume1/FjordshareProxmox /mnt/pve/synology-fjordshare
+```
+
+2. Verify host mount:
+
+```bash
+ls -la /mnt/pve/synology-fjordshare
+```
+
+3. Bind-mount share into the LXC (example CTID `1001`):
+
+```bash
+pct set 1001 -mp0 /mnt/pve/synology-fjordshare,mp=/mnt/fjordshare-nfs
+pct restart 1001
+```
+
+4. Enter container and verify:
+
+```bash
+pct enter 1001
+ls -la /mnt/fjordshare-nfs
+```
+
+5. Create uploads folder inside container:
+
+```bash
+mkdir -p /mnt/fjordshare-nfs/uploads
+```
+
+Then use this path in setup:
+
+- `UPLOADS_HOST_DIR=/mnt/fjordshare-nfs/uploads`
+
 ### Manual Setup
 
 ```bash
