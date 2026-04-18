@@ -6920,15 +6920,21 @@ def setup():
     if request.method == "POST":
         username = str(request.form.get("username") or "").strip()
         password = str(request.form.get("password") or "")
-        try:
-            create_user(username, password, role="admin")
-            return redirect(url_for("login", created="1"))
-        except sqlite3.IntegrityError:
-            error = "Brugernavnet findes allerede."
-        except ValueError as exc:
-            error = str(exc)
-        except Exception as exc:
-            error = f"Kunne ikke oprette bruger: {exc}"
+        password2 = str(request.form.get("password2") or "")
+        if not username or not password:
+            error = "Brugernavn og adgangskode er påkrævet."
+        elif password != password2:
+            error = "Adgangskoderne matcher ikke."
+        else:
+            try:
+                create_user(username, password, role="admin")
+                return redirect(url_for("login", created="1"))
+            except sqlite3.IntegrityError:
+                error = "Brugernavnet findes allerede."
+            except ValueError as exc:
+                error = str(exc)
+            except Exception as exc:
+                error = f"Kunne ikke oprette bruger: {exc}"
 
     return render_template("setup.html", error=error)
 
