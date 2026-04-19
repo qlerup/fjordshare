@@ -3083,8 +3083,15 @@ def _build_support_override_load_settings(
         right_d = normalized_nozzle_right_diameter or left_d
         left_f = normalized_nozzle_left_flow or "standard"
         right_f = normalized_nozzle_right_flow or left_f
+        # For multi-extruder machines like H2D, we still want to materialize
+        # a lightweight runtime override so `extruder_count` and related
+        # nozzle keys are present in the process payload. Otherwise some
+        # Bambu CLI builds report "process not compatible with printer".
+        profile_text = f"{printer_profile} {print_profile}".lower()
+        is_multi_extruder = ("h2d" in profile_text) or ("dual" in profile_text) or ("idex" in profile_text)
         if (
-            machine_nozzle
+            not is_multi_extruder
+            and machine_nozzle
             and left_d
             and right_d
             and left_d == right_d == machine_nozzle
