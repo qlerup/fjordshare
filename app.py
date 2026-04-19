@@ -3988,6 +3988,30 @@ def _estimate_mesh_contact_z(mesh: Any, min_z: float, max_z: float) -> float:
     return contact_min
 
 
+def _best_effort_mesh_cleanup(mesh: Any) -> None:
+    if mesh is None:
+        return
+    for method_name in (
+        "remove_infinite_values",
+        "remove_unreferenced_vertices",
+        "remove_degenerate_faces",
+        "remove_duplicate_faces",
+        "merge_vertices",
+    ):
+        try:
+            method = getattr(mesh, method_name, None)
+            if callable(method):
+                method()
+        except Exception:
+            pass
+    try:
+        import trimesh
+
+        trimesh.repair.fix_normals(mesh, multibody=True)
+    except Exception:
+        pass
+
+
 def _write_centered_stl_for_slicing(
     input_stl: Path,
     output_stl: Path,
@@ -3997,6 +4021,7 @@ def _write_centered_stl_for_slicing(
     placement_x_mm: float = 0.0,
     placement_y_mm: float = 0.0,
     placement_z_mm: float = 0.0,
+    z_contact_mode: str = "min",
 ) -> bool:
     if str(input_stl.suffix or "").lower() != ".stl":
         return False
@@ -4008,6 +4033,7 @@ def _write_centered_stl_for_slicing(
 
     try:
         centered = mesh.copy()
+        _best_effort_mesh_cleanup(centered)
 
         rotation_x = _normalize_rotation_degrees(rotation_x_degrees)
         rotation_y = _normalize_rotation_degrees(rotation_y_degrees)
@@ -4056,11 +4082,11 @@ def _write_centered_stl_for_slicing(
 
         tx = -((mins[0] + maxs[0]) / 2.0)
         ty = -((mins[1] + maxs[1]) / 2.0)
-        # Keep backend STL placement aligned with slice preview: use robust
-        # contact estimation so sparse low outliers do not raise the full mesh.
-        # This avoids preview/backend mismatch where preview is "on plate" but
-        # slicer receives an over-lifted model and reports empty/out-of-volume.
-        contact_z = _estimate_mesh_contact_z(centered, mins[2], maxs[2])
+        mode = str(z_contact_mode or "").strip().lower()
+        if mode == "robust":
+            contact_z = _estimate_mesh_contact_z(centered, mins[2], maxs[2])
+        else:
+            contact_z = float(mins[2])
         tz = -float(contact_z)
 
         offset_x = float(placement_x_mm or 0.0)
@@ -4093,6 +4119,17 @@ def _write_centered_stl_for_slicing(
             return False
 
         centered.apply_translation([tx, ty, tz])
+        _best_effort_mesh_cleanup(centered)
+
+        # Guard against tiny negative precision artifacts after transform.
+        try:
+            post_bounds = centered.bounds
+            if post_bounds is not None and len(post_bounds) == 2:
+                post_mins = [float(v) for v in post_bounds[0]]
+                if len(post_mins) == 3 and math.isfinite(post_mins[2]) and post_mins[2] < 0.0:
+                    centered.apply_translation([0.0, 0.0, -post_mins[2] + 0.02])
+        except Exception:
+            pass
 
         output_stl.parent.mkdir(parents=True, exist_ok=True)
         centered.export(str(output_stl))
@@ -4129,6 +4166,7 @@ def _slice_stl_to_gcode(
     force_profile_runtime_compat: bool = False,
     auto_pick_blank_profiles: bool = True,
     debug_trace: Optional[list[dict[str, Any]]] = None,
+    z_contact_mode: str = "min",
     # Internal guard to avoid recursive legacy-retry loops
     disable_legacy_retry: bool = False,
 ) -> None:
@@ -4200,6 +4238,7 @@ def _slice_stl_to_gcode(
             "allow_support_override_fallback": bool(allow_support_override_fallback),
             "force_profile_runtime_compat": bool(force_profile_runtime_compat),
             "auto_pick_blank_profiles": bool(auto_pick_blank_profiles),
+            "z_contact_mode": str(z_contact_mode or "min"),
             "disable_legacy_retry": bool(disable_legacy_retry),
         },
     )
@@ -4350,6 +4389,7 @@ def _slice_stl_to_gcode(
             rotation_y_degrees=rotation_y_degrees,
             rotation_z_degrees=rotation_z_degrees,
             placement_z_mm=normalized_lift_z,
+            z_contact_mode=z_contact_mode,
         ):
             slice_input_candidates.append(("center-origin", centered_input))
             temp_slice_inputs.append(centered_input)
@@ -4368,6 +4408,7 @@ def _slice_stl_to_gcode(
                 placement_x_mm=normalized_bed_width / 2.0,
                 placement_y_mm=normalized_bed_depth / 2.0,
                 placement_z_mm=normalized_lift_z,
+                z_contact_mode=z_contact_mode,
             ):
                 slice_input_candidates.append(("corner-origin", corner_input))
                 temp_slice_inputs.append(corner_input)
@@ -4693,6 +4734,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=force_profile_runtime_compat,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        z_contact_mode=z_contact_mode,
                     )
                     _trace("retry-success", {"strategy": "without-support-override"})
                     return
@@ -4742,6 +4784,7 @@ def _slice_stl_to_gcode(
                                 force_profile_runtime_compat=force_profile_runtime_compat,
                                 auto_pick_blank_profiles=False,
                                 debug_trace=debug_trace,
+                                z_contact_mode=z_contact_mode,
                             )
                             _trace("retry-success", {"strategy": "auto-process-after-support-fallback"})
                             return
@@ -4799,6 +4842,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=True,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        z_contact_mode=z_contact_mode,
                     )
                     _trace("retry-success", {"strategy": "single-extruder-direct"})
                     return
@@ -4855,6 +4899,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=True,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        z_contact_mode=z_contact_mode,
                     )
                     _trace("retry-success", {"strategy": "forced-runtime-compat-override"})
                     return
@@ -4908,6 +4953,7 @@ def _slice_stl_to_gcode(
                         allow_support_override_fallback=False,
                         auto_pick_blank_profiles=False,
                         debug_trace=debug_trace,
+                        z_contact_mode=z_contact_mode,
                     )
                     _trace("retry-success", {"strategy": "auto-process-direct"})
                     return
@@ -4966,6 +5012,7 @@ def _slice_stl_to_gcode(
                                 force_profile_runtime_compat=True,
                                 auto_pick_blank_profiles=auto_pick_blank_profiles,
                                 debug_trace=debug_trace,
+                                z_contact_mode=z_contact_mode,
                             )
                             _trace("retry-success", {"strategy": "single-extruder-compat"})
                             return
@@ -5010,6 +5057,7 @@ def _slice_stl_to_gcode(
                                 allow_support_override_fallback=False,
                                 auto_pick_blank_profiles=False,
                                 debug_trace=debug_trace,
+                                z_contact_mode=z_contact_mode,
                             )
                             _trace("retry-success", {"strategy": "auto-process-and-filament-direct"})
                             return
@@ -5067,6 +5115,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=False,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        z_contact_mode=z_contact_mode,
                         disable_legacy_retry=True,
                     )
                     _trace("retry-success", {"strategy": "legacy-export-gcode"})
