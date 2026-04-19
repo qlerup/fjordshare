@@ -4127,6 +4127,8 @@ def _slice_stl_to_gcode(
     force_profile_runtime_compat: bool = False,
     auto_pick_blank_profiles: bool = True,
     debug_trace: Optional[list[dict[str, Any]]] = None,
+    # Internal guard to avoid recursive legacy-retry loops
+    disable_legacy_retry: bool = False,
 ) -> None:
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
@@ -4196,6 +4198,7 @@ def _slice_stl_to_gcode(
             "allow_support_override_fallback": bool(allow_support_override_fallback),
             "force_profile_runtime_compat": bool(force_profile_runtime_compat),
             "auto_pick_blank_profiles": bool(auto_pick_blank_profiles),
+            "disable_legacy_retry": bool(disable_legacy_retry),
         },
     )
 
@@ -4972,7 +4975,7 @@ def _slice_stl_to_gcode(
                 or ("plate is empty" in err)
                 for err in errors_lower
             )
-            if has_nothing_to_be_sliced_error:
+            if has_nothing_to_be_sliced_error and not disable_legacy_retry:
                 _trace(
                     "retry-start",
                     {
@@ -5005,6 +5008,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=False,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        disable_legacy_retry=True,
                     )
                     _trace("retry-success", {"strategy": "legacy-export-gcode"})
                     return
