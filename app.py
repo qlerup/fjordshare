@@ -5082,6 +5082,53 @@ def _slice_stl_to_gcode(
                 or ("plate is empty" in err)
                 for err in errors_lower
             )
+            if has_nothing_to_be_sliced_error and str(z_contact_mode or "min").strip().lower() != "robust":
+                _trace(
+                    "retry-start",
+                    {
+                        "strategy": "z-contact-mode-robust",
+                        "reason": "strict Z snap reported empty plate",
+                    },
+                )
+                try:
+                    _slice_stl_to_gcode(
+                        input_stl,
+                        output_gcode,
+                        printer_profile=printer_profile_value,
+                        print_profile=print_profile_value,
+                        filament_profile=filament_profile_value,
+                        rotation_x_degrees=rotation_x_degrees,
+                        rotation_y_degrees=rotation_y_degrees,
+                        rotation_z_degrees=rotation_z_degrees,
+                        lift_z_mm=normalized_lift_z,
+                        support_mode=normalized_support_mode,
+                        support_type=normalized_support_type,
+                        support_style=normalized_support_style,
+                        nozzle_left_diameter=normalized_nozzle_left_diameter,
+                        nozzle_right_diameter=normalized_nozzle_right_diameter,
+                        nozzle_left_flow=normalized_nozzle_left_flow,
+                        nozzle_right_flow=normalized_nozzle_right_flow,
+                        bed_width_mm=normalized_bed_width,
+                        bed_depth_mm=normalized_bed_depth,
+                        process_overrides=normalized_process_overrides,
+                        allow_support_override_fallback=False,
+                        force_profile_runtime_compat=force_profile_runtime_compat,
+                        auto_pick_blank_profiles=auto_pick_blank_profiles,
+                        debug_trace=debug_trace,
+                        z_contact_mode="robust",
+                        disable_legacy_retry=True,
+                    )
+                    _trace("retry-success", {"strategy": "z-contact-mode-robust"})
+                    return
+                except Exception as robust_contact_exc:
+                    _trace(
+                        "retry-failed",
+                        {
+                            "strategy": "z-contact-mode-robust",
+                            "error": str(robust_contact_exc),
+                        },
+                    )
+                    errors.append(f"z-contact-robust-fallback: {str(robust_contact_exc)[:350]}")
             if has_nothing_to_be_sliced_error and not disable_legacy_retry:
                 _trace(
                     "retry-start",
