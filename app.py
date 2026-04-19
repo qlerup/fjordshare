@@ -5333,22 +5333,6 @@ def _slice_cancel_mark(file_id: int) -> None:
         SLICE_CANCELLED.add(int(file_id))
 
 
-@app.get("/api/slice/status")
-def api_slice_status():
-    return ok_json(
-        {
-            "stats": SLICER_STATS,
-            "processing_ids": sorted(list(SLICER_PROCESSING_IDS)),
-        }
-    )
-
-
-@app.post("/api/files/<int:file_id>/slice/cancel")
-def api_slice_cancel(file_id: int):
-    _slice_cancel_mark(int(file_id))
-    return ok_json({"canceled": True, "file_id": int(file_id)})
-
-
 def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     # Hook: mark slice started for status bar
     try:
@@ -7358,6 +7342,22 @@ def api_health():
             "thumbs_dir": str(THUMBS_DIR),
         }
     )
+
+
+@app.get("/api/slice/status")
+def api_slice_status():
+    return jsonify(
+        {
+            "stats": SLICER_STATS,
+            "processing_ids": sorted(list(SLICER_PROCESSING_IDS)),
+        }
+    )
+
+
+@app.post("/api/files/<int:file_id>/slice/cancel")
+def api_slice_cancel(file_id: int):
+    _slice_cancel_mark(int(file_id))
+    return jsonify({"canceled": True, "file_id": int(file_id)})
 
 
 @app.route("/setup", methods=["GET", "POST"])
