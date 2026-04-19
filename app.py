@@ -4012,6 +4012,70 @@ def _best_effort_mesh_cleanup(mesh: Any) -> None:
         pass
 
 
+def _slice_debug_mesh_snapshot(mesh_path: Path) -> dict[str, Any]:
+    snapshot: dict[str, Any] = {
+        "path": str(mesh_path),
+        "exists": bool(mesh_path.exists() and mesh_path.is_file()),
+    }
+    if not snapshot["exists"]:
+        return snapshot
+
+    try:
+        mesh = _load_mesh_for_thumbnail(mesh_path)
+        _best_effort_mesh_cleanup(mesh)
+    except Exception as exc:
+        snapshot["error"] = str(exc)[:500]
+        return snapshot
+
+    try:
+        bounds = getattr(mesh, "bounds", None)
+        if bounds is not None and len(bounds) == 2:
+            mins = [float(v) for v in bounds[0]]
+            maxs = [float(v) for v in bounds[1]]
+            if len(mins) == 3 and len(maxs) == 3:
+                snapshot["bounds_min"] = [round(v, 5) for v in mins]
+                snapshot["bounds_max"] = [round(v, 5) for v in maxs]
+                extent_x = maxs[0] - mins[0]
+                extent_y = maxs[1] - mins[1]
+                extent_z = maxs[2] - mins[2]
+                snapshot["extents_mm"] = [round(extent_x, 5), round(extent_y, 5), round(extent_z, 5)]
+    except Exception:
+        pass
+
+    try:
+        face_count = int(len(getattr(mesh, "faces", []) or []))
+        snapshot["faces"] = face_count
+    except Exception:
+        pass
+
+    try:
+        vertex_count = int(len(getattr(mesh, "vertices", []) or []))
+        snapshot["vertices"] = vertex_count
+    except Exception:
+        pass
+
+    try:
+        snapshot["is_watertight"] = bool(getattr(mesh, "is_watertight", False))
+    except Exception:
+        pass
+
+    try:
+        components = mesh.split(only_watertight=False)
+        if isinstance(components, (list, tuple)):
+            snapshot["components"] = int(len(components))
+    except Exception:
+        pass
+
+    try:
+        volume = float(getattr(mesh, "volume", 0.0))
+        if math.isfinite(volume):
+            snapshot["volume_mm3"] = round(volume, 5)
+    except Exception:
+        pass
+
+    return snapshot
+
+
 def _write_centered_stl_for_slicing(
     input_stl: Path,
     output_stl: Path,
@@ -4425,17 +4489,21 @@ def _slice_stl_to_gcode(
     else:
         slice_input_candidates.append(("original", input_stl))
 
+    traced_candidates: list[dict[str, Any]] = []
+    for label, path in slice_input_candidates:
+        candidate_entry: dict[str, Any] = {
+            "label": label,
+            "path": str(path),
+        }
+        if debug_trace is not None:
+            candidate_entry["mesh_snapshot"] = _slice_debug_mesh_snapshot(path)
+        traced_candidates.append(candidate_entry)
+
     _trace(
         "slice-input-candidates",
         {
             "requested_transform": bool(requested_transform),
-            "candidates": [
-                {
-                    "label": label,
-                    "path": str(path),
-                }
-                for label, path in slice_input_candidates
-            ],
+            "candidates": traced_candidates,
         },
     )
 
@@ -4475,6 +4543,8 @@ def _slice_stl_to_gcode(
         )
 
         temp_3mf = output_gcode.with_suffix(".gcode.3mf")
+        enable_modern_underscore_variant = True
+
         def _build_attempts(slice_input_path: Path) -> list[tuple[str, list[str], str]]:
             attempts: list[tuple[str, list[str], str]] = []
 
@@ -4497,29 +4567,32 @@ def _slice_stl_to_gcode(
             attempts.extend(
                 [
                     (
-                    "modern-3mf-hyphen",
-                    [*modern_base, "--export-3mf", str(temp_3mf), str(slice_input_path)],
-                    "3mf",
-                ),
-                (
-                    "modern-3mf-outputdir-hyphen",
-                    [
-                        *modern_base,
-                        "--outputdir",
-                        str(temp_3mf.parent),
-                        "--export-3mf",
-                        temp_3mf.name,
-                        str(slice_input_path),
-                    ],
-                    "3mf",
-                ),
-                (
-                    "modern-3mf-underscore",
-                    [*modern_base, "--export_3mf", str(temp_3mf), str(slice_input_path)],
-                    "3mf",
-                ),
+                        "modern-3mf-hyphen",
+                        [*modern_base, "--export-3mf", str(temp_3mf), str(slice_input_path)],
+                        "3mf",
+                    ),
+                    (
+                        "modern-3mf-outputdir-hyphen",
+                        [
+                            *modern_base,
+                            "--outputdir",
+                            str(temp_3mf.parent),
+                            "--export-3mf",
+                            temp_3mf.name,
+                            str(slice_input_path),
+                        ],
+                        "3mf",
+                    ),
                 ]
             )
+            if enable_modern_underscore_variant:
+                attempts.append(
+                    (
+                        "modern-3mf-underscore",
+                        [*modern_base, "--export_3mf", str(temp_3mf), str(slice_input_path)],
+                        "3mf",
+                    )
+                )
 
             if BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK and fallback_profile_args != modern_profile_args:
                 attempts.extend(
@@ -4615,6 +4688,21 @@ def _slice_stl_to_gcode(
                     if legacy_profile_option_unsupported:
                         _trace(
                             "legacy-profile-option-unsupported",
+                            {
+                                "candidate_label": candidate_label,
+                                "attempt_label": label,
+                                "details": details,
+                            },
+                        )
+                        continue
+                    modern_underscore_unsupported = (
+                        label == "modern-3mf-underscore"
+                        and "invalid option --export_3mf" in details_lower
+                    )
+                    if modern_underscore_unsupported:
+                        enable_modern_underscore_variant = False
+                        _trace(
+                            "modern-underscore-option-unsupported",
                             {
                                 "candidate_label": candidate_label,
                                 "attempt_label": label,
@@ -5082,6 +5170,94 @@ def _slice_stl_to_gcode(
                 or ("plate is empty" in err)
                 for err in errors_lower
             )
+            profile_text = f"{printer_profile_value} {print_profile_value}".lower()
+            is_multi_extruder_profile = any(token in profile_text for token in ("h2d", "dual", "idex"))
+            override_extruder_count = 0
+            raw_override_extruder_count = normalized_process_overrides.get("extruder_count")
+            if raw_override_extruder_count is not None:
+                try:
+                    numbers = _extract_float_numbers(raw_override_extruder_count, max_items=1)
+                    if numbers:
+                        parsed_count = int(round(float(numbers[0])))
+                        if parsed_count > 0:
+                            override_extruder_count = parsed_count
+                except Exception:
+                    override_extruder_count = 0
+
+            preferred_extruder_id = 0
+            for override_key in ("print_extruder_id", "printer_extruder_id"):
+                if override_key not in normalized_process_overrides:
+                    continue
+                try:
+                    numbers = _extract_float_numbers(normalized_process_overrides.get(override_key), max_items=1)
+                    if numbers:
+                        parsed_extruder = int(round(float(numbers[0])))
+                        if parsed_extruder > 0:
+                            preferred_extruder_id = parsed_extruder
+                            break
+                except Exception:
+                    continue
+
+            should_retry_single_extruder_empty_plate = (
+                has_nothing_to_be_sliced_error
+                and allow_support_override_fallback
+                and bool(filament_profile_value)
+                and (is_multi_extruder_profile or override_extruder_count > 1)
+            )
+            if should_retry_single_extruder_empty_plate:
+                forced_single_overrides = dict(normalized_process_overrides)
+                forced_single_overrides["extruder_count"] = 1
+                # Keep a valid preferred nozzle id for single-extruder fallback.
+                # Single-extruder fallback uses the primary extruder id.
+                forced_single_overrides["print_extruder_id"] = 1
+                _trace(
+                    "retry-start",
+                    {
+                        "strategy": "single-extruder-empty-plate",
+                        "reason": "multi-extruder profile reports empty plate",
+                        "preferred_extruder_id": preferred_extruder_id,
+                    },
+                )
+                try:
+                    _slice_stl_to_gcode(
+                        input_stl,
+                        output_gcode,
+                        printer_profile=printer_profile_value,
+                        print_profile=print_profile_value,
+                        filament_profile=filament_profile_value,
+                        rotation_x_degrees=rotation_x_degrees,
+                        rotation_y_degrees=rotation_y_degrees,
+                        rotation_z_degrees=rotation_z_degrees,
+                        lift_z_mm=normalized_lift_z,
+                        support_mode=normalized_support_mode,
+                        support_type=normalized_support_type,
+                        support_style=normalized_support_style,
+                        nozzle_left_diameter=normalized_nozzle_left_diameter,
+                        nozzle_right_diameter="",
+                        nozzle_left_flow=normalized_nozzle_left_flow,
+                        nozzle_right_flow="",
+                        bed_width_mm=normalized_bed_width,
+                        bed_depth_mm=normalized_bed_depth,
+                        process_overrides=forced_single_overrides,
+                        allow_support_override_fallback=False,
+                        force_profile_runtime_compat=True,
+                        auto_pick_blank_profiles=auto_pick_blank_profiles,
+                        debug_trace=debug_trace,
+                        z_contact_mode=z_contact_mode,
+                        disable_legacy_retry=True,
+                    )
+                    _trace("retry-success", {"strategy": "single-extruder-empty-plate"})
+                    return
+                except Exception as single_empty_exc:
+                    _trace(
+                        "retry-failed",
+                        {
+                            "strategy": "single-extruder-empty-plate",
+                            "error": str(single_empty_exc),
+                        },
+                    )
+                    errors.append(f"single-extruder-empty-plate-fallback: {str(single_empty_exc)[:350]}")
+
             if has_nothing_to_be_sliced_error and str(z_contact_mode or "min").strip().lower() != "robust":
                 _trace(
                     "retry-start",
