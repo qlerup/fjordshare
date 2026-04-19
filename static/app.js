@@ -1520,7 +1520,7 @@
 
   function sliceButtonLabelForStatus(status) {
     if (status === "queued") return "Slicer i kø";
-    if (status === "processing") return "Stop";
+    if (status === "processing") return "Stop slice";
     if (status === "ready") return "Slice igen";
     if (status === "error") return "Prøv slicing igen";
     return "Slice STL";
