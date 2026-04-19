@@ -4056,8 +4056,11 @@ def _write_centered_stl_for_slicing(
 
         tx = -((mins[0] + maxs[0]) / 2.0)
         ty = -((mins[1] + maxs[1]) / 2.0)
-        contact_z = _estimate_mesh_contact_z(centered, mins[2], maxs[2])
-        tz = -contact_z
+        # Use the actual minimum Z (not the percentile estimate) so that
+        # ALL vertices end up at Z >= 0 after translation.  BambuStudio
+        # rejects models with any vertex below the build-plate as
+        # "Nothing to be sliced / no object fully inside the print volume".
+        tz = -float(mins[2])
 
         offset_x = float(placement_x_mm or 0.0)
         offset_y = float(placement_y_mm or 0.0)
@@ -4750,6 +4753,63 @@ def _slice_stl_to_gcode(
                                 },
                             )
                             errors.append(f"process-auto-fallback: {str(retry2_exc)[:350]}")
+
+            # Direct single-extruder retry for multi-extruder filament mapping errors.
+            # Forces extruder_count=1 so _expand_load_filaments_for_extruders sends
+            # only one filament, bypassing BambuStudio's auto-mapping which fails
+            # for H2D-style dual extruders with identical filaments.
+            should_retry_single_extruder_direct = (
+                has_filament_mapping_error
+                and bool(filament_profile_value)
+                and bool(print_profile_value)
+            )
+            if should_retry_single_extruder_direct:
+                forced_single_overrides = dict(normalized_process_overrides)
+                forced_single_overrides["extruder_count"] = 1
+                _trace(
+                    "retry-start",
+                    {
+                        "strategy": "single-extruder-direct",
+                        "reason": "filament auto-mapping failed for multi-extruder – force single extruder",
+                    },
+                )
+                try:
+                    _slice_stl_to_gcode(
+                        input_stl,
+                        output_gcode,
+                        printer_profile=printer_profile_value,
+                        print_profile=print_profile_value,
+                        filament_profile=filament_profile_value,
+                        rotation_x_degrees=rotation_x_degrees,
+                        rotation_y_degrees=rotation_y_degrees,
+                        rotation_z_degrees=rotation_z_degrees,
+                        lift_z_mm=normalized_lift_z,
+                        support_mode=normalized_support_mode,
+                        support_type=normalized_support_type,
+                        support_style=normalized_support_style,
+                        nozzle_left_diameter=normalized_nozzle_left_diameter,
+                        nozzle_right_diameter=normalized_nozzle_right_diameter,
+                        nozzle_left_flow=normalized_nozzle_left_flow,
+                        nozzle_right_flow=normalized_nozzle_right_flow,
+                        bed_width_mm=normalized_bed_width,
+                        bed_depth_mm=normalized_bed_depth,
+                        process_overrides=forced_single_overrides,
+                        allow_support_override_fallback=False,
+                        force_profile_runtime_compat=True,
+                        auto_pick_blank_profiles=auto_pick_blank_profiles,
+                        debug_trace=debug_trace,
+                    )
+                    _trace("retry-success", {"strategy": "single-extruder-direct"})
+                    return
+                except Exception as single_direct_exc:
+                    _trace(
+                        "retry-failed",
+                        {
+                            "strategy": "single-extruder-direct",
+                            "error": str(single_direct_exc),
+                        },
+                    )
+                    errors.append(f"single-extruder-direct-fallback: {str(single_direct_exc)[:350]}")
 
             # If no explicit support/nozzle override file was used, force one
             # compatibility retry for H2D/multi-extruder process payloads so
@@ -5513,6 +5573,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
                 pass
 
         _set_file_slice_state(file_id, "ready", "", actor=requested_by or "system")
+        _slice_stats_mark_success(file_id)
     except Exception as exc:
         slice_error_text = str(exc)
         _record_slice_debug_event(
@@ -5528,6 +5589,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
         except Exception:
             pass
         _set_file_slice_state(file_id, "error", slice_error_text, actor=requested_by or "system")
+        _slice_stats_mark_error(file_id)
     finally:
         should_write_debug = bool(slice_error_text) or BAMBUSTUDIO_SLICE_DEBUG_ALWAYS
         if should_write_debug:
@@ -5572,6 +5634,7 @@ def _slice_worker_loop() -> None:
             try:
                 fid = int((payload or {}).get("file_id") or 0)
                 if fid > 0:
+                    _slice_stats_mark_error(fid)
                     _set_file_slice_state(fid, "error", f"slice worker error: {exc}", actor="system")
             except Exception:
                 pass
@@ -5580,6 +5643,19 @@ def _slice_worker_loop() -> None:
                 if file_id_for_cleanup > 0:
                     SLICE_QUEUED_IDS.discard(file_id_for_cleanup)
             SLICE_QUEUE.task_done()
+            # Reset accumulated stats when no jobs remain so a new batch
+            # starts with clean counters instead of accumulating old totals.
+            try:
+                if SLICER_LOCK:
+                    with SLICER_LOCK:  # type: ignore
+                        if SLICER_STATS.get("processing", 0) <= 0 and SLICE_QUEUE.empty():
+                            SLICER_STATS["total"] = 0
+                            SLICER_STATS["completed"] = 0
+                            SLICER_STATS["processing"] = 0
+                            SLICER_STATS["errors"] = 0
+                            SLICER_PROCESSING_IDS.clear()
+            except Exception:
+                pass
 
 
 def _start_slice_worker_if_needed() -> None:

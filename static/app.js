@@ -1504,7 +1504,7 @@
 
     const meta = {
       queued: { cls: "queued", text: "Slice i kø" },
-      processing: { cls: "processing", text: "Stop" },
+      processing: { cls: "processing", text: "Slicer…" },
       ready: { cls: "ready", text: "Slice klar" },
       error: { cls: "error", text: "Slice fejl" },
     }[status];
