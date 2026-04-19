@@ -4171,6 +4171,32 @@ def _slice_stl_to_gcode(
         },
     )
 
+    if debug_trace is not None:
+        try:
+            dbg_machine_json, dbg_process_json, dbg_filament_json = _resolve_selected_profile_jsons(
+                executable,
+                printer_profile_value,
+                print_profile_value,
+                filament_profile_value,
+                prefer_uploaded=False,
+                auto_pick_when_blank=auto_pick_blank_profiles,
+            )
+            _trace(
+                "selected-profile-jsons",
+                {
+                    "machine_json": dbg_machine_json,
+                    "process_json": dbg_process_json,
+                    "filament_json": dbg_filament_json,
+                },
+            )
+        except Exception as dbg_profile_exc:
+            _trace(
+                "selected-profile-jsons-error",
+                {
+                    "error": str(dbg_profile_exc),
+                },
+            )
+
     if printer_profile_value:
         legacy_cmd.extend(["--printer-profile", printer_profile_value])
     if print_profile_value:
