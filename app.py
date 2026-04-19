@@ -2091,6 +2091,22 @@ def _resolve_selected_profile_jsons(
 def _count_profile_extruder_hint_items(value: Any) -> int:
     if value is None:
         return 0
+
+    # Prefer counting distinct extruder IDs (1,2,...) over raw list length.
+    # Some profiles contain repeated per-setting values (e.g. "1,1,1,1,1"),
+    # which should still represent a single extruder mapping.
+    numeric_tokens = _extract_float_numbers(value, max_items=64)
+    extruder_ids: set[int] = set()
+    for token in numeric_tokens:
+        rounded = int(round(float(token)))
+        if rounded <= 0:
+            continue
+        if abs(float(token) - float(rounded)) > 1e-6:
+            continue
+        extruder_ids.add(rounded)
+    if extruder_ids:
+        return len(extruder_ids)
+
     if isinstance(value, (list, tuple, set)):
         compact = [item for item in value if str(item or "").strip()]
         return len(compact)
@@ -2117,8 +2133,9 @@ def _count_profile_extruder_hint_items(value: Any) -> int:
 
 def _infer_required_extruder_count_for_slice(machine_json: str, process_json: str) -> int:
     detected = 0
+    machine_detected = 0
 
-    for json_path in (machine_json, process_json):
+    for json_path, is_machine in ((machine_json, True), (process_json, False)):
         path = Path(str(json_path or "").strip())
         if not path.exists() or not path.is_file():
             continue
@@ -2133,6 +2150,8 @@ def _infer_required_extruder_count_for_slice(machine_json: str, process_json: st
             except Exception:
                 parsed_count = 0
             detected = max(detected, parsed_count)
+            if is_machine:
+                machine_detected = max(machine_detected, parsed_count)
 
         for hint_key in ("print_extruder_id", "printer_extruder_id"):
             if hint_key not in payload:
@@ -2142,8 +2161,13 @@ def _infer_required_extruder_count_for_slice(machine_json: str, process_json: st
     profile_text = f"{machine_json} {process_json}".lower()
     if "h2d" in profile_text:
         detected = max(detected, 2)
+        machine_detected = max(machine_detected, 2)
     elif detected <= 1 and any(token in profile_text for token in ("dual", "idex")):
         detected = 2
+
+    # Never expand filaments beyond the machine's own extruder count when known.
+    if machine_detected > 0:
+        detected = min(detected, machine_detected)
 
     return max(1, detected)
 
