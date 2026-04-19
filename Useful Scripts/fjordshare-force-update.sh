@@ -1,12 +1,62 @@
 #!/bin/sh
 set -eu
 
-APP_DIR="${APP_DIR:-/volume1/docker/fjordshare}"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+REPO_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+
+if [ -z "${APP_DIR:-}" ]; then
+	if [ -f "$REPO_DIR/docker-compose.yml" ]; then
+		APP_DIR="$REPO_DIR"
+	elif [ -f "./docker-compose.yml" ]; then
+		APP_DIR="$(pwd)"
+	else
+		APP_DIR="/volume1/docker/fjordshare"
+	fi
+fi
+
 REPO_URL="${REPO_URL:-https://github.com/qlerup/fjordshare.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 BUILD_ON_DOCKERFILE_CHANGE="${BUILD_ON_DOCKERFILE_CHANGE:-1}"
 FORCE_IMAGE_BUILD="${FORCE_IMAGE_BUILD:-0}"
 ENV_BACKUP="$(mktemp /tmp/fjordshare.env.backup.XXXXXX)"
+
+if [ ! -d "$APP_DIR" ]; then
+	echo "Fejl: APP_DIR findes ikke: $APP_DIR"
+	echo "Tip: sat APP_DIR manuelt, fx APP_DIR=/opt/fjordshare $0"
+	exit 1
+fi
+
+if [ ! -f "$APP_DIR/docker-compose.yml" ]; then
+	echo "Fejl: docker-compose.yml blev ikke fundet i APP_DIR: $APP_DIR"
+	echo "Tip: kor scriptet fra repo-mappen eller sat APP_DIR manuelt."
+	exit 1
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+	echo "Fejl: docker kommando blev ikke fundet i PATH."
+	exit 1
+fi
+
+DOCKER_SUDO=""
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+	DOCKER_SUDO="sudo"
+fi
+
+docker_compose() {
+	if [ -n "$DOCKER_SUDO" ]; then
+		sudo docker compose "$@"
+	else
+		docker compose "$@"
+	fi
+}
+
+docker_cmd() {
+	if [ -n "$DOCKER_SUDO" ]; then
+		sudo docker "$@"
+	else
+		docker "$@"
+	fi
+}
 
 cleanup() {
 	rm -f "$ENV_BACKUP"
@@ -63,12 +113,12 @@ install_pkg_list_in_running_container() {
 	pkg_file="$1"
 	[ -s "$pkg_file" ] || return 0
 
-	sudo docker compose up -d fjordshare
+	docker_compose up -d fjordshare
 
 	tmp_available="$(mktemp /tmp/fjordshare.pkgs.available.XXXXXX)"
 	tmp_unavailable="$(mktemp /tmp/fjordshare.pkgs.unavailable.XXXXXX)"
 
-	cat "$pkg_file" | sudo docker compose exec -T fjordshare sh -lc '
+	cat "$pkg_file" | docker_compose exec -T fjordshare sh -lc '
 		while IFS= read -r p; do
 			[ -n "$p" ] || continue
 			if apt-cache show "$p" >/dev/null 2>&1; then
@@ -81,7 +131,7 @@ install_pkg_list_in_running_container() {
 
 	if [ -s "$tmp_available" ]; then
 		pkgs="$(tr '\n' ' ' <"$tmp_available" | sed 's/[[:space:]]*$//')"
-		sudo docker compose exec -T fjordshare sh -lc "apt-get update && apt-get install -y --no-install-recommends $pkgs && rm -rf /var/lib/apt/lists/*"
+		docker_compose exec -T fjordshare sh -lc "apt-get update && apt-get install -y --no-install-recommends $pkgs && rm -rf /var/lib/apt/lists/*"
 	fi
 
 	if [ -s "$tmp_unavailable" ]; then
@@ -145,8 +195,8 @@ install_missing_dockerfile_packages_fast() {
 		return 0
 	fi
 
-	sudo docker compose up -d fjordshare
-	sudo docker compose exec -T fjordshare sh -lc "dpkg-query -W -f='\${Package}\n' 2>/dev/null || true" | sort -u >"$tmp_installed"
+	docker_compose up -d fjordshare
+	docker_compose exec -T fjordshare sh -lc "dpkg-query -W -f='\${Package}\n' 2>/dev/null || true" | sort -u >"$tmp_installed"
 	grep -Fxv -f "$tmp_installed" "$tmp_pkgs" >"$tmp_missing" || true
 
 	if [ ! -s "$tmp_missing" ]; then
@@ -166,7 +216,7 @@ sync_runtime_code_changes() {
 	[ -n "$changed_list" ] || return 0
 
 	echo "==> Synkroniserer kodefiler til kørende container (uden image rebuild)"
-	sudo docker compose up -d fjordshare
+	docker_compose up -d fjordshare
 
 	synced_any=0
 	synced_static=0
@@ -180,14 +230,14 @@ sync_runtime_code_changes() {
 				;;
 			static/*)
 				if [ "$synced_static" -eq 0 ] && [ -d static ]; then
-					sudo docker cp static/. fjordshare:/app/static
+					docker_cmd cp static/. fjordshare:/app/static
 					synced_static=1
 					synced_any=1
 				fi
 				;;
 			templates/*)
 				if [ "$synced_templates" -eq 0 ] && [ -d templates ]; then
-					sudo docker cp templates/. fjordshare:/app/templates
+					docker_cmd cp templates/. fjordshare:/app/templates
 					synced_templates=1
 					synced_any=1
 				fi
@@ -196,8 +246,8 @@ sync_runtime_code_changes() {
 				if [ -f "$path" ]; then
 					dest="/app/$path"
 					dest_dir="$(dirname "$dest")"
-					sudo docker compose exec -T fjordshare sh -lc "mkdir -p '$dest_dir'"
-					sudo docker cp "$path" "fjordshare:$dest"
+					docker_compose exec -T fjordshare sh -lc "mkdir -p '$dest_dir'"
+					docker_cmd cp "$path" "fjordshare:$dest"
 					synced_any=1
 				fi
 				;;
@@ -208,7 +258,7 @@ EOF
 
 	if [ "$synced_any" -eq 1 ]; then
 		echo "==> Genstarter fjordshare for at loade ny kode"
-		sudo docker compose restart fjordshare
+		docker_compose restart fjordshare
 	fi
 }
 
@@ -231,9 +281,9 @@ NEW_REV="$(git rev-parse "origin/$REPO_BRANCH")"
 
 if [ -n "$OLD_REV" ] && [ "$OLD_REV" = "$NEW_REV" ] && [ "$FORCE_IMAGE_BUILD" != "1" ]; then
 	cp "$ENV_BACKUP" .env 2>/dev/null || true
-	sudo docker compose up -d
+	docker_compose up -d
 	install_missing_dockerfile_packages_fast || true
-	sudo docker compose logs --tail=50
+	docker_compose logs --tail=50
 	exit 0
 fi
 
@@ -270,12 +320,12 @@ if [ "$DOCKERFILE_CHANGED" -eq 1 ] && [ "$BUILD_ON_DOCKERFILE_CHANGE" != "1" ] &
 fi
 
 if [ "$NEED_IMAGE_BUILD" -eq 1 ]; then
-	sudo docker compose up -d --build fjordshare
+	docker_compose up -d --build fjordshare
 else
-	sudo docker compose up -d
+	docker_compose up -d
 	install_new_dockerfile_packages_fast "$OLD_REV" "$NEW_REV" || true
 	install_missing_dockerfile_packages_fast || true
 	sync_runtime_code_changes "$CHANGED" || true
 fi
 
-sudo docker compose logs --tail=50
+docker_compose logs --tail=50
