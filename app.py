@@ -5333,6 +5333,13 @@ def _slice_cancel_mark(file_id: int) -> None:
         SLICE_CANCELLED.add(int(file_id))
 
 
+def _slice_cancel_clear(file_id: int) -> None:
+    if not SLICER_LOCK:
+        return
+    with SLICER_LOCK:  # type: ignore
+        SLICE_CANCELLED.discard(int(file_id))
+
+
 def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     # Hook: mark slice started for status bar
     try:
@@ -5340,6 +5347,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     except Exception:
         f_id = 0
     if f_id:
+        _slice_cancel_clear(f_id)
         _slice_stats_mark_started(f_id)
         if _slice_is_cancelled(f_id):
             _slice_stats_mark_error(f_id)
