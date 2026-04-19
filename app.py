@@ -2786,6 +2786,20 @@ def _build_modern_profile_args(
     args: list[str] = []
     normalized_overrides = _normalize_slice_process_overrides(process_overrides or {})
 
+    def _override_extruder_count_from_overrides() -> int:
+        raw = normalized_overrides.get("extruder_count") if isinstance(normalized_overrides, dict) else None
+        if raw is None:
+            return 0
+        try:
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                parsed = int(round(float(raw)))
+            else:
+                nums = _extract_float_numbers(raw, max_items=1)
+                parsed = int(round(float(nums[0]))) if nums else 0
+        except Exception:
+            parsed = 0
+        return parsed if parsed > 0 else 0
+
     def _preferred_single_extruder_from_overrides() -> int:
         for key in ("print_extruder_id", "printer_extruder_id"):
             if key not in normalized_overrides:
@@ -2844,7 +2858,8 @@ def _build_modern_profile_args(
             args.extend(["--load-settings", machine_json])
 
     if not effective_load_filaments and filament_json:
-        required_extruders = _infer_required_extruder_count_for_slice(machine_json, process_json)
+        override_extruders = _override_extruder_count_from_overrides()
+        required_extruders = override_extruders or _infer_required_extruder_count_for_slice(machine_json, process_json)
         # Always provide filaments for all required extruders.
         # Some Bambu CLI versions reject auto-mapping for multi-extruder printers
         # when only a single filament is supplied, even if a preferred
@@ -4835,6 +4850,63 @@ def _slice_stl_to_gcode(
                         },
                     )
                     errors.append(f"process-auto-direct-fallback: {retry_process_auto_text[:350]}")
+
+                    # Final rescue for persistent multi-extruder mapping/compat issues:
+                    # force single-extruder operation by overriding extruder_count=1 and
+                    # sending only a single filament. We also keep print_extruder_id when provided.
+                    if filament_profile_value and has_filament_mapping_error:
+                        forced_overrides = dict(normalized_process_overrides)
+                        try:
+                            # Preserve preferred print nozzle if present
+                            if "print_extruder_id" not in forced_overrides and "printer_extruder_id" in forced_overrides:
+                                forced_overrides["print_extruder_id"] = forced_overrides.get("printer_extruder_id")
+                        except Exception:
+                            pass
+                        forced_overrides["extruder_count"] = 1
+                        _trace(
+                            "retry-start",
+                            {
+                                "strategy": "single-extruder-compat",
+                                "reason": "force extruder_count=1 to bypass auto-mapping",
+                            },
+                        )
+                        try:
+                            _slice_stl_to_gcode(
+                                input_stl,
+                                output_gcode,
+                                printer_profile=printer_profile_value,
+                                print_profile=print_profile_value,
+                                filament_profile=filament_profile_value,
+                                rotation_x_degrees=rotation_x_degrees,
+                                rotation_y_degrees=rotation_y_degrees,
+                                rotation_z_degrees=rotation_z_degrees,
+                                lift_z_mm=normalized_lift_z,
+                                support_mode=normalized_support_mode,
+                                support_type=normalized_support_type,
+                                support_style=normalized_support_style,
+                                nozzle_left_diameter=normalized_nozzle_left_diameter,
+                                nozzle_right_diameter=normalized_nozzle_right_diameter,
+                                nozzle_left_flow=normalized_nozzle_left_flow,
+                                nozzle_right_flow=normalized_nozzle_right_flow,
+                                bed_width_mm=normalized_bed_width,
+                                bed_depth_mm=normalized_bed_depth,
+                                process_overrides=forced_overrides,
+                                allow_support_override_fallback=False,
+                                force_profile_runtime_compat=True,
+                                auto_pick_blank_profiles=auto_pick_blank_profiles,
+                                debug_trace=debug_trace,
+                            )
+                            _trace("retry-success", {"strategy": "single-extruder-compat"})
+                            return
+                        except Exception as single_exc:
+                            _trace(
+                                "retry-failed",
+                                {
+                                    "strategy": "single-extruder-compat",
+                                    "error": str(single_exc),
+                                },
+                            )
+                            errors.append(f"single-extruder-compat-fallback: {str(single_exc)[:350]}")
                     if filament_profile_value and (has_nozzle_setup_error or has_filament_mapping_error):
                         _trace(
                             "retry-start",
