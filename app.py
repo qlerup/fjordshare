@@ -4056,11 +4056,12 @@ def _write_centered_stl_for_slicing(
 
         tx = -((mins[0] + maxs[0]) / 2.0)
         ty = -((mins[1] + maxs[1]) / 2.0)
-        # Use the actual minimum Z (not the percentile estimate) so that
-        # ALL vertices end up at Z >= 0 after translation.  BambuStudio
-        # rejects models with any vertex below the build-plate as
-        # "Nothing to be sliced / no object fully inside the print volume".
-        tz = -float(mins[2])
+        # Keep backend STL placement aligned with slice preview: use robust
+        # contact estimation so sparse low outliers do not raise the full mesh.
+        # This avoids preview/backend mismatch where preview is "on plate" but
+        # slicer receives an over-lifted model and reports empty/out-of-volume.
+        contact_z = _estimate_mesh_contact_z(centered, mins[2], maxs[2])
+        tz = -float(contact_z)
 
         offset_x = float(placement_x_mm or 0.0)
         offset_y = float(placement_y_mm or 0.0)
