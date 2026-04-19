@@ -4412,8 +4412,8 @@
     const stats = (data && data.data && data.data.stats) || { total: 0, completed: 0, processing: 0, errors: 0 };
     const ids = (data && data.data && data.data.processing_ids) || [];
 
-    // Hide if nothing to show
-    if (stats.total === 0 && stats.processing === 0) {
+    // Hide if nothing actively processing
+    if (stats.processing === 0) {
       bar.style.display = "none";
       setTimeout(pollSliceStatusLoop, 3000);
       return;

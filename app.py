@@ -7360,6 +7360,8 @@ def api_slice_status():
 @app.post("/api/files/<int:file_id>/slice/cancel")
 def api_slice_cancel(file_id: int):
     _slice_cancel_mark(int(file_id))
+    _slice_stats_mark_error(int(file_id))
+    _set_file_slice_state(int(file_id), "error", "Stoppet af bruger", actor="system")
     return jsonify({"canceled": True, "file_id": int(file_id)})
 
 
