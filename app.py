@@ -1249,7 +1249,6 @@ def _profile_json_name_candidates(payload: dict[str, Any]) -> list[str]:
         "print_settings_id",
         "filament_settings_id",
         "setting_id",
-        "inherits",
     ):
         value = _slicer_profile_name_from_value(payload.get(key))
         if value:
@@ -1875,6 +1874,26 @@ def _pick_profile_json(
             if token
         ]
 
+    def _extract_nozzle_hint(value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        match = re.search(r"(\d+(?:[.,]\d+)?)\s*nozzle\b", raw, flags=re.IGNORECASE)
+        if not match:
+            return ""
+        return _normalize_slice_nozzle_diameter(match.group(1))
+
+    def _candidate_nozzle_hints(path: Path, payload: Optional[dict[str, Any]]) -> list[str]:
+        names: list[str] = [str(path.stem or "").strip()]
+        if payload is not None:
+            names = [*_profile_json_name_candidates(payload), *names]
+        hints: list[str] = []
+        for name in names:
+            hint = _extract_nozzle_hint(name)
+            if hint:
+                hints.append(hint)
+        return _dedupe_preserve_order(hints)
+
     expected_type = _expected_profile_type_for_dir(profile_dir)
     candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
     for path in files:
@@ -1956,6 +1975,16 @@ def _pick_profile_json(
                 candidates = compatible_candidates
             elif str(requested_name or "").strip():
                 candidates = []
+
+    requested_nozzle = _extract_nozzle_hint(requested_name)
+    if requested_nozzle and candidates:
+        nozzle_candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
+        for path, tokens, payload in candidates:
+            hints = _candidate_nozzle_hints(path, payload)
+            if not hints or requested_nozzle in hints:
+                nozzle_candidates.append((path, tokens, payload))
+        if nozzle_candidates:
+            candidates = nozzle_candidates
 
     if not candidates:
         return str(files[0]) if fallback_first else ""
