@@ -4638,6 +4638,10 @@ def _slice_stl_to_gcode(
                 or ("cannot be mapped to correct extruders for multi-extruder printer" in err)
                 for err in errors_lower
             )
+            has_process_compat_error = any(
+                ("process not compatible with printer" in err)
+                for err in errors_lower
+            )
 
             # Some Bambu multi-extruder builds reject explicit nozzle overrides
             # with setup/nozzle errors; retry once without explicit nozzle values.
@@ -4854,7 +4858,7 @@ def _slice_stl_to_gcode(
                     # Final rescue for persistent multi-extruder mapping/compat issues:
                     # force single-extruder operation by overriding extruder_count=1 and
                     # sending only a single filament. We also keep print_extruder_id when provided.
-                    if filament_profile_value and has_filament_mapping_error:
+                    if filament_profile_value and (has_filament_mapping_error or has_process_compat_error):
                         forced_overrides = dict(normalized_process_overrides)
                         try:
                             # Preserve preferred print nozzle if present
