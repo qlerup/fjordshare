@@ -1894,6 +1894,24 @@ def _pick_profile_json(
                 hints.append(hint)
         return _dedupe_preserve_order(hints)
 
+    def _profile_nozzle_hint_from_json(profile_json: str) -> str:
+        raw_path = str(profile_json or "").strip()
+        if not raw_path:
+            return ""
+        profile_path = Path(raw_path)
+        payload = _read_profile_json_payload(profile_path)
+        names: list[str] = []
+        if payload is not None:
+            names.extend(_profile_json_name_candidates(payload))
+        stem_name = str(profile_path.stem or "").strip()
+        if stem_name:
+            names.append(stem_name)
+        for name in names:
+            hint = _extract_nozzle_hint(name)
+            if hint:
+                return hint
+        return ""
+
     expected_type = _expected_profile_type_for_dir(profile_dir)
     candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
     for path in files:
@@ -1977,11 +1995,14 @@ def _pick_profile_json(
                 candidates = []
 
     requested_nozzle = _extract_nozzle_hint(requested_name)
-    if requested_nozzle and candidates:
+    requested_has_nozzle = bool(requested_nozzle)
+    machine_nozzle = _profile_nozzle_hint_from_json(machine_profile_json) if expected_type == "filament" else ""
+    effective_nozzle = requested_nozzle or machine_nozzle
+    if effective_nozzle and candidates:
         nozzle_candidates: list[tuple[Path, list[str], Optional[dict[str, Any]]]] = []
         for path, tokens, payload in candidates:
             hints = _candidate_nozzle_hints(path, payload)
-            if not hints or requested_nozzle in hints:
+            if not hints or effective_nozzle in hints:
                 nozzle_candidates.append((path, tokens, payload))
         if nozzle_candidates:
             candidates = nozzle_candidates
@@ -1991,6 +2012,19 @@ def _pick_profile_json(
 
     wanted = _normalize_profile_token(requested_name)
     if wanted:
+        if expected_type == "filament" and machine_nozzle and not requested_has_nozzle:
+            nozzle_superset_matches: list[tuple[Path, int]] = []
+            for path, tokens, payload in candidates:
+                hints = _candidate_nozzle_hints(path, payload)
+                if hints and machine_nozzle not in hints:
+                    continue
+                lengths = [len(token) for token in tokens if (wanted in token) and (token != wanted)]
+                if lengths:
+                    nozzle_superset_matches.append((path, min(lengths)))
+            if nozzle_superset_matches:
+                nozzle_superset_matches.sort(key=lambda item: (item[1], item[0].name.lower()))
+                return str(nozzle_superset_matches[0][0])
+
         exact = [path for path, tokens, _payload in candidates if wanted in tokens]
         if exact:
             return str(exact[0])
@@ -3026,6 +3060,36 @@ def _build_support_override_load_settings(
         normalized_nozzle_left_diameter = normalized_nozzle_right_diameter
     if normalized_nozzle_right_flow and not normalized_nozzle_left_flow:
         normalized_nozzle_left_flow = normalized_nozzle_right_flow
+
+    # If nozzle settings simply mirror the selected machine defaults, avoid
+    # generating a temporary process override file.
+    if (
+        normalized_mode == "auto"
+        and not normalized_type
+        and not normalized_style
+        and not profile_process_overrides
+        and not force_runtime_compat
+    ):
+        machine_nozzle = ""
+        machine_nozzle_match = re.search(
+            r"(\d+(?:[.,]\d+)?)\s*nozzle\b",
+            str(printer_profile or ""),
+            flags=re.IGNORECASE,
+        )
+        if machine_nozzle_match:
+            machine_nozzle = _normalize_slice_nozzle_diameter(machine_nozzle_match.group(1))
+        left_d = normalized_nozzle_left_diameter
+        right_d = normalized_nozzle_right_diameter or left_d
+        left_f = normalized_nozzle_left_flow or "standard"
+        right_f = normalized_nozzle_right_flow or left_f
+        if (
+            machine_nozzle
+            and left_d
+            and right_d
+            and left_d == right_d == machine_nozzle
+            and left_f == right_f == "standard"
+        ):
+            return "", [], ""
 
     if (
         normalized_mode == "auto"
