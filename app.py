@@ -2747,8 +2747,34 @@ def _build_modern_profile_args(
     prefer_uploaded: bool = False,
     load_settings_override: str = "",
     auto_pick_when_blank: bool = True,
+    process_overrides: Optional[dict[str, Any]] = None,
 ) -> list[str]:
     args: list[str] = []
+    normalized_overrides = _normalize_slice_process_overrides(process_overrides or {})
+
+    def _preferred_single_extruder_from_overrides() -> int:
+        for key in ("print_extruder_id", "printer_extruder_id"):
+            if key not in normalized_overrides:
+                continue
+            raw_value = normalized_overrides.get(key)
+            if isinstance(raw_value, bool):
+                continue
+            if isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool):
+                try:
+                    parsed = int(round(float(raw_value)))
+                except Exception:
+                    parsed = 0
+                return parsed if parsed > 0 else 0
+            numbers = _extract_float_numbers(raw_value, max_items=1)
+            if numbers:
+                try:
+                    parsed = int(round(float(numbers[0])))
+                except Exception:
+                    parsed = 0
+                return parsed if parsed > 0 else 0
+        return 0
+
+    preferred_extruder_id = _preferred_single_extruder_from_overrides()
 
     effective_load_settings = str(load_settings_override or "").strip() or _effective_bambustudio_load_settings()
     effective_load_filaments = _effective_bambustudio_load_filaments()
@@ -2785,6 +2811,10 @@ def _build_modern_profile_args(
 
     if not effective_load_filaments and filament_json:
         required_extruders = _infer_required_extruder_count_for_slice(machine_json, process_json)
+        if preferred_extruder_id > 0 and required_extruders > 1:
+            # When user explicitly picks left/right nozzle, use one filament slot
+            # so Bambu auto mapping does not require dual-slot material mapping.
+            required_extruders = 1
         effective_filaments = _expand_load_filaments_for_extruders(filament_json, required_extruders)
         args.extend(["--load-filaments", effective_filaments])
 
@@ -3156,6 +3186,17 @@ def _build_support_override_load_settings(
         def _count_hint_items(value: Any) -> int:
             if value is None:
                 return 0
+            numeric_tokens = _extract_float_numbers(value, max_items=64)
+            extruder_ids: set[int] = set()
+            for token in numeric_tokens:
+                rounded = int(round(float(token)))
+                if rounded <= 0:
+                    continue
+                if abs(float(token) - float(rounded)) > 1e-6:
+                    continue
+                extruder_ids.add(rounded)
+            if extruder_ids:
+                return len(extruder_ids)
             if isinstance(value, (list, tuple, set)):
                 compact = [item for item in value if str(item or "").strip()]
                 return len(compact)
@@ -3802,6 +3843,53 @@ def _save_slicer_printer_bed_hidden(hidden_names: Any) -> list[str]:
     return normalized
 
 
+def _estimate_mesh_contact_z(mesh: Any, min_z: float, max_z: float) -> float:
+    """Estimate a stable Z contact plane and ignore sparse low outliers."""
+    contact_min = float(min_z)
+    contact_max = float(max_z)
+    if not math.isfinite(contact_min) or not math.isfinite(contact_max):
+        return contact_min
+
+    span = contact_max - contact_min
+    if span <= 1e-9:
+        return contact_min
+
+    vertices = getattr(mesh, "vertices", None)
+    if vertices is None:
+        return contact_min
+
+    try:
+        import numpy as np
+
+        values = np.asarray(vertices, dtype=float)
+        if values.ndim != 2 or values.shape[1] < 3 or values.shape[0] < 128:
+            return contact_min
+
+        z_values = np.asarray(values[:, 2], dtype=float)
+        if z_values.size < 128:
+            return contact_min
+
+        finite_mask = np.isfinite(z_values)
+        if finite_mask is None:
+            return contact_min
+        z_values = z_values[finite_mask]
+        if z_values.size < 128:
+            return contact_min
+
+        percentile_01 = float(np.percentile(z_values, 1.0))
+        if not math.isfinite(percentile_01):
+            return contact_min
+
+        outlier_gap = percentile_01 - contact_min
+        outlier_threshold = max(0.35, span * 0.05)
+        if outlier_gap > outlier_threshold:
+            return percentile_01
+    except Exception:
+        return contact_min
+
+    return contact_min
+
+
 def _write_centered_stl_for_slicing(
     input_stl: Path,
     output_stl: Path,
@@ -3870,7 +3958,8 @@ def _write_centered_stl_for_slicing(
 
         tx = -((mins[0] + maxs[0]) / 2.0)
         ty = -((mins[1] + maxs[1]) / 2.0)
-        tz = -mins[2]
+        contact_z = _estimate_mesh_contact_z(centered, mins[2], maxs[2])
+        tz = -contact_z
 
         offset_x = float(placement_x_mm or 0.0)
         offset_y = float(placement_y_mm or 0.0)
@@ -4187,6 +4276,7 @@ def _slice_stl_to_gcode(
             prefer_uploaded=False,
             load_settings_override=support_load_settings_override,
             auto_pick_when_blank=auto_pick_blank_profiles,
+            process_overrides=normalized_process_overrides,
         )
         modern_base = [executable, "--slice", "0", *modern_profile_args]
 
@@ -4198,6 +4288,7 @@ def _slice_stl_to_gcode(
             prefer_uploaded=False,
             load_settings_override=support_load_settings_override,
             auto_pick_when_blank=auto_pick_blank_profiles,
+            process_overrides=normalized_process_overrides,
         )
         fallback_base = [executable, "--slice", "0", *fallback_profile_args]
         _trace(
@@ -4831,6 +4922,8 @@ def _slice_debug_profile_snapshot(profile_path: Path) -> dict[str, Any]:
 
     interesting_keys = (
         "extruder_count",
+        "print_extruder_id",
+        "printer_extruder_id",
         "different_extruder",
         "new_printer_name",
         "nozzle_volume_type",

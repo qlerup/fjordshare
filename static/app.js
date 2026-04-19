@@ -4174,6 +4174,164 @@
     return box;
   }
 
+  function estimateSliceContactPlaneFromSamples(samples, fallbackMinZ = 0, fallbackMaxZ = 0) {
+    const minZ = Number(fallbackMinZ);
+    const maxZ = Number(fallbackMaxZ);
+    if (!Number.isFinite(minZ) || !Number.isFinite(maxZ)) {
+      return {
+        contactZ: Number.isFinite(minZ) ? minZ : 0,
+        outlierUsed: false,
+      };
+    }
+
+    const span = Math.max(0, maxZ - minZ);
+    if (!Array.isArray(samples) || samples.length < 96 || span <= 1e-9) {
+      return {
+        contactZ: minZ,
+        outlierUsed: false,
+      };
+    }
+
+    const sorted = samples
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b);
+    if (sorted.length < 96) {
+      return {
+        contactZ: minZ,
+        outlierUsed: false,
+      };
+    }
+
+    const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * 0.01)));
+    const p01 = Number(sorted[idx]);
+    if (!Number.isFinite(p01)) {
+      return {
+        contactZ: minZ,
+        outlierUsed: false,
+      };
+    }
+
+    const outlierGap = p01 - minZ;
+    const outlierThreshold = Math.max(0.35, span * 0.05);
+    if (outlierGap > outlierThreshold) {
+      return {
+        contactZ: p01,
+        outlierUsed: true,
+      };
+    }
+
+    return {
+      contactZ: minZ,
+      outlierUsed: false,
+    };
+  }
+
+  function estimateSliceGeometryContactZ(geometry) {
+    if (!geometry || typeof geometry.getAttribute !== "function") {
+      return {
+        contactZ: 0,
+        hasOutlier: false,
+      };
+    }
+
+    const position = geometry.getAttribute("position");
+    if (!position || !position.count) {
+      return {
+        contactZ: 0,
+        hasOutlier: false,
+      };
+    }
+
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    const samples = [];
+
+    const raw = position.array;
+    const itemSize = Number(position.itemSize || 3);
+    if (raw && typeof raw.length === "number" && itemSize >= 3) {
+      const count = Math.floor(raw.length / itemSize);
+      const stride = Math.max(1, Math.floor(count / 20000));
+      for (let i = 0; i < count; i += 1) {
+        const z = Number(raw[(i * itemSize) + 2]);
+        if (!Number.isFinite(z)) continue;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+        if (i % stride === 0) samples.push(z);
+      }
+    } else {
+      const count = Number(position.count || 0);
+      const stride = Math.max(1, Math.floor(count / 20000));
+      for (let i = 0; i < count; i += 1) {
+        const z = Number(position.getZ(i));
+        if (!Number.isFinite(z)) continue;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+        if (i % stride === 0) samples.push(z);
+      }
+    }
+
+    if (!Number.isFinite(minZ) || !Number.isFinite(maxZ)) {
+      return {
+        contactZ: 0,
+        hasOutlier: false,
+      };
+    }
+
+    const contact = estimateSliceContactPlaneFromSamples(samples, minZ, maxZ);
+    return {
+      contactZ: Number(contact.contactZ || minZ),
+      hasOutlier: !!contact.outlierUsed,
+    };
+  }
+
+  function estimateSliceModelContactZ(preview = state.slicePreview) {
+    if (!preview || !preview.THREE || !preview.modelGroup) return 0;
+
+    const bounds = getSliceModelBounds(preview);
+    if (!bounds) return 0;
+
+    const minZ = Number(bounds.min.z);
+    const maxZ = Number(bounds.max.z);
+    if (!Number.isFinite(minZ) || !Number.isFinite(maxZ)) return 0;
+
+    const THREE = preview.THREE;
+    const temp = new THREE.Vector3();
+    const samples = [];
+
+    preview.modelGroup.updateMatrixWorld(true);
+    preview.modelGroup.traverse((node) => {
+      if (!node || !node.isMesh || !node.geometry || typeof node.geometry.getAttribute !== "function") return;
+      const position = node.geometry.getAttribute("position");
+      if (!position || !position.count) return;
+
+      const raw = position.array;
+      const itemSize = Number(position.itemSize || 3);
+      if (raw && typeof raw.length === "number" && itemSize >= 3) {
+        const count = Math.floor(raw.length / itemSize);
+        const stride = Math.max(1, Math.floor(count / 12000));
+        for (let i = 0; i < count; i += stride) {
+          const base = i * itemSize;
+          temp.set(Number(raw[base]) || 0, Number(raw[base + 1]) || 0, Number(raw[base + 2]) || 0).applyMatrix4(node.matrixWorld);
+          const z = Number(temp.z);
+          if (Number.isFinite(z)) samples.push(z);
+        }
+        return;
+      }
+
+      const count = Number(position.count || 0);
+      const stride = Math.max(1, Math.floor(count / 12000));
+      for (let i = 0; i < count; i += stride) {
+        temp.fromBufferAttribute(position, i).applyMatrix4(node.matrixWorld);
+        const z = Number(temp.z);
+        if (Number.isFinite(z)) samples.push(z);
+      }
+    });
+
+    const contact = estimateSliceContactPlaneFromSamples(samples, minZ, maxZ);
+    return Number(contact.contactZ || minZ);
+  }
+
   function renderSlicePreview() {
     const preview = state.slicePreview;
     if (!preview || !preview.renderer || !preview.scene || !preview.camera) return;
@@ -4402,7 +4560,9 @@
     const depthMm = Math.max(0, Number(box.max.y) - Number(box.min.y));
     const fits = widthMm <= (preview.bedWidthMm + 0.05) && depthMm <= (preview.bedDepthMm + 0.05);
     const plateTopZ = getSlicePreviewPlateTopZ(preview);
-    const minZ = Number(box.min.z) - plateTopZ;
+    const useRobustContact = !!(preview.modelGroup && preview.modelGroup.userData && preview.modelGroup.userData.sliceContactOutlier);
+    const modelContactZ = useRobustContact ? estimateSliceModelContactZ(preview) : Number(box.min.z);
+    const minZ = Number(modelContactZ) - plateTopZ;
     const maxZ = Number(box.max.z) - plateTopZ;
 
     setSlicePreviewFootprint(
@@ -4975,14 +5135,22 @@
     // Snap preview mesh to plate after rotation so it mirrors backend slicing behavior.
     preview.modelGroup.position.set(0, 0, 0);
     try {
-      const box = getSliceModelBounds(preview);
-      const minZ = box ? Number(box.min.z) : 0;
-      const snappedOffset = Number.isFinite(minZ) ? (-minZ) : 0;
       const targetMinZ = getSlicePreviewPlateTopZ(preview) + liftMm;
-      preview.modelGroup.position.z = targetMinZ + snappedOffset;
+      const useRobustContact = !!(preview.modelGroup.userData && preview.modelGroup.userData.sliceContactOutlier);
+      const contactZ = useRobustContact
+        ? estimateSliceModelContactZ(preview)
+        : (() => {
+          const box = getSliceModelBounds(preview);
+          return box ? Number(box.min.z) : 0;
+        })();
+      preview.modelGroup.position.z = targetMinZ - (Number.isFinite(contactZ) ? contactZ : 0);
 
-      const verifyBox = getSliceModelBounds(preview);
-      const verifyMinZ = verifyBox ? Number(verifyBox.min.z) : NaN;
+      const verifyMinZ = useRobustContact
+        ? estimateSliceModelContactZ(preview)
+        : (() => {
+          const verifyBox = getSliceModelBounds(preview);
+          return verifyBox ? Number(verifyBox.min.z) : NaN;
+        })();
       if (Number.isFinite(verifyMinZ)) {
         const residual = targetMinZ - verifyMinZ;
         if (Math.abs(residual) > 1e-5) {
@@ -5155,7 +5323,9 @@
 
     const centerX = (Number(box.min.x) + Number(box.max.x)) / 2;
     const centerY = (Number(box.min.y) + Number(box.max.y)) / 2;
-    geometry.translate(-centerX, -centerY, -Number(box.min.z));
+    const contact = estimateSliceGeometryContactZ(geometry);
+    const contactZ = Number.isFinite(Number(contact.contactZ)) ? Number(contact.contactZ) : Number(box.min.z);
+    geometry.translate(-centerX, -centerY, -contactZ);
     // Translation invalidates precomputed bounds; refresh so snap-to-plate uses true min Z.
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
@@ -5167,6 +5337,7 @@
 
     const modelGroup = new THREE.Group();
     modelGroup.add(mesh);
+    modelGroup.userData.sliceContactOutlier = !!contact.hasOutlier;
     preview.scene.add(modelGroup);
     preview.modelGroup = modelGroup;
     rebuildSliceRotateAxisArrows(preview);
