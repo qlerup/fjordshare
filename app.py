@@ -2845,10 +2845,11 @@ def _build_modern_profile_args(
 
     if not effective_load_filaments and filament_json:
         required_extruders = _infer_required_extruder_count_for_slice(machine_json, process_json)
-        if preferred_extruder_id > 0 and required_extruders > 1:
-            # When user explicitly picks left/right nozzle, use one filament slot
-            # so Bambu auto mapping does not require dual-slot material mapping.
-            required_extruders = 1
+        # Always provide filaments for all required extruders.
+        # Some Bambu CLI versions reject auto-mapping for multi-extruder printers
+        # when only a single filament is supplied, even if a preferred
+        # print_extruder_id is set. Duplicating the same filament JSON for both
+        # slots allows the slicer to map correctly and avoids return -66.
         effective_filaments = _expand_load_filaments_for_extruders(filament_json, required_extruders)
         args.extend(["--load-filaments", effective_filaments])
 
