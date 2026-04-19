@@ -5277,6 +5277,16 @@ def _write_slice_debug_record(
 
 
 def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
+    # Hook: mark slice started for status bar
+    try:
+        f_id = int(payload.get("file_id") or 0)
+    except Exception:
+        f_id = 0
+    if f_id:
+        _slice_stats_mark_started(f_id)
+        if _slice_is_cancelled(f_id):
+            _slice_stats_mark_error(f_id)
+            raise RuntimeError("Slice canceled by user")
     file_id = int(payload.get("file_id") or 0)
     requested_by = str(payload.get("requested_by") or "").strip()
     printer_profile = str(payload.get("printer_profile") or "").strip()
@@ -5555,6 +5565,71 @@ def enqueue_slice_job(
     normalized_support_type = _normalize_slice_support_type(support_type)
     normalized_support_style = _normalize_slice_support_style(support_style)
     normalized_nozzle_left_diameter = _normalize_slice_nozzle_diameter(nozzle_left_diameter)
+
+
+        # ---- Slice cancel + status helpers and endpoints ----
+        try:
+            from threading import Lock
+        except Exception:  # pragma: no cover
+            Lock = None  # type: ignore
+
+        # Best-effort in-memory state (resets on restart)
+        SLICE_CANCELLED: set[int] = set()
+        SLICER_STATS: dict[str, int] = {"total": 0, "completed": 0, "processing": 0, "errors": 0}
+        SLICER_PROCESSING_IDS: set[int] = set()
+        SLICER_LOCK = Lock() if Lock else None  # type: ignore
+
+        def _slice_stats_mark_started(file_id: int) -> None:
+            if not SLICER_LOCK:
+                return
+            with SLICER_LOCK:  # type: ignore
+                SLICER_STATS["total"] += 1
+                SLICER_STATS["processing"] += 1
+                SLICER_PROCESSING_IDS.add(int(file_id))
+
+        def _slice_stats_mark_success(file_id: int) -> None:
+            if not SLICER_LOCK:
+                return
+            with SLICER_LOCK:  # type: ignore
+                SLICER_STATS["processing"] = max(0, SLICER_STATS.get("processing", 0) - 1)
+                SLICER_STATS["completed"] = SLICER_STATS.get("completed", 0) + 1
+                SLICER_PROCESSING_IDS.discard(int(file_id))
+
+        def _slice_stats_mark_error(file_id: int) -> None:
+            if not SLICER_LOCK:
+                return
+            with SLICER_LOCK:  # type: ignore
+                SLICER_STATS["processing"] = max(0, SLICER_STATS.get("processing", 0) - 1)
+                SLICER_STATS["errors"] = SLICER_STATS.get("errors", 0) + 1
+                SLICER_PROCESSING_IDS.discard(int(file_id))
+
+        def _slice_is_cancelled(file_id: int) -> bool:
+            if not SLICER_LOCK:
+                return False
+            with SLICER_LOCK:  # type: ignore
+                return int(file_id) in SLICE_CANCELLED
+
+        def _slice_cancel_mark(file_id: int) -> None:
+            if not SLICER_LOCK:
+                return
+            with SLICER_LOCK:  # type: ignore
+                SLICE_CANCELLED.add(int(file_id))
+
+
+        @app.get("/api/slice/status")
+        def api_slice_status():
+            return ok_json(
+                {
+                    "stats": SLICER_STATS,
+                    "processing_ids": sorted(list(SLICER_PROCESSING_IDS)),
+                }
+            )
+
+
+        @app.post("/api/files/<int:file_id>/slice/cancel")
+        def api_slice_cancel(file_id: int):
+            _slice_cancel_mark(int(file_id))
+            return ok_json({"canceled": True, "file_id": int(file_id)})
     normalized_nozzle_right_diameter = _normalize_slice_nozzle_diameter(nozzle_right_diameter)
     normalized_nozzle_left_flow = _normalize_slice_nozzle_flow(nozzle_left_flow)
     normalized_nozzle_right_flow = _normalize_slice_nozzle_flow(nozzle_right_flow)

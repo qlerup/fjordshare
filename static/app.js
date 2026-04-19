@@ -4353,6 +4353,82 @@
     preview.renderer.render(preview.scene, preview.camera);
   }
 
+  // ---- Lightweight global slice status bar + cancel ----
+  async function fetchSliceStatus() {
+    try {
+      const res = await fetch("/api/slice/status");
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  async function cancelSliceJob(fileId) {
+    try {
+      await fetch(`/api/files/${fileId}/slice/cancel`, { method: "POST" });
+    } catch (_err) {}
+  }
+
+  function ensureSliceStatusBar() {
+    let bar = document.getElementById("sliceStatusBar");
+    if (bar) return bar;
+    bar = document.createElement("div");
+    bar.id = "sliceStatusBar";
+    bar.style.position = "fixed";
+    bar.style.right = "20px";
+    bar.style.bottom = "20px";
+    bar.style.zIndex = "9999";
+    bar.style.background = "rgba(20,30,40,0.9)";
+    bar.style.color = "#dfe8f1";
+    bar.style.border = "1px solid #2a3b4a";
+    bar.style.borderRadius = "8px";
+    bar.style.padding = "10px 12px";
+    bar.style.fontSize = "12px";
+    bar.style.boxShadow = "0 2px 10px rgba(0,0,0,0.35)";
+    document.body.appendChild(bar);
+    return bar;
+  }
+
+  async function pollSliceStatusLoop() {
+    const bar = ensureSliceStatusBar();
+    const data = await fetchSliceStatus();
+    if (!data || !data.ok) {
+      bar.textContent = "";
+      setTimeout(pollSliceStatusLoop, 3000);
+      return;
+    }
+    const stats = (data && data.data && data.data.stats) || { total: 0, completed: 0, processing: 0, errors: 0 };
+    const ids = (data && data.data && data.data.processing_ids) || [];
+
+    // Render text
+    const text = `Slicing: ${stats.completed}/${stats.total} • behandler: ${stats.processing} • fejl: ${stats.errors}`;
+    bar.innerHTML = `<span>${text}</span>`;
+
+    if (ids.length) {
+      const btn = document.createElement("button");
+      btn.textContent = "Stop";
+      btn.style.marginLeft = "8px";
+      btn.style.padding = "4px 8px";
+      btn.style.borderRadius = "6px";
+      btn.style.border = "1px solid #3c4d5e";
+      btn.style.background = "#314456";
+      btn.style.color = "#fff";
+      btn.onclick = () => {
+        ids.forEach((id) => cancelSliceJob(id));
+      };
+      bar.appendChild(btn);
+    }
+
+    setTimeout(pollSliceStatusLoop, 2500);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => pollSliceStatusLoop());
+  } else {
+    pollSliceStatusLoop();
+  }
+
   function resizeSlicePreview(preview = state.slicePreview) {
     if (!preview || !preview.renderer || !preview.camera || !preview.canvas) return;
     const rect = preview.canvas.getBoundingClientRect();
