@@ -3885,14 +3885,23 @@
       const modelBounds = getSliceModelBounds(preview);
       const modelMinZ = modelBounds ? Number(modelBounds.min.z) : Number.NaN;
       if (Number.isFinite(modelMinZ)) {
-        const currentBedZ = (preview.bedMesh && Number.isFinite(Number(preview.bedMesh.position.z)))
-          ? Number(preview.bedMesh.position.z)
-          : Number(preview.plateTopZ || 0);
-        const delta = modelMinZ - currentBedZ;
-
-        if (preview.plateGroup && Math.abs(delta) > 1e-6) {
-          preview.plateGroup.position.z += delta;
-          preview.plateGroup.updateMatrixWorld(true);
+        if (preview.plateGroup) {
+          let contactZ = Number.NaN;
+          try {
+            contactZ = resolveSlicePreviewModelContactZ(preview, modelBounds);
+          } catch (_err) {
+            contactZ = Number.NaN;
+          }
+          if (!Number.isFinite(contactZ)) {
+            contactZ = getSlicePreviewPlateTopZ(preview);
+          }
+          if (Number.isFinite(contactZ)) {
+            const delta = modelMinZ - contactZ;
+            if (Math.abs(delta) > 1e-6) {
+              preview.plateGroup.position.z += delta;
+              preview.plateGroup.updateMatrixWorld(true);
+            }
+          }
         }
 
         preview.plateTopZ = modelMinZ;
