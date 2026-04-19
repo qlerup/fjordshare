@@ -4963,6 +4963,61 @@ def _slice_stl_to_gcode(
                                 f"process+filament-auto-fallback: {str(retry_process_filament_auto_exc)[:350]}"
                             )
 
+            # Final compatibility attempt for models reported as "Nothing to be sliced"
+            # or similar empty-plate messages. Some Bambu CLI builds succeed only via
+            # legacy export-gcode path without modern 3MF `--load-settings` chaining.
+            has_nothing_to_be_sliced_error = any(
+                ("nothing to be sliced" in err)
+                or ("print is empty" in err)
+                or ("plate is empty" in err)
+                for err in errors_lower
+            )
+            if has_nothing_to_be_sliced_error:
+                _trace(
+                    "retry-start",
+                    {
+                        "strategy": "legacy-export-gcode",
+                        "reason": "modern 3MF path reports 'Nothing to be sliced'",
+                    },
+                )
+                try:
+                    _slice_stl_to_gcode(
+                        input_stl,
+                        output_gcode,
+                        printer_profile=printer_profile_value,
+                        print_profile=print_profile_value,
+                        filament_profile=filament_profile_value,
+                        rotation_x_degrees=rotation_x_degrees,
+                        rotation_y_degrees=rotation_y_degrees,
+                        rotation_z_degrees=rotation_z_degrees,
+                        lift_z_mm=normalized_lift_z,
+                        support_mode=normalized_support_mode,
+                        support_type="",
+                        support_style="",
+                        nozzle_left_diameter="",
+                        nozzle_right_diameter="",
+                        nozzle_left_flow="",
+                        nozzle_right_flow="",
+                        bed_width_mm=normalized_bed_width,
+                        bed_depth_mm=normalized_bed_depth,
+                        process_overrides={},
+                        allow_support_override_fallback=False,
+                        force_profile_runtime_compat=False,
+                        auto_pick_blank_profiles=auto_pick_blank_profiles,
+                        debug_trace=debug_trace,
+                    )
+                    _trace("retry-success", {"strategy": "legacy-export-gcode"})
+                    return
+                except Exception as legacy_exc:
+                    _trace(
+                        "retry-failed",
+                        {
+                            "strategy": "legacy-export-gcode",
+                            "error": str(legacy_exc),
+                        },
+                    )
+                    errors.append(f"legacy-export-gcode-fallback: {str(legacy_exc)[:350]}")
+
             if any("unable to create plate triangles" in err for err in errors_lower):
                 guidance = (
                     " | Mangler muligvis machine/process/filament settings til modern CLI. "
