@@ -1629,6 +1629,56 @@
     return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
   }
 
+  function sliceProfilePrinterFamilyFromName(name = "") {
+    const compact = String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (!compact) return "";
+    const padded = ` ${compact} `;
+    if (padded.includes(" h2d ")) return "h2d";
+    if (padded.includes(" h2c ")) return "h2c";
+    if (padded.includes(" a1mini ") || padded.includes(" a1 mini ")) return "a1mini";
+    if (padded.includes(" a1 ")) return "a1";
+    if (
+      padded.includes(" x1c ")
+      || padded.includes(" x1 ")
+      || padded.includes(" p1s ")
+      || padded.includes(" p1p ")
+      || padded.includes(" p1 ")
+    ) {
+      return "x1p1";
+    }
+    return "";
+  }
+
+  function filteredSliceFilamentProfilesForPrinter(filamentProfiles, printerProfileName = "") {
+    const all = toStringList(filamentProfiles);
+    if (!all.length) return all;
+
+    const printerFamily = sliceProfilePrinterFamilyFromName(printerProfileName);
+    if (!printerFamily) return all;
+
+    const allowedFamilies = new Set([printerFamily]);
+    const filtered = all.filter((filamentProfileName) => {
+      const filamentFamily = sliceProfilePrinterFamilyFromName(filamentProfileName);
+      // Keep generic profiles visible even when a printer family is selected.
+      if (!filamentFamily) return true;
+      return allowedFamilies.has(filamentFamily);
+    });
+    return filtered.length ? filtered : all;
+  }
+
+  function applySliceFilamentFilterForSelectedPrinter(preferredValue = "") {
+    if (!els.sliceFilamentProfileSelect) return;
+    const allFilaments = state.sliceProfiles && typeof state.sliceProfiles === "object"
+      ? toStringList(state.sliceProfiles.filament_profiles)
+      : [];
+    const selectedPrinter = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
+    const filteredFilaments = filteredSliceFilamentProfilesForPrinter(allFilaments, selectedPrinter);
+    const currentValue = String(els.sliceFilamentProfileSelect.value || "").trim();
+    renderSliceSelect(els.sliceFilamentProfileSelect, filteredFilaments, "Vælg filamentprofil", false);
+    setSliceSelectValue(els.sliceFilamentProfileSelect, preferredValue || currentValue);
+    ensureSliceSelectHasValue(els.sliceFilamentProfileSelect);
+  }
+
   function normalizeSliceBedSize(candidate) {
     if (!candidate || typeof candidate !== "object") return null;
     const width = Number(candidate.width_mm);
@@ -5197,11 +5247,10 @@
       renderSliceSelect(els.sliceFilamentProfileSelect, profiles.filament_profiles, "Vælg filamentprofil", false);
 
       setSliceSelectValue(els.slicePrinterSelect, state.lastSliceSelection.printer_profile);
+      ensureSliceSelectHasValue(els.slicePrinterSelect);
       setSliceSelectValue(els.slicePrintProfileSelect, state.lastSliceSelection.print_profile);
       setSliceSelectValue(els.sliceProcessProfileSelect, state.lastSliceSelection.print_profile);
-      setSliceSelectValue(els.sliceFilamentProfileSelect, state.lastSliceSelection.filament_profile);
-      ensureSliceSelectHasValue(els.slicePrinterSelect);
-      ensureSliceSelectHasValue(els.sliceFilamentProfileSelect);
+      applySliceFilamentFilterForSelectedPrinter(state.lastSliceSelection.filament_profile);
       syncSliceProcessProfileSelectFromMain();
       if (!String((els.sliceProcessProfileSelect && els.sliceProcessProfileSelect.value) || "").trim()) {
         const firstExplicitProcessProfile = firstNonEmptySliceSelectValue(els.sliceProcessProfileSelect)
@@ -9399,6 +9448,7 @@
         if (els.sliceKnownPrinterSelect) {
           renderKnownPrinterSelect(els.sliceKnownPrinterSelect, guessed);
         }
+        applySliceFilamentFilterForSelectedPrinter();
         refreshSlicePreviewBedFromSelection();
         loadSliceProcessSettings(true).catch((err) => {
           showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
