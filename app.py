@@ -454,17 +454,7 @@ def _latest_slicer_profile_file(paths: Iterable[Path]) -> Optional[Path]:
 
 def _effective_bambustudio_config_path() -> str:
     configured = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
-    if configured:
-        return configured
-
-    uploaded_configs = _list_slicer_profile_files(SLICER_PROFILE_CONFIG_DIR, _slicer_profile_allowed_exts("config"))
-    latest_uploaded = _latest_slicer_profile_file(uploaded_configs)
-    if latest_uploaded is not None:
-        return str(latest_uploaded)
-
-    if SLICER_PROFILE_CONFIG_PATH.exists() and SLICER_PROFILE_CONFIG_PATH.is_file():
-        return str(SLICER_PROFILE_CONFIG_PATH)
-    return ""
+    return configured if configured else ""
 
 
 def _effective_bambustudio_load_settings() -> str:
@@ -1511,9 +1501,6 @@ def _extract_printer_bed_size_mm(payload: Optional[dict[str, Any]]) -> Optional[
 def _collect_printer_profile_bed_sizes(profile_root: str = "") -> dict[str, dict[str, float]]:
     profile_dirs: list[tuple[str, Path]] = []
 
-    if SLICER_PROFILE_PRINTER_DIR.exists() and SLICER_PROFILE_PRINTER_DIR.is_dir():
-        profile_dirs.append(("uploaded", SLICER_PROFILE_PRINTER_DIR))
-
     env_profile_root = str(BAMBUSTUDIO_PROFILE_ROOT or "").strip()
     if env_profile_root:
         env_machine_dir = Path(env_profile_root) / "machine"
@@ -1527,9 +1514,7 @@ def _collect_printer_profile_bed_sizes(profile_root: str = "") -> dict[str, dict
             profile_dirs.append(("discovered", discovered_machine_dir))
 
     beds: dict[str, dict[str, float]] = {}
-    beds_source: dict[str, str] = {}
-
-    for source, machine_dir in profile_dirs:
+    for _source, machine_dir in profile_dirs:
         files = _list_slicer_profile_files(machine_dir, {".json"})
         for profile_path in files:
             payload = _read_profile_json_payload(profile_path)
@@ -1552,19 +1537,13 @@ def _collect_printer_profile_bed_sizes(profile_root: str = "") -> dict[str, dict
                 continue
 
             for name in unique_names:
-                normalized_name = _normalize_profile_token(name)
-                if not normalized_name:
-                    continue
-
-                existing_source = beds_source.get(normalized_name, "")
-                if existing_source == "uploaded" and source != "uploaded":
+                if not _normalize_profile_token(name):
                     continue
 
                 beds[name] = {
                     "width_mm": float(bed_size[0]),
                     "depth_mm": float(bed_size[1]),
                 }
-                beds_source[normalized_name] = source
 
     return beds
 
@@ -1575,69 +1554,22 @@ def _read_bambustudio_profiles() -> dict:
     filament_profiles: list[str] = []
 
     parse_error = ""
-    source = "env"
-    configured_config_raw = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
-    config_path_raw = _effective_bambustudio_config_path()
+    source = "appimage"
+    config_path_raw = ""
     profile_root = ""
 
-    if config_path_raw:
-        source = "config" if configured_config_raw else "upload"
-        config_path = Path(config_path_raw)
-        if not config_path.exists() or not config_path.is_file():
-            parse_error = f"Config-fil findes ikke: {config_path}"
-        else:
-            parser = configparser.ConfigParser(interpolation=None, strict=False)
-            parser.optionxform = str
-            try:
-                text = config_path.read_text(encoding="utf-8", errors="ignore")
-                parser.read_string(text)
-                for section in parser.sections():
-                    printer_name = _extract_profile_name_from_section(section, ("printer:", "printer "))
-                    if printer_name:
-                        printers.append(printer_name)
-
-                    process_name = _extract_profile_name_from_section(section, ("print:", "process:", "process "))
-                    if process_name:
-                        print_profiles.append(process_name)
-
-                    filament_name = _extract_profile_name_from_section(section, ("filament:", "filament "))
-                    if filament_name:
-                        filament_profiles.append(filament_name)
-            except Exception as exc:
-                parse_error = f"Kunne ikke læse config-profiler: {exc}"
-
-    printers.extend(_split_profile_env_list(BAMBUSTUDIO_PRINTER_PROFILES))
-    print_profiles.extend(_split_profile_env_list(BAMBUSTUDIO_PRINT_PROFILES))
-    filament_profiles.extend(_split_profile_env_list(BAMBUSTUDIO_FILAMENT_PROFILES))
-
-    uploaded_printers = _list_profile_names_from_dir(SLICER_PROFILE_PRINTER_DIR)
-    uploaded_print_profiles = _list_profile_names_from_dir(SLICER_PROFILE_PRINT_SETTINGS_DIR)
-    uploaded_filament_profiles = _list_profile_names_from_dir(SLICER_PROFILE_FILAMENT_DIR)
-    if uploaded_printers or uploaded_print_profiles or uploaded_filament_profiles:
-        printers.extend(uploaded_printers)
-        print_profiles.extend(uploaded_print_profiles)
-        filament_profiles.extend(uploaded_filament_profiles)
-        if source == "env":
-            source = "upload"
-        if not profile_root:
-            profile_root = str(SLICER_PROFILE_DIR)
-
-    if not printers or not print_profiles or not filament_profiles:
-        try:
-            executable = _resolve_bambustudio_executable()
-            discovered_root = _find_bambu_profile_root(executable)
-            if discovered_root:
-                profile_root = str(discovered_root)
-                if not printers:
-                    printers.extend(_list_profile_names_from_dir(discovered_root / "machine"))
-                if not print_profiles:
-                    print_profiles.extend(_list_profile_names_from_dir(discovered_root / "process"))
-                if not filament_profiles:
-                    filament_profiles.extend(_list_profile_names_from_dir(discovered_root / "filament"))
-                if source == "env":
-                    source = "appimage"
-        except Exception:
-            pass
+    try:
+        executable = _resolve_bambustudio_executable()
+        discovered_root = _find_bambu_profile_root(executable)
+        if discovered_root:
+            profile_root = str(discovered_root)
+            printers.extend(_list_profile_names_from_dir(discovered_root / "machine"))
+            print_profiles.extend(_list_profile_names_from_dir(discovered_root / "process"))
+            filament_profiles.extend(_list_profile_names_from_dir(discovered_root / "filament"))
+    except Exception as exc:
+        parse_error = str(exc)
+    if not profile_root and not parse_error:
+        parse_error = "Kunne ikke finde Bambu Studio profilmappe."
 
     printer_beds = _collect_printer_profile_bed_sizes(profile_root=profile_root)
 
@@ -2063,7 +1995,7 @@ def _resolve_selected_profile_jsons(
     printer_profile: str,
     print_profile: str,
     filament_profile: str,
-    prefer_uploaded: bool = True,
+    prefer_uploaded: bool = False,
     auto_pick_when_blank: bool = True,
 ) -> tuple[str, str, str]:
     discovered_profile_root: Optional[Path] = None
@@ -2461,9 +2393,9 @@ def _extract_effective_process_settings_from_payload(payload: Optional[dict[str,
     return settings, setting_options
 
 
-def _candidate_process_profile_dirs(executable: str) -> list[Path]:
+def _candidate_process_profile_dirs(executable: str, include_uploaded: bool = False) -> list[Path]:
     out: list[Path] = []
-    if SLICER_PROFILE_PRINT_SETTINGS_DIR.exists() and SLICER_PROFILE_PRINT_SETTINGS_DIR.is_dir():
+    if include_uploaded and SLICER_PROFILE_PRINT_SETTINGS_DIR.exists() and SLICER_PROFILE_PRINT_SETTINGS_DIR.is_dir():
         out.append(SLICER_PROFILE_PRINT_SETTINGS_DIR)
 
     discovered_root = _find_bambu_profile_root(executable)
@@ -2487,13 +2419,14 @@ def _resolve_effective_process_profile_settings(
     executable: str,
     process_json: str,
     machine_json: str = "",
+    include_uploaded: bool = False,
     max_depth: int = 12,
 ) -> tuple[dict[str, Any], dict[str, list[Any]], list[str]]:
     start_path = Path(str(process_json or "").strip())
     if not start_path.exists() or not start_path.is_file():
         return {}, {}, []
 
-    profile_dirs = _candidate_process_profile_dirs(executable)
+    profile_dirs = _candidate_process_profile_dirs(executable, include_uploaded=include_uploaded)
     if not profile_dirs:
         profile_dirs = [start_path.parent]
 
@@ -2589,13 +2522,14 @@ def _resolve_effective_process_profile_payload(
     executable: str,
     process_json: str,
     machine_json: str = "",
+    include_uploaded: bool = False,
     max_depth: int = 12,
 ) -> tuple[dict[str, Any], list[str]]:
     start_path = Path(str(process_json or "").strip())
     if not start_path.exists() or not start_path.is_file():
         return {}, []
 
-    profile_dirs = _candidate_process_profile_dirs(executable)
+    profile_dirs = _candidate_process_profile_dirs(executable, include_uploaded=include_uploaded)
     if not profile_dirs:
         profile_dirs = [start_path.parent]
 
@@ -2672,9 +2606,10 @@ def _resolve_effective_process_profile_payload(
 
 def _collect_process_settings_catalog(
     executable: str,
+    include_uploaded: bool = False,
     max_files: int = 800,
 ) -> tuple[dict[str, Any], dict[str, list[Any]]]:
-    profile_dirs = _candidate_process_profile_dirs(executable)
+    profile_dirs = _candidate_process_profile_dirs(executable, include_uploaded=include_uploaded)
     if not profile_dirs:
         return {}, {}
 
@@ -2756,7 +2691,7 @@ def _build_modern_profile_args(
     printer_profile: str,
     print_profile: str,
     filament_profile: str,
-    prefer_uploaded: bool = True,
+    prefer_uploaded: bool = False,
     load_settings_override: str = "",
     auto_pick_when_blank: bool = True,
 ) -> list[str]:
@@ -3019,7 +2954,7 @@ def _build_support_override_load_settings(
         str(printer_profile or "").strip(),
         str(print_profile or "").strip(),
         str(filament_profile or "").strip(),
-        prefer_uploaded=True,
+        prefer_uploaded=False,
     )
 
     if not machine_json or not process_json:
@@ -3647,7 +3582,7 @@ def _validate_selected_slice_profiles(
         printer_profile,
         print_profile,
         filament_profile,
-        prefer_uploaded=True,
+        prefer_uploaded=False,
     )
 
     if printer_profile and not machine_json:
@@ -4102,7 +4037,7 @@ def _slice_stl_to_gcode(
                 printer_profile_value,
                 print_profile_value,
                 filament_profile_value,
-                prefer_uploaded=True,
+                prefer_uploaded=False,
             )
             if machine_json:
                 payload = _read_profile_json_payload(Path(machine_json))
@@ -4196,7 +4131,7 @@ def _slice_stl_to_gcode(
             printer_profile_value,
             print_profile_value,
             filament_profile_value,
-            prefer_uploaded=True,
+            prefer_uploaded=False,
             load_settings_override=support_load_settings_override,
             auto_pick_when_blank=auto_pick_blank_profiles,
         )
@@ -4901,16 +4836,44 @@ def _record_slice_debug_event(
         pass
 
 
-def _write_slice_debug_record(file_id: int, payload: dict[str, Any]) -> Optional[Path]:
+def _write_slice_debug_record(
+    file_id: int,
+    payload: dict[str, Any],
+    preferred_dir: Optional[Path] = None,
+) -> Optional[Path]:
     try:
-        BAMBU_SLICE_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        target_dir: Optional[Path] = None
+        if isinstance(preferred_dir, Path):
+            try:
+                preferred_dir.mkdir(parents=True, exist_ok=True)
+                if preferred_dir.exists() and preferred_dir.is_dir():
+                    target_dir = preferred_dir
+            except Exception:
+                target_dir = None
+        if target_dir is None:
+            BAMBU_SLICE_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+            target_dir = BAMBU_SLICE_DEBUG_DIR
+
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        target = BAMBU_SLICE_DEBUG_DIR / f"slice-debug-{stamp}-file-{max(0, int(file_id))}.json"
+        target = target_dir / f"slice-debug-{stamp}-file-{max(0, int(file_id))}.json"
         safe_payload = _slice_debug_json_safe(payload)
         target.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return target
     except Exception:
-        return None
+        try:
+            if (
+                not isinstance(preferred_dir, Path)
+                or BAMBU_SLICE_DEBUG_DIR.resolve() == preferred_dir.resolve()
+            ):
+                return None
+            BAMBU_SLICE_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            target = BAMBU_SLICE_DEBUG_DIR / f"slice-debug-{stamp}-file-{max(0, int(file_id))}.json"
+            safe_payload = _slice_debug_json_safe(payload)
+            target.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            return target
+        except Exception:
+            return None
 
 
 def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
@@ -5003,8 +4966,10 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
     _set_file_slice_state(file_id, "processing", "", actor=requested_by or "system")
 
     output_path: Optional[Path] = None
+    source_path_for_debug: Optional[Path] = None
     try:
         source_path = file_disk_path(row)
+        source_path_for_debug = source_path
         _, folder_abs = folder_abs_path(folder_path)
         base_name = Path(str(row["filename"] or "model.stl")).stem
         gcode_name = sanitize_filename(f"{base_name}.gcode")
@@ -5102,7 +5067,8 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
                 "target": target_name,
                 "trace": slice_debug_trace,
             }
-            debug_path = _write_slice_debug_record(file_id, debug_payload)
+            debug_target_dir = source_path_for_debug.parent if isinstance(source_path_for_debug, Path) else None
+            debug_path = _write_slice_debug_record(file_id, debug_payload, preferred_dir=debug_target_dir)
             if debug_path is not None:
                 rel_path = str(debug_path)
                 try:
@@ -7289,7 +7255,7 @@ def api_slice_process_settings():
             printer_profile,
             print_profile,
             filament_profile,
-            prefer_uploaded=True,
+            prefer_uploaded=False,
         )
     except Exception as exc:
         return jsonify({"ok": False, "error": f"Kunne ikke finde process-profil: {exc}"}), 500
