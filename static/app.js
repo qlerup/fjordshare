@@ -4153,12 +4153,23 @@
     group.scale.setScalar(worldScale);
   }
 
+  function isDescendantOf(node, ancestor) {
+    let cur = node;
+    while (cur) {
+      if (cur === ancestor) return true;
+      cur = cur.parent;
+    }
+    return false;
+  }
+
   function getSliceModelBounds(preview = state.slicePreview) {
     if (!preview || !preview.modelGroup || !preview.THREE) return null;
+    // Three.js Box3.setFromObject ignores .visible — temporarily detach
+    // the arrow group so it does not inflate the bounding box.
     const arrows = preview.rotateAxisArrowGroup;
-    const previousArrowVisible = arrows ? !!arrows.visible : false;
-    if (arrows) {
-      arrows.visible = false;
+    const arrowWasChild = arrows && arrows.parent === preview.modelGroup;
+    if (arrowWasChild) {
+      preview.modelGroup.remove(arrows);
     }
     let box = null;
     try {
@@ -4166,8 +4177,8 @@
     } catch (_err) {
       box = null;
     } finally {
-      if (arrows) {
-        arrows.visible = previousArrowVisible;
+      if (arrowWasChild && arrows) {
+        preview.modelGroup.add(arrows);
       }
     }
     if (!box || box.isEmpty()) return null;
@@ -4299,9 +4310,12 @@
     const temp = new THREE.Vector3();
     const samples = [];
 
+    const arrowGroup = preview.rotateAxisArrowGroup;
     preview.modelGroup.updateMatrixWorld(true);
     preview.modelGroup.traverse((node) => {
       if (!node || !node.isMesh || !node.geometry || typeof node.geometry.getAttribute !== "function") return;
+      // Skip meshes that belong to the rotate-axis arrows overlay.
+      if (arrowGroup && isDescendantOf(node, arrowGroup)) return;
       const position = node.geometry.getAttribute("position");
       if (!position || !position.count) return;
 
