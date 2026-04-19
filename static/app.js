@@ -1635,7 +1635,7 @@
     const padded = ` ${compact} `;
     if (padded.includes(" h2d ")) return "h2d";
     if (padded.includes(" h2c ")) return "h2c";
-    if (padded.includes(" a1mini ") || padded.includes(" a1 mini ")) return "a1mini";
+    if (padded.includes(" a1mini ") || padded.includes(" a1 mini ") || padded.includes(" a1m ")) return "a1mini";
     if (padded.includes(" a1 ")) return "a1";
     if (
       padded.includes(" x1c ")
@@ -1649,7 +1649,17 @@
     return "";
   }
 
-  function filteredSliceProfilesForPrinterFamily(profiles, printerProfileName = "") {
+  function filteredSliceProfilesForPrinterFamily(
+    profiles,
+    printerProfileName = "",
+    options = {}
+  ) {
+    const includeGenericProfiles = !Object.prototype.hasOwnProperty.call(options || {}, "includeGenericProfiles")
+      ? true
+      : Boolean(options && options.includeGenericProfiles);
+    const fallbackToAll = !Object.prototype.hasOwnProperty.call(options || {}, "fallbackToAll")
+      ? true
+      : Boolean(options && options.fallbackToAll);
     const all = toStringList(profiles);
     if (!all.length) return all;
 
@@ -1659,11 +1669,10 @@
     const allowedFamilies = new Set([printerFamily]);
     const filtered = all.filter((profileName) => {
       const profileFamily = sliceProfilePrinterFamilyFromName(profileName);
-      // Keep generic profiles visible even when a printer family is selected.
-      if (!profileFamily) return true;
+      if (!profileFamily) return includeGenericProfiles;
       return allowedFamilies.has(profileFamily);
     });
-    return filtered.length ? filtered : all;
+    return filtered.length ? filtered : (fallbackToAll ? all : []);
   }
 
   function filteredSlicePrintProfilesForPrinter(printProfiles, printerProfileName = "") {
@@ -1671,7 +1680,10 @@
   }
 
   function filteredSliceFilamentProfilesForPrinter(filamentProfiles, printerProfileName = "") {
-    return filteredSliceProfilesForPrinterFamily(filamentProfiles, printerProfileName);
+    return filteredSliceProfilesForPrinterFamily(filamentProfiles, printerProfileName, {
+      includeGenericProfiles: false,
+      fallbackToAll: false,
+    });
   }
 
   function applySlicePrintProfileFilterForSelectedPrinter(preferredValue = "") {
@@ -1699,7 +1711,11 @@
     const selectedPrinter = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
     const currentValue = String(els.sliceFilamentProfileSelect.value || "").trim();
     const filteredFilaments = filteredSliceFilamentProfilesForPrinter(allFilaments, selectedPrinter);
-    renderSliceSelect(els.sliceFilamentProfileSelect, filteredFilaments, "Vælg filamentprofil", false);
+    const hasMatches = filteredFilaments.length > 0;
+    const placeholder = selectedPrinter && !hasMatches
+      ? "Ingen filamentprofiler for valgt printer"
+      : "Vælg filamentprofil";
+    renderSliceSelect(els.sliceFilamentProfileSelect, filteredFilaments, placeholder, !hasMatches);
     setSliceSelectValue(els.sliceFilamentProfileSelect, preferredValue || currentValue);
     ensureSliceSelectHasValue(els.sliceFilamentProfileSelect);
   }
@@ -3878,59 +3894,24 @@
 
   function alignSlicePreviewGroundToModel(preview = state.slicePreview) {
     if (!preview) return;
+    // Single shared world plane for everything in preview:
+    // bed/grid/plate top are always locked to world Z=0.
+    const targetZ = 0;
 
-    // Keep the bed plane locked to the model's bottom Z.
-    // We move plate/grid together by the same delta so the model never appears to "float".
-    if (preview.modelGroup && preview.THREE) {
-      const modelBounds = getSliceModelBounds(preview);
-      const modelMinZ = modelBounds ? Number(modelBounds.min.z) : Number.NaN;
-      if (Number.isFinite(modelMinZ)) {
-        if (preview.plateGroup) {
-          let contactZ = Number.NaN;
-          try {
-            contactZ = resolveSlicePreviewModelContactZ(preview, modelBounds);
-          } catch (_err) {
-            contactZ = Number.NaN;
-          }
-          if (!Number.isFinite(contactZ)) {
-            contactZ = getSlicePreviewPlateTopZ(preview);
-          }
-          if (Number.isFinite(contactZ)) {
-            const delta = modelMinZ - contactZ;
-            if (Math.abs(delta) > 1e-6) {
-              preview.plateGroup.position.z += delta;
-              preview.plateGroup.updateMatrixWorld(true);
-            }
-          }
-        }
-
-        preview.plateTopZ = modelMinZ;
-        if (preview.bedMesh) preview.bedMesh.position.z = modelMinZ;
-        if (preview.bedOutline) preview.bedOutline.position.z = modelMinZ + 0.2;
-        if (preview.axisGrid) preview.axisGrid.position.z = modelMinZ - 0.2;
-        return;
-      }
-    }
-
-    let targetZ = 0;
     if (preview.plateGroup && preview.THREE) {
       try {
         const plateBox = new preview.THREE.Box3().setFromObject(preview.plateGroup);
         if (plateBox && !plateBox.isEmpty()) {
           const surfaceZ = estimateSlicePlatePrintableSurfaceZ(preview, preview.plateGroup, plateBox);
           if (Number.isFinite(surfaceZ)) {
-            targetZ = surfaceZ;
+            const delta = targetZ - surfaceZ;
+            if (Math.abs(delta) > 1e-6) {
+              preview.plateGroup.position.z += delta;
+              preview.plateGroup.updateMatrixWorld(true);
+            }
           }
         }
       } catch (_err) {}
-    } else {
-      const modelBounds = getSliceModelBounds(preview);
-      if (modelBounds) {
-        const modelMinZ = Number(modelBounds.min.z);
-        if (Number.isFinite(modelMinZ)) {
-          targetZ = modelMinZ;
-        }
-      }
     }
 
     preview.plateTopZ = targetZ;
@@ -4901,8 +4882,7 @@
       const box = getSliceModelBounds(preview);
       const minZ = box ? Number(box.min.z) : 0;
       const snappedOffset = Number.isFinite(minZ) ? (-minZ) : 0;
-      const contactZ = resolveSlicePreviewModelContactZ(preview, box);
-      const targetMinZ = (Number.isFinite(contactZ) ? contactZ : getSlicePreviewPlateTopZ(preview)) + liftMm;
+      const targetMinZ = getSlicePreviewPlateTopZ(preview) + liftMm;
       preview.modelGroup.position.z = targetMinZ + snappedOffset;
 
       const verifyBox = getSliceModelBounds(preview);
