@@ -4378,28 +4378,47 @@
     bar.style.position = "fixed";
     bar.style.right = "20px";
     bar.style.bottom = "20px";
-    bar.style.zIndex = "9999";
-    bar.style.background = "rgba(20,30,40,0.9)";
+    bar.style.zIndex = "75"; // Below file-info-drawer (z-index 80)
+    bar.style.background = "rgba(20,30,40,0.95)";
     bar.style.color = "#dfe8f1";
     bar.style.border = "1px solid #2a3b4a";
     bar.style.borderRadius = "8px";
-    bar.style.padding = "10px 12px";
-    bar.style.fontSize = "12px";
+    bar.style.padding = "10px 14px";
+    bar.style.fontSize = "13px";
     bar.style.boxShadow = "0 2px 10px rgba(0,0,0,0.35)";
+    bar.style.transition = "right 0.19s ease";
     document.body.appendChild(bar);
     return bar;
   }
 
+  function updateSliceStatusBarPosition(bar) {
+    const drawer = document.getElementById("fileInfoDrawer");
+    const isDrawerOpen = drawer && drawer.classList.contains("open");
+    // Drawer is min(430px, calc(100vw - 14px)) wide
+    bar.style.right = isDrawerOpen ? "450px" : "20px";
+  }
+
   async function pollSliceStatusLoop() {
     const bar = ensureSliceStatusBar();
+    updateSliceStatusBarPosition(bar);
+    
     const data = await fetchSliceStatus();
     if (!data || !data.ok) {
-      bar.textContent = "";
+      bar.style.display = "none";
       setTimeout(pollSliceStatusLoop, 3000);
       return;
     }
     const stats = (data && data.data && data.data.stats) || { total: 0, completed: 0, processing: 0, errors: 0 };
     const ids = (data && data.data && data.data.processing_ids) || [];
+
+    // Hide if nothing to show
+    if (stats.total === 0 && stats.processing === 0) {
+      bar.style.display = "none";
+      setTimeout(pollSliceStatusLoop, 3000);
+      return;
+    }
+    
+    bar.style.display = "block";
 
     // Render text
     const text = `Slicing: ${stats.completed}/${stats.total} • behandler: ${stats.processing} • fejl: ${stats.errors}`;
@@ -4407,13 +4426,17 @@
 
     if (ids.length) {
       const btn = document.createElement("button");
-      btn.textContent = "Stop";
-      btn.style.marginLeft = "8px";
-      btn.style.padding = "4px 8px";
+      btn.textContent = "Stop alle";
+      btn.style.marginLeft = "10px";
+      btn.style.padding = "5px 12px";
       btn.style.borderRadius = "6px";
-      btn.style.border = "1px solid #3c4d5e";
-      btn.style.background = "#314456";
+      btn.style.border = "1px solid #e74c3c";
+      btn.style.background = "#c0392b";
       btn.style.color = "#fff";
+      btn.style.cursor = "pointer";
+      btn.style.fontWeight = "600";
+      btn.onmouseenter = () => { btn.style.background = "#e74c3c"; };
+      btn.onmouseleave = () => { btn.style.background = "#c0392b"; };
       btn.onclick = () => {
         ids.forEach((id) => cancelSliceJob(id));
       };
@@ -5937,7 +5960,12 @@
     if (els.fileInfoDrawer) {
       els.fileInfoDrawer.classList.remove("hidden");
       els.fileInfoDrawer.setAttribute("aria-hidden", "false");
-      requestAnimationFrame(() => els.fileInfoDrawer.classList.add("open"));
+      requestAnimationFrame(() => {
+        els.fileInfoDrawer.classList.add("open");
+        // Move slice status bar to the left when drawer opens
+        const sliceBar = document.getElementById("sliceStatusBar");
+        if (sliceBar) sliceBar.style.right = "450px";
+      });
     }
 
     try {
@@ -5959,6 +5987,9 @@
     if (els.fileInfoBackdrop) {
       els.fileInfoBackdrop.classList.remove("open");
     }
+    // Move slice status bar back to the right when drawer closes
+    const sliceBar = document.getElementById("sliceStatusBar");
+    if (sliceBar) sliceBar.style.right = "20px";
     if (state.infoDrawerHideTimer) {
       clearTimeout(state.infoDrawerHideTimer);
     }
