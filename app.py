@@ -3009,6 +3009,14 @@ def _build_support_override_load_settings(
     normalized_type = _normalize_slice_support_type(support_type)
     normalized_style = _normalize_slice_support_style(support_style)
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
+    # Keep nozzle-side preference separate from profile JSON overrides.
+    # `print_extruder_id` is used by runtime selection logic, but should not
+    # by itself force generation of a temporary process override profile.
+    profile_process_overrides: dict[str, Any] = {
+        key: value
+        for key, value in normalized_process_overrides.items()
+        if key not in {"print_extruder_id", "printer_extruder_id"}
+    }
     normalized_nozzle_left_diameter = _normalize_slice_nozzle_diameter(nozzle_left_diameter)
     normalized_nozzle_right_diameter = _normalize_slice_nozzle_diameter(nozzle_right_diameter)
     normalized_nozzle_left_flow = _normalize_slice_nozzle_flow(nozzle_left_flow)
@@ -3023,7 +3031,7 @@ def _build_support_override_load_settings(
         normalized_mode == "auto"
         and not normalized_type
         and not normalized_style
-        and not normalized_process_overrides
+        and not profile_process_overrides
         and not normalized_nozzle_left_diameter
         and not normalized_nozzle_right_diameter
         and not normalized_nozzle_left_flow
@@ -3612,8 +3620,8 @@ def _build_support_override_load_settings(
             patched_payload["support_style"] = normalized_style
             changed = True
 
-    if normalized_process_overrides:
-        for key, incoming in normalized_process_overrides.items():
+    if profile_process_overrides:
+        for key, incoming in profile_process_overrides.items():
             if key not in override_template_payload:
                 continue
             existing = override_template_payload.get(key)
@@ -4506,7 +4514,15 @@ def _slice_stl_to_gcode(
             errors_lower = [err.lower() for err in errors]
             has_nozzle_setup_error = any(
                 ("nozzle_volume_type not found" in err)
-                or ("setup params error" in err)
+                or (
+                    ("setup params error" in err)
+                    and ("invalid option --export_3mf" not in err)
+                )
+                for err in errors_lower
+            )
+            has_filament_mapping_error = any(
+                ("some filaments can not be mapped under auto mode for multi extruder printer" in err)
+                or ("cannot be mapped to correct extruders for multi-extruder printer" in err)
                 for err in errors_lower
             )
 
@@ -4515,7 +4531,7 @@ def _slice_stl_to_gcode(
             should_retry_without_support_override = (
                 allow_support_override_fallback
                 and bool(support_load_settings_override)
-                and has_nozzle_setup_error
+                and (has_nozzle_setup_error or has_filament_mapping_error)
             )
             if should_retry_without_support_override:
                 _trace(
@@ -4673,7 +4689,7 @@ def _slice_stl_to_gcode(
             # nozzle_volume_type/setup-params errors unless process is auto-selected.
             should_retry_process_auto = (
                 allow_support_override_fallback
-                and has_nozzle_setup_error
+                and (has_nozzle_setup_error or has_filament_mapping_error)
                 and bool(print_profile_value)
             )
             if should_retry_process_auto:
@@ -4721,7 +4737,7 @@ def _slice_stl_to_gcode(
                         },
                     )
                     errors.append(f"process-auto-direct-fallback: {retry_process_auto_text[:350]}")
-                    if filament_profile_value and has_nozzle_setup_error:
+                    if filament_profile_value and (has_nozzle_setup_error or has_filament_mapping_error):
                         _trace(
                             "retry-start",
                             {
