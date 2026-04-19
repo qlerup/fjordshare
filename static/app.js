@@ -1504,22 +1504,23 @@
 
     const meta = {
       queued: { cls: "queued", text: "Slice i kø" },
-      processing: { cls: "processing", text: "Slicer..." },
+      processing: { cls: "processing", text: "Stop" },
       ready: { cls: "ready", text: "Slice klar" },
       error: { cls: "error", text: "Slice fejl" },
     }[status];
     if (!meta) return "";
     const fileId = Number(file.id || 0);
-    const disabledAttr = (status === "queued" || status === "processing") ? "disabled" : "";
+    const disabledAttr = status === "queued" ? "disabled" : "";
+    const action = status === "processing" ? "stop-slice" : "open-slice";
     if (!fileId) {
       return `<span class="file-slice-badge ${meta.cls}">${esc(meta.text)}</span>`;
     }
-    return `<button class="file-slice-badge ${meta.cls}" type="button" data-action="open-slice" data-file-id="${fileId}" ${disabledAttr}>${esc(meta.text)}</button>`;
+    return `<button class="file-slice-badge ${meta.cls}" type="button" data-action="${action}" data-file-id="${fileId}" ${disabledAttr}>${esc(meta.text)}</button>`;
   }
 
   function sliceButtonLabelForStatus(status) {
     if (status === "queued") return "Slicer i kø";
-    if (status === "processing") return "Slicer...";
+    if (status === "processing") return "Stop";
     if (status === "ready") return "Slice igen";
     if (status === "error") return "Prøv slicing igen";
     return "Slice STL";
@@ -5925,10 +5926,11 @@
     if (els.fileInfoSliceBtn) {
       const canSlice = state.role === "admin" && !!file.can_slice;
       const sliceStatus = normalizedSliceStatus(file);
-      const isBusy = sliceStatus === "queued" || sliceStatus === "processing";
+      const isQueued = sliceStatus === "queued";
       els.fileInfoSliceBtn.classList.toggle("hidden", !canSlice);
-      els.fileInfoSliceBtn.disabled = !canSlice || isBusy;
+      els.fileInfoSliceBtn.disabled = !canSlice || isQueued;
       els.fileInfoSliceBtn.dataset.fileId = String(id);
+      els.fileInfoSliceBtn.dataset.sliceStatus = sliceStatus;
       els.fileInfoSliceBtn.textContent = sliceButtonLabelForStatus(sliceStatus);
       const errorMessage = String(file.slice_error || "").trim();
       if (sliceStatus === "error" && errorMessage) {
@@ -9357,6 +9359,20 @@
       return;
     }
 
+    const stopSliceBtn = event.target.closest("[data-action='stop-slice']");
+    if (stopSliceBtn) {
+      const id = Number(stopSliceBtn.dataset.fileId || 0);
+      if (id) {
+        try {
+          await fetch(`/api/files/${id}/slice/cancel`, { method: "POST" });
+          await loadFiles();
+        } catch (err) {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke stoppe slicing", "error");
+        }
+      }
+      return;
+    }
+
     const modelBtn = event.target.closest("[data-action='open-3d']");
     if (modelBtn) {
       const id = Number(modelBtn.dataset.fileId || 0);
@@ -9819,9 +9835,19 @@
       });
     }
     if (els.fileInfoSliceBtn) {
-      els.fileInfoSliceBtn.addEventListener("click", () => {
+      els.fileInfoSliceBtn.addEventListener("click", async () => {
         const id = Number((els.fileInfoSliceBtn && els.fileInfoSliceBtn.dataset.fileId) || state.currentInfoFileId || 0);
         if (!id) return;
+        const status = els.fileInfoSliceBtn.dataset.sliceStatus || "";
+        if (status === "processing") {
+          try {
+            await fetch(`/api/files/${id}/slice/cancel`, { method: "POST" });
+            await loadFiles();
+          } catch (err) {
+            showStatus(els.uploadStatus, err.message || "Kunne ikke stoppe slicing", "error");
+          }
+          return;
+        }
         openSliceModal(id).catch((err) => {
           showStatus(els.uploadStatus, err.message || "Kunne ikke åbne slice-dialog", "error");
         });
