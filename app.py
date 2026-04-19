@@ -5570,13 +5570,16 @@ def enqueue_slice_job(
         # ---- Slice cancel + status helpers and endpoints ----
         try:
             from threading import Lock
+            from typing import Set, Dict
         except Exception:  # pragma: no cover
             Lock = None  # type: ignore
+            Set = set  # type: ignore
+            Dict = dict  # type: ignore
 
         # Best-effort in-memory state (resets on restart)
-        SLICE_CANCELLED: set[int] = set()
-        SLICER_STATS: dict[str, int] = {"total": 0, "completed": 0, "processing": 0, "errors": 0}
-        SLICER_PROCESSING_IDS: set[int] = set()
+        SLICE_CANCELLED: Set[int] = set()
+        SLICER_STATS: Dict[str, int] = {"total": 0, "completed": 0, "processing": 0, "errors": 0}
+        SLICER_PROCESSING_IDS: Set[int] = set()
         SLICER_LOCK = Lock() if Lock else None  # type: ignore
 
         def _slice_stats_mark_started(file_id: int) -> None:
