@@ -2860,16 +2860,11 @@ def _build_modern_profile_args(
     if not effective_load_filaments and filament_json:
         override_extruders = _override_extruder_count_from_overrides()
         required_extruders = override_extruders or _infer_required_extruder_count_for_slice(machine_json, process_json)
-        # If user has explicitly picked a preferred nozzle (left/right),
-        # collapse to a single filament slot to avoid Bambu auto-mapping
-        # failures on multi-extruder printers (H2D).
-        if preferred_extruder_id > 0:
-            required_extruders = 1
         # Always provide filaments for all required extruders.
-        # Some Bambu CLI versions reject auto-mapping for multi-extruder printers
-        # when only a single filament is supplied, even if a preferred
-        # print_extruder_id is set. Duplicating the same filament JSON for both
-        # slots allows the slicer to map correctly and avoids return -66.
+        # For multi-extruder printers (H2D), both slots must be filled even
+        # when a preferred nozzle is selected. The print_extruder_id in the
+        # process override tells BambuStudio which nozzle to use; collapsing
+        # to a single filament causes error -66 (auto-mapping failure).
         effective_filaments = _expand_load_filaments_for_extruders(filament_json, required_extruders)
         args.extend(["--load-filaments", effective_filaments])
 
@@ -3064,13 +3059,16 @@ def _build_support_override_load_settings(
     normalized_type = _normalize_slice_support_type(support_type)
     normalized_style = _normalize_slice_support_style(support_style)
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
-    # Keep nozzle-side preference separate from profile JSON overrides.
-    # `print_extruder_id` is used by runtime selection logic, but should not
-    # by itself force generation of a temporary process override profile.
+    # For multi-extruder printers (H2D), include print_extruder_id in the
+    # process override so BambuStudio CLI knows which nozzle to use and can
+    # map filaments correctly. Without it, error -66 occurs.
+    profile_text_check = f"{printer_profile} {print_profile}".lower()
+    is_multi_extruder_printer = ("h2d" in profile_text_check) or ("dual" in profile_text_check) or ("idex" in profile_text_check)
+    exclude_keys = {"print_extruder_id", "printer_extruder_id"} if not is_multi_extruder_printer else set()
     profile_process_overrides: dict[str, Any] = {
         key: value
         for key, value in normalized_process_overrides.items()
-        if key not in {"print_extruder_id", "printer_extruder_id"}
+        if key not in exclude_keys
     }
     normalized_nozzle_left_diameter = _normalize_slice_nozzle_diameter(nozzle_left_diameter)
     normalized_nozzle_right_diameter = _normalize_slice_nozzle_diameter(nozzle_right_diameter)
