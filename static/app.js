@@ -1676,14 +1676,109 @@
   }
 
   function filteredSlicePrintProfilesForPrinter(printProfiles, printerProfileName = "") {
-    return filteredSliceProfilesForPrinterFamily(printProfiles, printerProfileName);
-  }
+    const all = toStringList(printProfiles);
+    if (!all.length) return all;
 
-  function filteredSliceFilamentProfilesForPrinter(filamentProfiles, printerProfileName = "") {
-    return filteredSliceProfilesForPrinterFamily(filamentProfiles, printerProfileName, {
+    const selectedPrinter = String(printerProfileName || "").trim();
+    const selectedModel = sliceProfileModelCodeFromName(selectedPrinter);
+    const printerNozzle = sliceProfileNozzleMmFromName(selectedPrinter);
+    const overrideNozzle = normalizeSliceNozzleDiameter(
+      (els.sliceNozzleLeftDiameterSelect && els.sliceNozzleLeftDiameterSelect.value) || ""
+    );
+    const selectedNozzle = String(printerNozzle || overrideNozzle || "").trim();
+
+    if (!selectedModel && !selectedNozzle) {
+      return filteredSliceProfilesForPrinterFamily(all, selectedPrinter);
+    }
+
+    const filtered = all.filter((profileName) => {
+      const profileModel = sliceProfileModelCodeFromName(profileName);
+      const profileNozzle = sliceProfileNozzleMmFromName(profileName);
+
+      if (selectedModel) {
+        if (!profileModel) return false;
+        if (profileModel !== selectedModel) return false;
+      }
+
+      if (selectedNozzle && profileNozzle && profileNozzle !== selectedNozzle) {
+        return false;
+      }
+
+      return true;
+    });
+
+    if (filtered.length) return filtered;
+    return filteredSliceProfilesForPrinterFamily(all, selectedPrinter, {
       includeGenericProfiles: false,
       fallbackToAll: false,
     });
+  }
+
+  function sliceProfileModelCodeFromName(name = "") {
+    const raw = String(name || "").toUpperCase();
+    if (!raw.trim()) return "";
+    const compact = raw.replace(/[^A-Z0-9]+/g, "");
+
+    if (compact.includes("H2DPRO") || compact.includes("H2DP")) return "H2DP";
+    if (compact.includes("H2D")) return "H2D";
+    if (compact.includes("H2C")) return "H2C";
+    if (compact.includes("H2S")) return "H2S";
+    if (compact.includes("P2S")) return "P2S";
+    if (compact.includes("X2D")) return "X2D";
+    if (compact.includes("A1MINI") || compact.includes("A1M")) return "A1M";
+    if (compact.includes("A1")) return "A1";
+    if (compact.includes("P1S")) return "P1S";
+    if (compact.includes("P1P")) return "P1P";
+    if (compact.includes("P1")) return "P1";
+    if (compact.includes("X1C")) return "X1C";
+    if (compact.includes("X1E")) return "X1E";
+    if (compact.includes("X1")) return "X1";
+    return "";
+  }
+
+  function sliceProfileNozzleMmFromName(name = "") {
+    const text = String(name || "");
+    const match = text.match(/([0-9]+(?:[.,][0-9]+)?)\s*nozzle\b/i);
+    if (!match) return "";
+    return normalizeSliceNozzleDiameter(match[1]);
+  }
+
+  function filteredSliceFilamentProfilesForPrinter(filamentProfiles, printerProfileName = "") {
+    const all = toStringList(filamentProfiles);
+    if (!all.length) return all;
+
+    const selectedPrinter = String(printerProfileName || "").trim();
+    const selectedModel = sliceProfileModelCodeFromName(selectedPrinter);
+    const printerNozzle = sliceProfileNozzleMmFromName(selectedPrinter);
+    const overrideNozzle = normalizeSliceNozzleDiameter(
+      (els.sliceNozzleLeftDiameterSelect && els.sliceNozzleLeftDiameterSelect.value) || ""
+    );
+    const selectedNozzle = String(printerNozzle || overrideNozzle || "").trim();
+
+    if (!selectedModel && !selectedNozzle) {
+      return filteredSliceProfilesForPrinterFamily(all, selectedPrinter, {
+        includeGenericProfiles: false,
+        fallbackToAll: false,
+      });
+    }
+
+    const filtered = all.filter((profileName) => {
+      const profileModel = sliceProfileModelCodeFromName(profileName);
+      const profileNozzle = sliceProfileNozzleMmFromName(profileName);
+
+      if (selectedModel) {
+        if (!profileModel) return false;
+        if (profileModel !== selectedModel) return false;
+      }
+
+      if (selectedNozzle && profileNozzle && profileNozzle !== selectedNozzle) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return filtered;
   }
 
   function applySlicePrintProfileFilterForSelectedPrinter(preferredValue = "") {
@@ -1700,6 +1795,7 @@
     renderSliceSelect(els.slicePrintProfileSelect, filteredPrintProfiles, "Auto / fra config");
     renderSliceSelect(els.sliceProcessProfileSelect, filteredPrintProfiles, "Auto / fra config");
     setSliceSelectValue(els.slicePrintProfileSelect, wanted);
+    ensureSliceSelectHasValue(els.slicePrintProfileSelect);
     syncSliceProcessProfileSelectFromMain();
   }
 
@@ -9665,6 +9761,11 @@
         if (els.sliceNozzleLeftDiameterSelect.value !== normalized) {
           els.sliceNozzleLeftDiameterSelect.value = normalized;
         }
+        applySlicePrintProfileFilterForSelectedPrinter();
+        applySliceFilamentFilterForSelectedPrinter();
+        loadSliceProcessSettings(true).catch((err) => {
+          showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
+        });
       });
     }
     if (els.sliceNozzleRightDiameterSelect) {
@@ -9673,6 +9774,11 @@
         if (els.sliceNozzleRightDiameterSelect.value !== normalized) {
           els.sliceNozzleRightDiameterSelect.value = normalized;
         }
+        applySlicePrintProfileFilterForSelectedPrinter();
+        applySliceFilamentFilterForSelectedPrinter();
+        loadSliceProcessSettings(true).catch((err) => {
+          showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
+        });
       });
     }
     if (els.sliceNozzleLeftFlowSelect) {
