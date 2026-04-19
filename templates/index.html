@@ -516,12 +516,12 @@
     <div class="slice-studio-layout">
       <aside class="slice-studio-sidebar">
         <div class="slice-studio-card">
-          <p class="hint">Vælg printer, materiale, printprofil og filamentprofil før slicing.</p>
+          <p class="hint">Vælg printer og filamentprofil før slicing.</p>
           <div id="sliceModalFileName" class="metadata-current-file">-</div>
         </div>
 
         <div class="slice-studio-card">
-          <div class="slice-studio-card-title">Profiler</div>
+          <div class="slice-studio-card-title">Printer</div>
           <div class="slice-modal-grid slice-modal-grid-profiles">
             <div class="slice-modal-field">
               <label for="slicePrinterSelect">Printer</label>
@@ -530,16 +530,6 @@
             <div class="slice-modal-field hidden" aria-hidden="true">
               <label for="slicePrintProfileSelect">Printprofil</label>
               <select id="slicePrintProfileSelect" class="select"></select>
-            </div>
-            <div class="slice-modal-field">
-              <label for="sliceMaterialSelect">Materiale</label>
-              <select id="sliceMaterialSelect" class="select">
-                <option value="">Alle materialer</option>
-              </select>
-            </div>
-            <div class="slice-modal-field">
-              <label for="sliceFilamentProfileSelect">Filamentprofil</label>
-              <select id="sliceFilamentProfileSelect" class="select"></select>
             </div>
             <div class="slice-modal-field">
               <label>Pladestørrelse</label>
@@ -598,6 +588,16 @@
             </div>
           </div>
           <div class="hint">Vigtigt for H2D/multi-extruder: vælg left/right nozzle hvis profilens defaults ikke matcher.</div>
+        </div>
+
+        <div class="slice-studio-card">
+          <div class="slice-studio-card-title">Project Filaments</div>
+          <div class="slice-modal-grid slice-modal-grid-profiles">
+            <div class="slice-modal-field">
+              <label for="sliceFilamentProfileSelect">Filamentprofil</label>
+              <select id="sliceFilamentProfileSelect" class="select"></select>
+            </div>
+          </div>
         </div>
 
         <div class="slice-studio-card">

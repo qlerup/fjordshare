@@ -179,7 +179,6 @@
     sliceBedWidthInput: document.getElementById("sliceBedWidthInput"),
     sliceBedDepthInput: document.getElementById("sliceBedDepthInput"),
     slicePrintProfileSelect: document.getElementById("slicePrintProfileSelect"),
-    sliceMaterialSelect: document.getElementById("sliceMaterialSelect"),
     sliceFilamentProfileSelect: document.getElementById("sliceFilamentProfileSelect"),
     slicePreviewCanvas: document.getElementById("slicePreviewCanvas"),
     slicePreviewBed: document.getElementById("slicePreviewBed"),
@@ -1692,137 +1691,15 @@
     syncSliceProcessProfileSelectFromMain();
   }
 
-  function normalizeSliceMaterialKey(value = "") {
-    return String(value || "").trim().toLowerCase().replace(/[^a-z0-9-]+/g, "");
-  }
-
-  function sliceMaterialKeyFromFilamentProfileName(name = "") {
-    const raw = String(name || "").toLowerCase().trim();
-    if (!raw) return "";
-
-    const leftPart = raw.includes("@") ? raw.split("@")[0] : raw;
-    const compact = leftPart.replace(/[_/]+/g, " ").replace(/\s+/g, " ").trim();
-    if (!compact) return "";
-    const padded = ` ${compact} `;
-
-    const materialMatchers = [
-      ["paht-cf", /\bpaht[-\s]*cf\b/],
-      ["petg-cf", /\bpetg[-\s]*cf\b/],
-      ["pla-cf", /\bpla[-\s]*cf\b/],
-      ["pa-cf", /\b(?:pa|nylon)[0-9]*[-\s]*cf\b/],
-      ["abs-gf", /\babs[-\s]*gf\b/],
-      ["asa-cf", /\basa[-\s]*cf\b/],
-      ["asa", /\basa\b/],
-      ["abs", /\babs\b/],
-      ["petg", /\bpetg\b/],
-      ["pla", /\bpla\b/],
-      ["tpu", /\btpu\b/],
-      ["pc", /\bpc\b|\bpolycarbonate\b/],
-      ["pa", /\bnylon\b|\bpa[0-9]*\b/],
-      ["pva", /\bpva\b/],
-      ["hips", /\bhips\b/],
-      ["pp", /\bpp\b|\bpolypropylene\b/],
-      ["pet", /\bpet\b/],
-      ["support", /\bsupport\b/],
-    ];
-    for (const [key, pattern] of materialMatchers) {
-      if (pattern.test(padded)) return key;
-    }
-    return "";
-  }
-
-  function sliceMaterialLabelFromKey(materialKey = "") {
-    const key = normalizeSliceMaterialKey(materialKey);
-    if (!key) return "";
-    const labels = {
-      "paht-cf": "PAHT-CF",
-      "petg-cf": "PETG-CF",
-      "pla-cf": "PLA-CF",
-      "pa-cf": "PA-CF",
-      "abs-gf": "ABS-GF",
-      "asa-cf": "ASA-CF",
-      "asa": "ASA",
-      "abs": "ABS",
-      "petg": "PETG",
-      "pla": "PLA",
-      "tpu": "TPU",
-      "pc": "PC",
-      "pa": "PA / Nylon",
-      "pva": "PVA",
-      "hips": "HIPS",
-      "pp": "PP",
-      "pet": "PET",
-      "support": "Support",
-    };
-    return labels[key] || key.toUpperCase();
-  }
-
-  function collectSliceMaterialOptionsFromFilaments(filamentProfiles) {
-    const out = [];
-    const seen = new Set();
-    toStringList(filamentProfiles).forEach((profileName) => {
-      const key = sliceMaterialKeyFromFilamentProfileName(profileName);
-      if (!key || seen.has(key)) return;
-      seen.add(key);
-      out.push({ key, label: sliceMaterialLabelFromKey(key) });
-    });
-    out.sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), "da"));
-    return out;
-  }
-
-  function renderSliceMaterialSelectOptions(preferredKey = "") {
-    if (!els.sliceMaterialSelect) return "";
-    const currentValue = String(els.sliceMaterialSelect.value || "");
-    const allFilaments = state.sliceProfiles && typeof state.sliceProfiles === "object"
-      ? toStringList(state.sliceProfiles.filament_profiles)
-      : [];
-    const selectedPrinter = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
-    const printerFilteredFilaments = filteredSliceFilamentProfilesForPrinter(allFilaments, selectedPrinter);
-    const options = collectSliceMaterialOptionsFromFilaments(printerFilteredFilaments);
-    const optionHtml = options.map((entry) => (
-      `<option value="${esc(entry.key)}">${esc(entry.label)}</option>`
-    ));
-    els.sliceMaterialSelect.innerHTML = [
-      `<option value="">Alle materialer</option>`,
-      ...optionHtml,
-    ].join("");
-
-    const wanted = normalizeSliceMaterialKey(preferredKey || currentValue || "");
-    const hasOption = options.some((entry) => entry.key === wanted);
-    els.sliceMaterialSelect.value = hasOption ? wanted : "";
-    return String(els.sliceMaterialSelect.value || "");
-  }
-
-  function filteredSliceFilamentProfilesForMaterial(filamentProfiles, materialKey = "") {
-    const all = toStringList(filamentProfiles);
-    const normalizedMaterial = normalizeSliceMaterialKey(materialKey);
-    if (!all.length || !normalizedMaterial) return all;
-
-    const filtered = all.filter((name) => sliceMaterialKeyFromFilamentProfileName(name) === normalizedMaterial);
-    if (filtered.length) return filtered;
-
-    const anyClassified = all.some((name) => !!sliceMaterialKeyFromFilamentProfileName(name));
-    return anyClassified ? [] : all;
-  }
-
   function applySliceFilamentFilterForSelectedPrinter(preferredValue = "") {
     if (!els.sliceFilamentProfileSelect) return;
     const allFilaments = state.sliceProfiles && typeof state.sliceProfiles === "object"
       ? toStringList(state.sliceProfiles.filament_profiles)
       : [];
     const selectedPrinter = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "").trim();
-    const selectedMaterial = String((els.sliceMaterialSelect && els.sliceMaterialSelect.value) || "").trim();
     const currentValue = String(els.sliceFilamentProfileSelect.value || "").trim();
-
-    const printerFiltered = filteredSliceFilamentProfilesForPrinter(allFilaments, selectedPrinter);
-    const finalFiltered = filteredSliceFilamentProfilesForMaterial(printerFiltered, selectedMaterial);
-
-    if (!finalFiltered.length) {
-      renderSliceSelect(els.sliceFilamentProfileSelect, [], "Ingen filamentprofiler matcher", true);
-      return;
-    }
-
-    renderSliceSelect(els.sliceFilamentProfileSelect, finalFiltered, "Vælg filamentprofil", false);
+    const filteredFilaments = filteredSliceFilamentProfilesForPrinter(allFilaments, selectedPrinter);
+    renderSliceSelect(els.sliceFilamentProfileSelect, filteredFilaments, "Vælg filamentprofil", false);
     setSliceSelectValue(els.sliceFilamentProfileSelect, preferredValue || currentValue);
     ensureSliceSelectHasValue(els.sliceFilamentProfileSelect);
   }
@@ -5395,7 +5272,6 @@
 
       setSliceSelectValue(els.slicePrinterSelect, state.lastSliceSelection.printer_profile);
       ensureSliceSelectHasValue(els.slicePrinterSelect);
-      renderSliceMaterialSelectOptions(sliceMaterialKeyFromFilamentProfileName(state.lastSliceSelection.filament_profile));
       applySlicePrintProfileFilterForSelectedPrinter(state.lastSliceSelection.print_profile);
       applySliceFilamentFilterForSelectedPrinter(state.lastSliceSelection.filament_profile);
       syncSliceProcessProfileSelectFromMain();
@@ -5457,10 +5333,6 @@
       renderSliceSelect(els.slicePrinterSelect, [], "Vælg printer", false);
       renderSliceSelect(els.slicePrintProfileSelect, [], "Auto / fra config");
       renderSliceSelect(els.sliceProcessProfileSelect, [], "Auto / fra config");
-      if (els.sliceMaterialSelect) {
-        els.sliceMaterialSelect.innerHTML = `<option value="">Alle materialer</option>`;
-        els.sliceMaterialSelect.value = "";
-      }
       renderSliceSelect(els.sliceFilamentProfileSelect, [], "Vælg filamentprofil", false);
       state.sliceProcessSettingsBase = {};
       state.sliceProcessSettingsBaseApi = {};
@@ -9599,18 +9471,9 @@
         if (els.sliceKnownPrinterSelect) {
           renderKnownPrinterSelect(els.sliceKnownPrinterSelect, guessed);
         }
-        renderSliceMaterialSelectOptions();
         applySlicePrintProfileFilterForSelectedPrinter();
         applySliceFilamentFilterForSelectedPrinter();
         refreshSlicePreviewBedFromSelection();
-        loadSliceProcessSettings(true).catch((err) => {
-          showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
-        });
-      });
-    }
-    if (els.sliceMaterialSelect) {
-      els.sliceMaterialSelect.addEventListener("change", () => {
-        applySliceFilamentFilterForSelectedPrinter();
         loadSliceProcessSettings(true).catch((err) => {
           showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
         });
