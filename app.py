@@ -7348,8 +7348,11 @@ def api_health():
 def api_slice_status():
     return jsonify(
         {
-            "stats": SLICER_STATS,
-            "processing_ids": sorted(list(SLICER_PROCESSING_IDS)),
+            "ok": True,
+            "data": {
+                "stats": dict(SLICER_STATS),
+                "processing_ids": sorted(list(SLICER_PROCESSING_IDS)),
+            }
         }
     )
 
