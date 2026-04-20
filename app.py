@@ -2872,11 +2872,11 @@ def _build_modern_profile_args(
     if not effective_load_filaments and filament_json:
         override_extruders = _override_extruder_count_from_overrides()
         required_extruders = override_extruders or _infer_required_extruder_count_for_slice(machine_json, process_json)
-        # Always provide filaments for all required extruders.
-        # For multi-extruder printers (H2D), both slots must be filled even
-        # when a preferred nozzle is selected. The print_extruder_id in the
-        # process override tells BambuStudio which nozzle to use; collapsing
-        # to a single filament causes error -66 (auto-mapping failure).
+        # When a concrete nozzle has been selected (print_extruder_id),
+        # prefer single-filament mapping to mirror Bambu Studio's manual
+        # mapping behavior for single-nozzle jobs on multi-extruder printers.
+        if preferred_extruder_id > 0:
+            required_extruders = 1
         effective_filaments = _expand_load_filaments_for_extruders(filament_json, required_extruders)
         args.extend(["--load-filaments", effective_filaments])
 
@@ -3738,7 +3738,20 @@ def _build_support_override_load_settings(
                 continue
             existing = override_template_payload.get(key)
             current_value = patched_payload.get(key)
-            next_value = _coerce_process_override_value_like(existing, incoming)
+            if key in {"print_extruder_id", "printer_extruder_id"}:
+                parsed_extruder = 0
+                try:
+                    if isinstance(incoming, (int, float)) and not isinstance(incoming, bool):
+                        parsed_extruder = int(round(float(incoming)))
+                    else:
+                        numbers = _extract_float_numbers(incoming, max_items=1)
+                        if numbers:
+                            parsed_extruder = int(round(float(numbers[0])))
+                except Exception:
+                    parsed_extruder = 0
+                next_value = str(parsed_extruder if parsed_extruder > 0 else 1)
+            else:
+                next_value = _coerce_process_override_value_like(existing, incoming)
             if current_value != next_value:
                 patched_payload[key] = next_value
                 changed = True
