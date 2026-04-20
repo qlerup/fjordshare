@@ -2799,6 +2799,26 @@ def _build_modern_profile_args(
     args: list[str] = []
     normalized_overrides = _normalize_slice_process_overrides(process_overrides or {})
 
+    def _has_explicit_filament_mapping_overrides() -> bool:
+        if not isinstance(normalized_overrides, dict):
+            return False
+        for key in (
+            "filament_map_mode",
+            "filament_map",
+            "filament_nozzle_map",
+            "filament_map_2",
+            "filament_volume_map",
+        ):
+            if key not in normalized_overrides:
+                continue
+            raw = normalized_overrides.get(key)
+            if isinstance(raw, str) and not raw.strip():
+                continue
+            if raw is None:
+                continue
+            return True
+        return False
+
     def _override_extruder_count_from_overrides() -> int:
         raw = normalized_overrides.get("extruder_count") if isinstance(normalized_overrides, dict) else None
         if raw is None:
@@ -2843,6 +2863,7 @@ def _build_modern_profile_args(
             preferred_extruder_id = 0
     if preferred_extruder_id < 0:
         preferred_extruder_id = 0
+    explicit_filament_mapping_overrides = _has_explicit_filament_mapping_overrides()
 
     effective_load_settings = str(load_settings_override or "").strip() or _effective_bambustudio_load_settings()
     effective_load_filaments = _effective_bambustudio_load_filaments()
@@ -2874,9 +2895,10 @@ def _build_modern_profile_args(
     # expand it to the required extruder count so dual-extruder profiles do not
     # fail auto mapping when only one filament entry is present.
     if effective_load_filaments:
+        desired_filament_slots = 1 if explicit_filament_mapping_overrides else required_extruders
         effective_load_filaments = _expand_load_filaments_for_extruders(
             effective_load_filaments,
-            required_extruders,
+            desired_filament_slots,
         )
 
     if not effective_load_settings and machine_json:
@@ -2898,7 +2920,8 @@ def _build_modern_profile_args(
         return args
 
     if not effective_load_filaments and filament_json:
-        effective_filaments = _expand_load_filaments_for_extruders(filament_json, required_extruders)
+        desired_filament_slots = 1 if explicit_filament_mapping_overrides else required_extruders
+        effective_filaments = _expand_load_filaments_for_extruders(filament_json, desired_filament_slots)
         args.extend(["--load-filaments", effective_filaments])
 
     return args
@@ -3092,10 +3115,22 @@ def _build_support_override_load_settings(
     normalized_type = _normalize_slice_support_type(support_type)
     normalized_style = _normalize_slice_support_style(support_style)
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
-    # Keep nozzle-side hints out of temporary process override payloads.
-    # They are tracked separately via preferred_extruder_id_hint in slicer
-    # flow and can trigger unstable runtime override behavior on some builds.
-    exclude_keys = {"print_extruder_id", "printer_extruder_id"}
+    # Keep nozzle-side hints out of temporary process override payloads unless
+    # we're explicitly applying filament mapping (3MF-aligned flow).
+    mapping_override_keys = {
+        "filament_map_mode",
+        "filament_map",
+        "filament_nozzle_map",
+        "filament_map_2",
+        "filament_volume_map",
+    }
+    has_explicit_mapping_overrides = any(
+        key in normalized_process_overrides and str(normalized_process_overrides.get(key) or "").strip()
+        for key in mapping_override_keys
+    )
+    exclude_keys = set()
+    if not has_explicit_mapping_overrides:
+        exclude_keys = {"print_extruder_id", "printer_extruder_id"}
     profile_process_overrides: dict[str, Any] = {
         key: value
         for key, value in normalized_process_overrides.items()
@@ -3761,7 +3796,28 @@ def _build_support_override_load_settings(
             changed = True
 
     if profile_process_overrides:
-        manual_mapping_keys = {"filament_map_mode", "filament_map", "filament_nozzle_map", "filament_map_2"}
+        manual_mapping_keys = {
+            "filament_map_mode",
+            "filament_map",
+            "filament_nozzle_map",
+            "filament_map_2",
+            "filament_volume_map",
+        }
+
+        def _coerce_mapping_index_value(existing_value: Any, index_value: int) -> Any:
+            token = str(max(0, int(index_value)))
+            if isinstance(existing_value, (list, tuple, set)):
+                existing_items = list(existing_value)
+                wanted = len(existing_items) if existing_items else 1
+                return [token for _ in range(wanted)]
+            if isinstance(existing_value, str):
+                text = existing_value.strip()
+                if text.startswith("[") and text.endswith("]"):
+                    return [token]
+            if existing_value is None:
+                return [token]
+            return token
+
         for key, incoming in profile_process_overrides.items():
             if key not in override_template_payload and key not in manual_mapping_keys:
                 continue
@@ -3782,8 +3838,9 @@ def _build_support_override_load_settings(
                             parsed_extruder = int(round(float(numbers[0])))
                 except Exception:
                     parsed_extruder = 0
-                next_value = str(parsed_extruder if parsed_extruder > 0 else 1)
-            elif key in {"filament_map", "filament_nozzle_map", "filament_map_2"}:
+                target_extruder = str(parsed_extruder if parsed_extruder > 0 else 1)
+                next_value = _coerce_process_override_value_like(existing, target_extruder)
+            elif key in {"filament_map", "filament_nozzle_map", "filament_map_2", "filament_volume_map"}:
                 parsed_index = 0
                 try:
                     if isinstance(incoming, (int, float)) and not isinstance(incoming, bool):
@@ -3794,10 +3851,17 @@ def _build_support_override_load_settings(
                             parsed_index = int(round(float(numbers[0])))
                 except Exception:
                     parsed_index = 0
-                next_value = str(max(0, parsed_index))
+                next_value = _coerce_mapping_index_value(existing, parsed_index)
             elif key == "filament_map_mode":
-                mode_text = str(incoming or "").strip().lower()
-                next_value = "Manual" if mode_text == "manual" else str(incoming or "").strip()
+                mode_text = str(incoming or "").strip().lower().replace("_", " ").replace("-", " ")
+                if mode_text in {"manual", "manual map"}:
+                    next_value = "Manual"
+                elif mode_text in {"auto for flush", "autoforflush", "auto flush"}:
+                    next_value = "Auto For Flush"
+                elif mode_text == "auto":
+                    next_value = "Auto"
+                else:
+                    next_value = str(incoming or "").strip()
             else:
                 next_value = _coerce_process_override_value_like(existing, incoming)
             if current_value != next_value:
@@ -5096,7 +5160,8 @@ def _slice_stl_to_gcode(
                 manual_map_overrides["extruder_count"] = 2
                 manual_map_overrides["print_extruder_id"] = preferred_index
                 manual_map_overrides["printer_extruder_id"] = preferred_index
-                manual_map_overrides["filament_map_mode"] = "Manual"
+                # Mirror successful Bambu 3MF project config behavior.
+                manual_map_overrides["filament_map_mode"] = "Auto For Flush"
                 manual_map_overrides["filament_map"] = preferred_index
                 manual_map_overrides["filament_nozzle_map"] = max(0, preferred_index - 1)
                 _trace(
@@ -5802,6 +5867,12 @@ def _slice_debug_profile_snapshot(profile_path: Path) -> dict[str, Any]:
         "extruder_count",
         "print_extruder_id",
         "printer_extruder_id",
+        "filament_map_mode",
+        "filament_map",
+        "filament_nozzle_map",
+        "filament_map_2",
+        "filament_volume_map",
+        "extruder_ams_count",
         "different_extruder",
         "new_printer_name",
         "nozzle_volume_type",
