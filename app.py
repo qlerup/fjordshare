@@ -3115,79 +3115,6 @@ def _build_support_override_load_settings(
     normalized_type = _normalize_slice_support_type(support_type)
     normalized_style = _normalize_slice_support_style(support_style)
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
-
-    def _build_cli_override_args(overrides: dict[str, Any]) -> list[str]:
-        if not isinstance(overrides, dict) or not overrides:
-            return []
-
-        ordered_keys = (
-            "filament_map_mode",
-            "filament_map",
-            "filament_nozzle_map",
-            "filament_volume_map",
-            "print_extruder_id",
-            "printer_extruder_id",
-            "extruder_count",
-            "extruder_nozzle_count",
-            "extruder_nozzle_volume_type",
-        )
-
-        def _to_scalar_text(raw: Any) -> str:
-            if raw is None:
-                return ""
-            if isinstance(raw, bool):
-                return "1" if raw else "0"
-            if isinstance(raw, int) and not isinstance(raw, bool):
-                return str(raw)
-            if isinstance(raw, float):
-                if not math.isfinite(raw):
-                    return ""
-                rounded = round(raw, 6)
-                if abs(rounded - int(round(rounded))) < 1e-9:
-                    return str(int(round(rounded)))
-                return f"{rounded:g}"
-            return str(raw).strip()
-
-        cli_args: list[str] = []
-        for key in ordered_keys:
-            if key not in overrides:
-                continue
-            text = _to_scalar_text(overrides.get(key))
-            if not text:
-                continue
-
-            if key == "filament_map_mode":
-                normalized_mode = text.lower().replace("_", " ").replace("-", " ").strip()
-                if normalized_mode in {"manual", "manual map"}:
-                    text = "Manual"
-                elif normalized_mode in {"nozzle manual", "nozzlemanual"}:
-                    text = "Nozzle Manual"
-                elif normalized_mode in {"auto for flush", "auto flush", "autoforflush"}:
-                    text = "Auto For Flush"
-                elif normalized_mode in {"auto for match", "auto match", "autoformatch"}:
-                    text = "Auto For Match"
-                elif normalized_mode in {"auto for quality", "auto quality", "autoforquality"}:
-                    text = "Auto For Quality"
-                elif normalized_mode == "auto":
-                    text = "Auto For Flush"
-
-            if key in {
-                "filament_map",
-                "filament_nozzle_map",
-                "filament_volume_map",
-                "print_extruder_id",
-                "printer_extruder_id",
-                "extruder_count",
-                "extruder_nozzle_count",
-                "extruder_nozzle_volume_type",
-            }:
-                text = text.replace(";", ",").replace("|", ",")
-
-            cli_args.append(f"--{key}={text}")
-
-        return cli_args
-
-    cli_override_args = _build_cli_override_args(normalized_process_overrides)
     # Keep nozzle-side hints out of temporary process override payloads unless
     # we're explicitly applying filament mapping (3MF-aligned flow).
     mapping_override_keys = {
@@ -4508,6 +4435,79 @@ def _slice_stl_to_gcode(
     if normalized_nozzle_right_flow and not normalized_nozzle_left_flow:
         normalized_nozzle_left_flow = normalized_nozzle_right_flow
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
+
+    def _build_cli_override_args(overrides: dict[str, Any]) -> list[str]:
+        if not isinstance(overrides, dict) or not overrides:
+            return []
+
+        ordered_keys = (
+            "filament_map_mode",
+            "filament_map",
+            "filament_nozzle_map",
+            "filament_volume_map",
+            "print_extruder_id",
+            "printer_extruder_id",
+            "extruder_count",
+            "extruder_nozzle_count",
+            "extruder_nozzle_volume_type",
+        )
+
+        def _to_scalar_text(raw: Any) -> str:
+            if raw is None:
+                return ""
+            if isinstance(raw, bool):
+                return "1" if raw else "0"
+            if isinstance(raw, int) and not isinstance(raw, bool):
+                return str(raw)
+            if isinstance(raw, float):
+                if not math.isfinite(raw):
+                    return ""
+                rounded = round(raw, 6)
+                if abs(rounded - int(round(rounded))) < 1e-9:
+                    return str(int(round(rounded)))
+                return f"{rounded:g}"
+            return str(raw).strip()
+
+        cli_args: list[str] = []
+        for key in ordered_keys:
+            if key not in overrides:
+                continue
+            text = _to_scalar_text(overrides.get(key))
+            if not text:
+                continue
+
+            if key == "filament_map_mode":
+                normalized_mode_text = text.lower().replace("_", " ").replace("-", " ").strip()
+                if normalized_mode_text in {"manual", "manual map"}:
+                    text = "Manual"
+                elif normalized_mode_text in {"nozzle manual", "nozzlemanual"}:
+                    text = "Nozzle Manual"
+                elif normalized_mode_text in {"auto for flush", "auto flush", "autoforflush"}:
+                    text = "Auto For Flush"
+                elif normalized_mode_text in {"auto for match", "auto match", "autoformatch"}:
+                    text = "Auto For Match"
+                elif normalized_mode_text in {"auto for quality", "auto quality", "autoforquality"}:
+                    text = "Auto For Quality"
+                elif normalized_mode_text == "auto":
+                    text = "Auto For Flush"
+
+            if key in {
+                "filament_map",
+                "filament_nozzle_map",
+                "filament_volume_map",
+                "print_extruder_id",
+                "printer_extruder_id",
+                "extruder_count",
+                "extruder_nozzle_count",
+                "extruder_nozzle_volume_type",
+            }:
+                text = text.replace(";", ",").replace("|", ",")
+
+            cli_args.append(f"--{key}={text}")
+
+        return cli_args
+
+    cli_override_args = _build_cli_override_args(normalized_process_overrides)
     resolved_preferred_extruder_id = 0
     try:
         resolved_preferred_extruder_id = int(preferred_extruder_id_hint)
