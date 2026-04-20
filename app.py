@@ -4934,7 +4934,10 @@ def _slice_stl_to_gcode(
                         nozzle_right_flow="",
                         bed_width_mm=normalized_bed_width,
                         bed_depth_mm=normalized_bed_depth,
-                        process_overrides=normalized_process_overrides,
+                        # True "without-support-override" retry: clear process
+                        # runtime overrides so no temporary override process JSON
+                        # is materialized in this attempt.
+                        process_overrides={},
                         allow_support_override_fallback=False,
                         force_profile_runtime_compat=force_profile_runtime_compat,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
@@ -5004,6 +5007,62 @@ def _slice_stl_to_gcode(
                                 },
                             )
                             errors.append(f"process-auto-fallback: {str(retry2_exc)[:350]}")
+
+            # If explicit process+filament segfaults, retry with explicit process
+            # but no runtime overrides/support/nozzle injections.
+            should_retry_explicit_process_plain = (
+                allow_support_override_fallback
+                and has_sigsegv_error
+                and bool(print_profile_value)
+            )
+            if should_retry_explicit_process_plain:
+                _trace(
+                    "retry-start",
+                    {
+                        "strategy": "explicit-process-plain",
+                        "reason": "segfault with runtime override payload; retry plain process profile",
+                    },
+                )
+                try:
+                    _slice_stl_to_gcode(
+                        input_stl,
+                        output_gcode,
+                        printer_profile=printer_profile_value,
+                        print_profile=print_profile_value,
+                        filament_profile=filament_profile_value,
+                        rotation_x_degrees=rotation_x_degrees,
+                        rotation_y_degrees=rotation_y_degrees,
+                        rotation_z_degrees=rotation_z_degrees,
+                        lift_z_mm=normalized_lift_z,
+                        support_mode="auto",
+                        support_type="",
+                        support_style="",
+                        nozzle_left_diameter="",
+                        nozzle_right_diameter="",
+                        nozzle_left_flow="",
+                        nozzle_right_flow="",
+                        bed_width_mm=normalized_bed_width,
+                        bed_depth_mm=normalized_bed_depth,
+                        process_overrides={},
+                        allow_support_override_fallback=False,
+                        force_profile_runtime_compat=False,
+                        auto_pick_blank_profiles=auto_pick_blank_profiles,
+                        debug_trace=debug_trace,
+                        preferred_extruder_id_hint=resolved_preferred_extruder_id,
+                        z_contact_mode=z_contact_mode,
+                    )
+                    _trace("retry-success", {"strategy": "explicit-process-plain"})
+                    return
+                except Exception as explicit_plain_exc:
+                    explicit_plain_text = str(explicit_plain_exc)
+                    _trace(
+                        "retry-failed",
+                        {
+                            "strategy": "explicit-process-plain",
+                            "error": explicit_plain_text,
+                        },
+                    )
+                    errors.append(f"explicit-process-plain-fallback: {explicit_plain_text[:350]}")
 
             # Direct single-extruder retry for multi-extruder filament mapping errors.
             # Forces extruder_count=1 so _expand_load_filaments_for_extruders sends
@@ -5173,6 +5232,16 @@ def _slice_stl_to_gcode(
                     return
                 except Exception as retry_process_auto_exc:
                     retry_process_auto_text = str(retry_process_auto_exc)
+                    retry_process_auto_text_lower = retry_process_auto_text.lower()
+                    retry_auto_has_nozzle_setup_error = (
+                        ("nozzle_volume_type not found" in retry_process_auto_text_lower)
+                        or ("setup params error" in retry_process_auto_text_lower)
+                    )
+                    retry_auto_has_filament_mapping_error = (
+                        ("some filaments can not be mapped under auto mode for multi extruder printer" in retry_process_auto_text_lower)
+                        or ("cannot be mapped to correct extruders for multi-extruder printer" in retry_process_auto_text_lower)
+                    )
+                    retry_auto_has_process_compat_error = ("process not compatible with printer" in retry_process_auto_text_lower)
                     _trace(
                         "retry-failed",
                         {
@@ -5185,7 +5254,12 @@ def _slice_stl_to_gcode(
                     # Final rescue for persistent multi-extruder mapping/compat issues:
                     # force single-extruder operation by overriding extruder_count=1 and
                     # sending only a single filament. We also keep print_extruder_id when provided.
-                    if filament_profile_value and (has_filament_mapping_error or has_process_compat_error):
+                    if filament_profile_value and (
+                        has_filament_mapping_error
+                        or has_process_compat_error
+                        or retry_auto_has_filament_mapping_error
+                        or retry_auto_has_process_compat_error
+                    ):
                         forced_overrides = dict(normalized_process_overrides)
                         try:
                             # Preserve preferred print nozzle if present
@@ -5242,7 +5316,14 @@ def _slice_stl_to_gcode(
                                 },
                             )
                             errors.append(f"single-extruder-compat-fallback: {str(single_exc)[:350]}")
-                    if filament_profile_value and (has_nozzle_setup_error or has_filament_mapping_error):
+                    if filament_profile_value and (
+                        has_nozzle_setup_error
+                        or has_filament_mapping_error
+                        or has_process_compat_error
+                        or retry_auto_has_nozzle_setup_error
+                        or retry_auto_has_filament_mapping_error
+                        or retry_auto_has_process_compat_error
+                    ):
                         _trace(
                             "retry-start",
                             {
