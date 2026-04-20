@@ -3095,6 +3095,16 @@ def _profile_bool_setting_value(existing: Any, enabled: bool) -> Any:
     return "1" if enabled else "0"
 
 
+def _resolve_slice_plate_target(overrides: dict[str, Any]) -> int:
+    # Bambu multi-extruder manual mapping path is more stable when slicing an
+    # explicit plate id (`--slice 1`) instead of `--slice 0` (all plates).
+    raw_mode = str((overrides or {}).get("filament_map_mode") or "").strip().lower()
+    mode_text = raw_mode.replace("_", " ").replace("-", " ")
+    if mode_text in {"manual", "manual map", "nozzle manual", "nozzlemanual"}:
+        return 1
+    return 0
+
+
 def _build_support_override_load_settings(
     executable: str,
     output_gcode: Path,
@@ -4506,6 +4516,7 @@ def _slice_stl_to_gcode(
         return cli_args
 
     cli_override_args = _build_cli_override_args(normalized_process_overrides)
+    slice_plate_target = _resolve_slice_plate_target(normalized_process_overrides)
     resolved_preferred_extruder_id = 0
     try:
         resolved_preferred_extruder_id = int(preferred_extruder_id_hint)
@@ -4553,6 +4564,7 @@ def _slice_stl_to_gcode(
             "normalized_bed_depth_mm": _normalize_bed_size_mm(bed_depth_mm),
             "process_overrides_count": len(normalized_process_overrides),
             "cli_override_args": cli_override_args,
+            "slice_plate_target": int(slice_plate_target),
             "allow_support_override_fallback": bool(allow_support_override_fallback),
             "force_profile_runtime_compat": bool(force_profile_runtime_compat),
             "auto_pick_blank_profiles": bool(auto_pick_blank_profiles),
@@ -4776,7 +4788,7 @@ def _slice_stl_to_gcode(
             process_overrides=normalized_process_overrides,
             preferred_extruder_id_hint=resolved_preferred_extruder_id,
         )
-        modern_base = [executable, "--slice", "0", *modern_profile_args, *cli_override_args]
+        modern_base = [executable, "--slice", str(int(slice_plate_target)), *modern_profile_args, *cli_override_args]
 
         fallback_profile_args = _build_modern_profile_args(
             executable,
@@ -4789,7 +4801,7 @@ def _slice_stl_to_gcode(
             process_overrides=normalized_process_overrides,
             preferred_extruder_id_hint=resolved_preferred_extruder_id,
         )
-        fallback_base = [executable, "--slice", "0", *fallback_profile_args, *cli_override_args]
+        fallback_base = [executable, "--slice", str(int(slice_plate_target)), *fallback_profile_args, *cli_override_args]
         _trace(
             "profile-args-built",
             {
@@ -5277,14 +5289,19 @@ def _slice_stl_to_gcode(
                     _trace("retry-success", {"strategy": "manual-filament-map"})
                     return
                 except Exception as manual_map_exc:
+                    manual_map_text = str(manual_map_exc)
                     _trace(
                         "retry-failed",
                         {
                             "strategy": "manual-filament-map",
-                            "error": str(manual_map_exc),
+                            "error": manual_map_text,
                         },
                     )
-                    errors.append(f"manual-filament-map-fallback: {str(manual_map_exc)[:350]}")
+                    errors.append(f"manual-filament-map-fallback: {manual_map_text[:350]}")
+                    # Deterministic stop:
+                    # If explicit manual mapping still fails, downstream fallback
+                    # branches only add noise and do not resolve the root cause.
+                    raise RuntimeError(manual_map_text) from manual_map_exc
 
             should_retry_single_extruder_direct = (
                 allow_support_override_fallback
