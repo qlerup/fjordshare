@@ -18,6 +18,8 @@ REPO_URL="${REPO_URL:-https://github.com/qlerup/fjordshare.git}"
 REPO_BRANCH="${REPO_BRANCH:-main}"
 BUILD_ON_DOCKERFILE_CHANGE="${BUILD_ON_DOCKERFILE_CHANGE:-1}"
 FORCE_IMAGE_BUILD="${FORCE_IMAGE_BUILD:-0}"
+WAIT_TIMEOUT_SEC="${WAIT_TIMEOUT_SEC:-180}"
+WAIT_INTERVAL_SEC="${WAIT_INTERVAL_SEC:-2}"
 ENV_BACKUP="$(mktemp /tmp/fjordshare.env.backup.XXXXXX)"
 
 if [ ! -d "$APP_DIR" ]; then
@@ -58,6 +60,56 @@ docker_cmd() {
 	fi
 }
 
+validate_wait_settings() {
+	case "$WAIT_TIMEOUT_SEC" in
+		*[!0-9]*|"")
+			WAIT_TIMEOUT_SEC=180
+			;;
+	esac
+	case "$WAIT_INTERVAL_SEC" in
+		*[!0-9]*|"")
+			WAIT_INTERVAL_SEC=2
+			;;
+	esac
+	if [ "$WAIT_TIMEOUT_SEC" -le 0 ]; then
+		WAIT_TIMEOUT_SEC=180
+	fi
+	if [ "$WAIT_INTERVAL_SEC" -le 0 ]; then
+		WAIT_INTERVAL_SEC=2
+	fi
+}
+
+wait_for_fjordshare() {
+	elapsed=0
+	echo "==> Venter pÃ¥ fjordshare health (timeout ${WAIT_TIMEOUT_SEC}s)"
+	while [ "$elapsed" -lt "$WAIT_TIMEOUT_SEC" ]; do
+		container_id="$(docker_compose ps -q fjordshare 2>/dev/null || true)"
+		if [ -n "$container_id" ]; then
+			state="$(docker_cmd inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
+			case "$state" in
+				healthy|running)
+					if docker_compose exec -T fjordshare sh -lc "curl -fsS http://127.0.0.1:8080/api/health >/dev/null"; then
+						echo "==> fjordshare er klar"
+						return 0
+					fi
+					;;
+				unhealthy|exited|dead)
+					echo "Fejl: fjordshare status er $state under opstart."
+					docker_compose logs --tail=120 fjordshare || true
+					return 1
+					;;
+			esac
+		fi
+		sleep "$WAIT_INTERVAL_SEC"
+		elapsed=$((elapsed + WAIT_INTERVAL_SEC))
+	done
+
+	echo "Fejl: timeout mens fjordshare blev klar."
+	docker_compose ps || true
+	docker_compose logs --tail=120 fjordshare || true
+	return 1
+}
+
 cleanup() {
 	rm -f "$ENV_BACKUP"
 }
@@ -77,6 +129,8 @@ while [ "$#" -gt 0 ]; do
 	esac
 	shift
 done
+
+validate_wait_settings
 
 extract_apt_packages_from_dockerfile() {
 	awk '
@@ -259,6 +313,7 @@ EOF
 	if [ "$synced_any" -eq 1 ]; then
 		echo "==> Genstarter fjordshare for at loade ny kode"
 		docker_compose restart fjordshare
+		wait_for_fjordshare
 	fi
 }
 
@@ -282,6 +337,7 @@ NEW_REV="$(git rev-parse "origin/$REPO_BRANCH")"
 if [ -n "$OLD_REV" ] && [ "$OLD_REV" = "$NEW_REV" ] && [ "$FORCE_IMAGE_BUILD" != "1" ]; then
 	cp "$ENV_BACKUP" .env 2>/dev/null || true
 	docker_compose up -d
+	wait_for_fjordshare
 	install_missing_dockerfile_packages_fast || true
 	docker_compose logs --tail=50
 	exit 0
@@ -321,8 +377,10 @@ fi
 
 if [ "$NEED_IMAGE_BUILD" -eq 1 ]; then
 	docker_compose up -d --build fjordshare
+	wait_for_fjordshare
 else
 	docker_compose up -d
+	wait_for_fjordshare
 	install_new_dockerfile_packages_fast "$OLD_REV" "$NEW_REV" || true
 	install_missing_dockerfile_packages_fast || true
 	sync_runtime_code_changes "$CHANGED" || true

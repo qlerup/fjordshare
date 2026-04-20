@@ -3281,6 +3281,14 @@ def _build_support_override_load_settings(
         return text
 
     def _detect_extruder_count() -> int:
+        forced_from_override = 0
+        try:
+            raw_forced = profile_process_overrides.get("extruder_count")
+            if raw_forced is not None:
+                forced_from_override = int(float(str(raw_forced).strip()))
+        except Exception:
+            forced_from_override = 0
+
         def _count_hint_items(value: Any) -> int:
             if value is None:
                 return 0
@@ -3344,7 +3352,9 @@ def _build_support_override_load_settings(
                     detected = hint_count
 
         profile_text = f"{printer_profile} {selected_process_name}".lower()
-        if "h2d" in profile_text:
+        if forced_from_override > 0:
+            detected = forced_from_override
+        elif "h2d" in profile_text:
             # H2D is dual extruder; force a stable value and avoid noisy hints.
             detected = 2
         elif detected <= 1 and any(token in profile_text for token in ("dual", "idex")):
@@ -4891,6 +4901,8 @@ def _slice_stl_to_gcode(
             # only one filament, bypassing BambuStudio's auto-mapping which fails
             # for H2D-style dual extruders with identical filaments.
             should_retry_single_extruder_direct = (
+                allow_support_override_fallback
+                and
                 has_filament_mapping_error
                 and bool(filament_profile_value)
                 and bool(print_profile_value)
@@ -4898,6 +4910,8 @@ def _slice_stl_to_gcode(
             if should_retry_single_extruder_direct:
                 forced_single_overrides = dict(normalized_process_overrides)
                 forced_single_overrides["extruder_count"] = 1
+                forced_single_overrides["print_extruder_id"] = 1
+                forced_single_overrides["printer_extruder_id"] = 1
                 _trace(
                     "retry-start",
                     {
@@ -4920,9 +4934,9 @@ def _slice_stl_to_gcode(
                         support_type=normalized_support_type,
                         support_style=normalized_support_style,
                         nozzle_left_diameter=normalized_nozzle_left_diameter,
-                        nozzle_right_diameter=normalized_nozzle_right_diameter,
+                        nozzle_right_diameter="",
                         nozzle_left_flow=normalized_nozzle_left_flow,
-                        nozzle_right_flow=normalized_nozzle_right_flow,
+                        nozzle_right_flow="",
                         bed_width_mm=normalized_bed_width,
                         bed_depth_mm=normalized_bed_depth,
                         process_overrides=forced_single_overrides,
@@ -5068,6 +5082,8 @@ def _slice_stl_to_gcode(
                         except Exception:
                             pass
                         forced_overrides["extruder_count"] = 1
+                        forced_overrides["print_extruder_id"] = 1
+                        forced_overrides["printer_extruder_id"] = 1
                         _trace(
                             "retry-start",
                             {
@@ -5090,9 +5106,9 @@ def _slice_stl_to_gcode(
                                 support_type=normalized_support_type,
                                 support_style=normalized_support_style,
                                 nozzle_left_diameter=normalized_nozzle_left_diameter,
-                                nozzle_right_diameter=normalized_nozzle_right_diameter,
+                                nozzle_right_diameter="",
                                 nozzle_left_flow=normalized_nozzle_left_flow,
-                                nozzle_right_flow=normalized_nozzle_right_flow,
+                                nozzle_right_flow="",
                                 bed_width_mm=normalized_bed_width,
                                 bed_depth_mm=normalized_bed_depth,
                                 process_overrides=forced_overrides,
