@@ -112,6 +112,18 @@ try:
     BAMBUSTUDIO_TIMEOUT_SEC = max(60, int(str(os.getenv("BAMBUSTUDIO_TIMEOUT_SEC", "1800")) or "1800"))
 except Exception:
     BAMBUSTUDIO_TIMEOUT_SEC = 1800
+try:
+    _attempt_timeout_default = min(BAMBUSTUDIO_TIMEOUT_SEC, 420)
+    BAMBUSTUDIO_ATTEMPT_TIMEOUT_SEC = max(
+        30,
+        int(str(os.getenv("BAMBUSTUDIO_ATTEMPT_TIMEOUT_SEC", str(_attempt_timeout_default))) or str(_attempt_timeout_default)),
+    )
+except Exception:
+    BAMBUSTUDIO_ATTEMPT_TIMEOUT_SEC = min(BAMBUSTUDIO_TIMEOUT_SEC, 420)
+try:
+    BAMBUSTUDIO_MAX_RETRY_EVENTS = max(1, int(str(os.getenv("BAMBUSTUDIO_MAX_RETRY_EVENTS", "12")) or "12"))
+except Exception:
+    BAMBUSTUDIO_MAX_RETRY_EVENTS = 12
 FILE_ATTACHMENT_MAX_BYTES = int(str(os.getenv("FILE_ATTACHMENT_MAX_BYTES", str(20 * 1024 * 1024))) or str(20 * 1024 * 1024))
 FILE_ATTACHMENT_ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif"}
 FILE_ATTACHMENT_MIME_TO_EXT = {
@@ -1678,7 +1690,7 @@ def _run_bambu_with_runtime_fallback(command: list[str], executable: str) -> tup
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            timeout=BAMBUSTUDIO_TIMEOUT_SEC,
+            timeout=BAMBUSTUDIO_ATTEMPT_TIMEOUT_SEC,
         )
 
     def _resolve_exec_candidate(raw: str) -> str:
@@ -4247,6 +4259,23 @@ def _slice_stl_to_gcode(
     if not input_stl.exists() or not input_stl.is_file():
         raise RuntimeError("STL filen findes ikke på disk")
 
+    if debug_trace is not None:
+        try:
+            retry_events_count = sum(
+                1
+                for entry in debug_trace
+                if isinstance(entry, dict) and str(entry.get("event") or "").strip() == "retry-start"
+            )
+            if retry_events_count >= BAMBUSTUDIO_MAX_RETRY_EVENTS:
+                raise RuntimeError(
+                    f"BambuStudio retry-graense ramt ({BAMBUSTUDIO_MAX_RETRY_EVENTS}). "
+                    "Stopper for at undgaa fastkoert loop."
+                )
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
+
     executable = _resolve_bambustudio_executable()
     legacy_cmd = [executable]
     _trace: Callable[[str, Optional[dict[str, Any]]], None] = (
@@ -4314,6 +4343,8 @@ def _slice_stl_to_gcode(
             "auto_pick_blank_profiles": bool(auto_pick_blank_profiles),
             "z_contact_mode": str(z_contact_mode or "min"),
             "disable_legacy_retry": bool(disable_legacy_retry),
+            "attempt_timeout_sec": int(BAMBUSTUDIO_ATTEMPT_TIMEOUT_SEC),
+            "max_retry_events": int(BAMBUSTUDIO_MAX_RETRY_EVENTS),
         },
     )
 
