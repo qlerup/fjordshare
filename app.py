@@ -2794,6 +2794,7 @@ def _build_modern_profile_args(
     load_settings_override: str = "",
     auto_pick_when_blank: bool = True,
     process_overrides: Optional[dict[str, Any]] = None,
+    preferred_extruder_id_hint: int = 0,
 ) -> list[str]:
     args: list[str] = []
     normalized_overrides = _normalize_slice_process_overrides(process_overrides or {})
@@ -2835,21 +2836,27 @@ def _build_modern_profile_args(
         return 0
 
     preferred_extruder_id = _preferred_single_extruder_from_overrides()
+    if preferred_extruder_id <= 0:
+        try:
+            preferred_extruder_id = int(preferred_extruder_id_hint)
+        except Exception:
+            preferred_extruder_id = 0
+    if preferred_extruder_id < 0:
+        preferred_extruder_id = 0
 
     effective_load_settings = str(load_settings_override or "").strip() or _effective_bambustudio_load_settings()
     effective_load_filaments = _effective_bambustudio_load_filaments()
-    if effective_load_settings:
-        args.extend(["--load-settings", effective_load_settings])
-    if effective_load_filaments:
-        args.extend(["--load-filaments", effective_load_filaments])
-
-    if effective_load_settings and effective_load_filaments:
-        return args
+    suppress_load_filaments = False
 
     machine_json = ""
     process_json = ""
     filament_json = ""
-    if (not effective_load_settings) or (not effective_load_filaments):
+    should_resolve_profiles = (
+        (not effective_load_settings)
+        or (not effective_load_filaments)
+        or (preferred_extruder_id > 0)
+    )
+    if should_resolve_profiles:
         machine_json, process_json, filament_json = _resolve_selected_profile_jsons(
             executable,
             printer_profile,
@@ -2859,17 +2866,40 @@ def _build_modern_profile_args(
             auto_pick_when_blank=auto_pick_when_blank,
         )
 
+    if effective_load_settings and preferred_extruder_id > 0 and filament_json:
+        current_parts = [part.strip() for part in str(effective_load_settings).split(";") if part.strip()]
+        if filament_json not in current_parts:
+            current_parts.append(filament_json)
+            effective_load_settings = ";".join(current_parts)
+        suppress_load_filaments = True
+
     if not effective_load_settings and machine_json:
         explicit_process_selected = bool(str(print_profile or "").strip())
-        if explicit_process_selected and process_json:
+        if explicit_process_selected and process_json and filament_json and preferred_extruder_id > 0:
+            args.extend(["--load-settings", f"{machine_json};{process_json};{filament_json}"])
+            suppress_load_filaments = True
+        elif explicit_process_selected and process_json:
             args.extend(["--load-settings", f"{machine_json};{process_json}"])
         else:
             # Compatibility mode for auto-process selection: let Bambu pick a
             # matching process for the selected machine instead of forcing
             # potentially incompatible process JSON into --load-settings.
             args.extend(["--load-settings", machine_json])
+            if filament_json and preferred_extruder_id > 0:
+                # Preserve manual single-nozzle mapping semantics when the
+                # user selected a specific extruder.
+                args[-1] = f"{machine_json};{filament_json}"
+                suppress_load_filaments = True
 
-    if not effective_load_filaments and filament_json:
+    if effective_load_settings:
+        args.extend(["--load-settings", effective_load_settings])
+    if effective_load_filaments and not suppress_load_filaments:
+        args.extend(["--load-filaments", effective_load_filaments])
+
+    if effective_load_settings and effective_load_filaments and not suppress_load_filaments:
+        return args
+
+    if not effective_load_filaments and filament_json and not suppress_load_filaments:
         override_extruders = _override_extruder_count_from_overrides()
         required_extruders = override_extruders or _infer_required_extruder_count_for_slice(machine_json, process_json)
         # When a concrete nozzle has been selected (print_extruder_id),
@@ -3301,6 +3331,20 @@ def _build_support_override_load_settings(
         except Exception:
             forced_from_override = 0
 
+        preferred_extruder_from_override = 0
+        for key in ("print_extruder_id", "printer_extruder_id"):
+            if key not in profile_process_overrides:
+                continue
+            try:
+                parsed = _extract_float_numbers(profile_process_overrides.get(key), max_items=1)
+                if parsed:
+                    candidate = int(round(float(parsed[0])))
+                    if candidate > 0:
+                        preferred_extruder_from_override = candidate
+                        break
+            except Exception:
+                continue
+
         def _count_hint_items(value: Any) -> int:
             if value is None:
                 return 0
@@ -3366,6 +3410,10 @@ def _build_support_override_load_settings(
         profile_text = f"{printer_profile} {selected_process_name}".lower()
         if forced_from_override > 0:
             detected = forced_from_override
+        elif preferred_extruder_from_override > 0:
+            # User picked a concrete nozzle side for slicing this job.
+            # Prefer single-extruder runtime mapping to avoid H2D auto-map -66 failures.
+            detected = 1
         elif "h2d" in profile_text:
             # H2D is dual extruder; force a stable value and avoid noisy hints.
             detected = 2
@@ -4266,6 +4314,7 @@ def _slice_stl_to_gcode(
     auto_pick_blank_profiles: bool = True,
     debug_trace: Optional[list[dict[str, Any]]] = None,
     z_contact_mode: str = "min",
+    preferred_extruder_id_hint: int = 0,
     # Internal guard to avoid recursive legacy-retry loops
     disable_legacy_retry: bool = False,
 ) -> None:
@@ -4322,6 +4371,23 @@ def _slice_stl_to_gcode(
     if normalized_nozzle_right_flow and not normalized_nozzle_left_flow:
         normalized_nozzle_left_flow = normalized_nozzle_right_flow
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
+    resolved_preferred_extruder_id = 0
+    try:
+        resolved_preferred_extruder_id = int(preferred_extruder_id_hint)
+    except Exception:
+        resolved_preferred_extruder_id = 0
+    for preferred_key in ("print_extruder_id", "printer_extruder_id"):
+        if preferred_key not in normalized_process_overrides:
+            continue
+        try:
+            numbers = _extract_float_numbers(normalized_process_overrides.get(preferred_key), max_items=1)
+            if numbers:
+                parsed_preferred = int(round(float(numbers[0])))
+                if parsed_preferred > 0:
+                    resolved_preferred_extruder_id = parsed_preferred
+                    break
+        except Exception:
+            continue
     if normalized_support_mode == "off":
         normalized_support_type = ""
         normalized_support_style = ""
@@ -4355,6 +4421,7 @@ def _slice_stl_to_gcode(
             "force_profile_runtime_compat": bool(force_profile_runtime_compat),
             "auto_pick_blank_profiles": bool(auto_pick_blank_profiles),
             "z_contact_mode": str(z_contact_mode or "min"),
+            "preferred_extruder_id_hint": int(resolved_preferred_extruder_id),
             "disable_legacy_retry": bool(disable_legacy_retry),
             "attempt_timeout_sec": int(BAMBUSTUDIO_ATTEMPT_TIMEOUT_SEC),
             "max_retry_events": int(BAMBUSTUDIO_MAX_RETRY_EVENTS),
@@ -4571,6 +4638,7 @@ def _slice_stl_to_gcode(
             load_settings_override=support_load_settings_override,
             auto_pick_when_blank=auto_pick_blank_profiles,
             process_overrides=normalized_process_overrides,
+            preferred_extruder_id_hint=resolved_preferred_extruder_id,
         )
         modern_base = [executable, "--slice", "0", *modern_profile_args]
 
@@ -4583,6 +4651,7 @@ def _slice_stl_to_gcode(
             load_settings_override=support_load_settings_override,
             auto_pick_when_blank=auto_pick_blank_profiles,
             process_overrides=normalized_process_overrides,
+            preferred_extruder_id_hint=resolved_preferred_extruder_id,
         )
         fallback_base = [executable, "--slice", "0", *fallback_profile_args]
         _trace(
@@ -4876,6 +4945,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=force_profile_runtime_compat,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        preferred_extruder_id_hint=resolved_preferred_extruder_id,
                         z_contact_mode=z_contact_mode,
                     )
                     _trace("retry-success", {"strategy": "without-support-override"})
@@ -4926,6 +4996,7 @@ def _slice_stl_to_gcode(
                                 force_profile_runtime_compat=force_profile_runtime_compat,
                                 auto_pick_blank_profiles=False,
                                 debug_trace=debug_trace,
+                                preferred_extruder_id_hint=resolved_preferred_extruder_id,
                                 z_contact_mode=z_contact_mode,
                             )
                             _trace("retry-success", {"strategy": "auto-process-after-support-fallback"})
@@ -4988,6 +5059,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=True,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        preferred_extruder_id_hint=resolved_preferred_extruder_id,
                         z_contact_mode=z_contact_mode,
                     )
                     _trace("retry-success", {"strategy": "single-extruder-direct"})
@@ -5045,6 +5117,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=True,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        preferred_extruder_id_hint=resolved_preferred_extruder_id,
                         z_contact_mode=z_contact_mode,
                     )
                     _trace("retry-success", {"strategy": "forced-runtime-compat-override"})
@@ -5099,6 +5172,7 @@ def _slice_stl_to_gcode(
                         allow_support_override_fallback=False,
                         auto_pick_blank_profiles=False,
                         debug_trace=debug_trace,
+                        preferred_extruder_id_hint=resolved_preferred_extruder_id,
                         z_contact_mode=z_contact_mode,
                     )
                     _trace("retry-success", {"strategy": "auto-process-direct"})
@@ -5160,6 +5234,7 @@ def _slice_stl_to_gcode(
                                 force_profile_runtime_compat=True,
                                 auto_pick_blank_profiles=auto_pick_blank_profiles,
                                 debug_trace=debug_trace,
+                                preferred_extruder_id_hint=resolved_preferred_extruder_id,
                                 z_contact_mode=z_contact_mode,
                             )
                             _trace("retry-success", {"strategy": "single-extruder-compat"})
@@ -5205,6 +5280,7 @@ def _slice_stl_to_gcode(
                                 allow_support_override_fallback=False,
                                 auto_pick_blank_profiles=False,
                                 debug_trace=debug_trace,
+                                preferred_extruder_id_hint=resolved_preferred_extruder_id,
                                 z_contact_mode=z_contact_mode,
                             )
                             _trace("retry-success", {"strategy": "auto-process-and-filament-direct"})
@@ -5303,6 +5379,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=True,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        preferred_extruder_id_hint=resolved_preferred_extruder_id,
                         z_contact_mode=z_contact_mode,
                         disable_legacy_retry=True,
                     )
@@ -5351,6 +5428,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=force_profile_runtime_compat,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        preferred_extruder_id_hint=resolved_preferred_extruder_id,
                         z_contact_mode="robust",
                         disable_legacy_retry=True,
                     )
@@ -5398,6 +5476,7 @@ def _slice_stl_to_gcode(
                         force_profile_runtime_compat=False,
                         auto_pick_blank_profiles=auto_pick_blank_profiles,
                         debug_trace=debug_trace,
+                        preferred_extruder_id_hint=resolved_preferred_extruder_id,
                         z_contact_mode=z_contact_mode,
                         disable_legacy_retry=True,
                     )
