@@ -2846,10 +2846,6 @@ def _build_modern_profile_args(
 
     effective_load_settings = str(load_settings_override or "").strip() or _effective_bambustudio_load_settings()
     effective_load_filaments = _effective_bambustudio_load_filaments()
-    if effective_load_filaments and preferred_extruder_id > 0:
-        # When a specific extruder is requested, keep a single filament mapping
-        # to avoid H2D auto-mapping ambiguity.
-        effective_load_filaments = _expand_load_filaments_for_extruders(effective_load_filaments, 1)
 
     machine_json = ""
     process_json = ""
@@ -2867,6 +2863,20 @@ def _build_modern_profile_args(
             filament_profile,
             prefer_uploaded=prefer_uploaded,
             auto_pick_when_blank=auto_pick_when_blank,
+        )
+
+    override_extruders = _override_extruder_count_from_overrides()
+    required_extruders = override_extruders or _infer_required_extruder_count_for_slice(machine_json, process_json)
+    if required_extruders <= 0:
+        required_extruders = 1
+
+    # If caller provided load-filaments explicitly (from env/runtime config),
+    # expand it to the required extruder count so dual-extruder profiles do not
+    # fail auto mapping when only one filament entry is present.
+    if effective_load_filaments:
+        effective_load_filaments = _expand_load_filaments_for_extruders(
+            effective_load_filaments,
+            required_extruders,
         )
 
     if not effective_load_settings and machine_json:
@@ -2888,13 +2898,6 @@ def _build_modern_profile_args(
         return args
 
     if not effective_load_filaments and filament_json:
-        override_extruders = _override_extruder_count_from_overrides()
-        required_extruders = override_extruders or _infer_required_extruder_count_for_slice(machine_json, process_json)
-        # When a concrete nozzle has been selected (print_extruder_id),
-        # prefer single-filament mapping to mirror Bambu Studio's manual
-        # mapping behavior for single-nozzle jobs on multi-extruder printers.
-        if preferred_extruder_id > 0:
-            required_extruders = 1
         effective_filaments = _expand_load_filaments_for_extruders(filament_json, required_extruders)
         args.extend(["--load-filaments", effective_filaments])
 
@@ -3089,12 +3092,10 @@ def _build_support_override_load_settings(
     normalized_type = _normalize_slice_support_type(support_type)
     normalized_style = _normalize_slice_support_style(support_style)
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
-    # For multi-extruder printers (H2D), include print_extruder_id in the
-    # process override so BambuStudio CLI knows which nozzle to use and can
-    # map filaments correctly. Without it, error -66 occurs.
-    profile_text_check = f"{printer_profile} {print_profile}".lower()
-    is_multi_extruder_printer = ("h2d" in profile_text_check) or ("dual" in profile_text_check) or ("idex" in profile_text_check)
-    exclude_keys = {"print_extruder_id", "printer_extruder_id"} if not is_multi_extruder_printer else set()
+    # Keep nozzle-side hints out of temporary process override payloads.
+    # They are tracked separately via preferred_extruder_id_hint in slicer
+    # flow and can trigger unstable runtime override behavior on some builds.
+    exclude_keys = {"print_extruder_id", "printer_extruder_id"}
     profile_process_overrides: dict[str, Any] = {
         key: value
         for key, value in normalized_process_overrides.items()
@@ -3131,15 +3132,8 @@ def _build_support_override_load_settings(
         right_d = normalized_nozzle_right_diameter or left_d
         left_f = normalized_nozzle_left_flow or "standard"
         right_f = normalized_nozzle_right_flow or left_f
-        # For multi-extruder machines like H2D, we still want to materialize
-        # a lightweight runtime override so `extruder_count` and related
-        # nozzle keys are present in the process payload. Otherwise some
-        # Bambu CLI builds report "process not compatible with printer".
-        profile_text = f"{printer_profile} {print_profile}".lower()
-        is_multi_extruder = ("h2d" in profile_text) or ("dual" in profile_text) or ("idex" in profile_text)
         if (
-            not is_multi_extruder
-            and machine_nozzle
+            machine_nozzle
             and left_d
             and right_d
             and left_d == right_d == machine_nozzle
