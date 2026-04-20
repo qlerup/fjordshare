@@ -2846,7 +2846,10 @@ def _build_modern_profile_args(
 
     effective_load_settings = str(load_settings_override or "").strip() or _effective_bambustudio_load_settings()
     effective_load_filaments = _effective_bambustudio_load_filaments()
-    suppress_load_filaments = False
+    if effective_load_filaments and preferred_extruder_id > 0:
+        # When a specific extruder is requested, keep a single filament mapping
+        # to avoid H2D auto-mapping ambiguity.
+        effective_load_filaments = _expand_load_filaments_for_extruders(effective_load_filaments, 1)
 
     machine_json = ""
     process_json = ""
@@ -2866,40 +2869,25 @@ def _build_modern_profile_args(
             auto_pick_when_blank=auto_pick_when_blank,
         )
 
-    if effective_load_settings and preferred_extruder_id > 0 and filament_json:
-        current_parts = [part.strip() for part in str(effective_load_settings).split(";") if part.strip()]
-        if filament_json not in current_parts:
-            current_parts.append(filament_json)
-            effective_load_settings = ";".join(current_parts)
-        suppress_load_filaments = True
-
     if not effective_load_settings and machine_json:
         explicit_process_selected = bool(str(print_profile or "").strip())
-        if explicit_process_selected and process_json and filament_json and preferred_extruder_id > 0:
-            args.extend(["--load-settings", f"{machine_json};{process_json};{filament_json}"])
-            suppress_load_filaments = True
-        elif explicit_process_selected and process_json:
+        if explicit_process_selected and process_json:
             args.extend(["--load-settings", f"{machine_json};{process_json}"])
         else:
             # Compatibility mode for auto-process selection: let Bambu pick a
             # matching process for the selected machine instead of forcing
             # potentially incompatible process JSON into --load-settings.
             args.extend(["--load-settings", machine_json])
-            if filament_json and preferred_extruder_id > 0:
-                # Preserve manual single-nozzle mapping semantics when the
-                # user selected a specific extruder.
-                args[-1] = f"{machine_json};{filament_json}"
-                suppress_load_filaments = True
 
     if effective_load_settings:
         args.extend(["--load-settings", effective_load_settings])
-    if effective_load_filaments and not suppress_load_filaments:
+    if effective_load_filaments:
         args.extend(["--load-filaments", effective_load_filaments])
 
-    if effective_load_settings and effective_load_filaments and not suppress_load_filaments:
+    if effective_load_settings and effective_load_filaments:
         return args
 
-    if not effective_load_filaments and filament_json and not suppress_load_filaments:
+    if not effective_load_filaments and filament_json:
         override_extruders = _override_extruder_count_from_overrides()
         required_extruders = override_extruders or _infer_required_extruder_count_for_slice(machine_json, process_json)
         # When a concrete nozzle has been selected (print_extruder_id),
@@ -4838,7 +4826,7 @@ def _slice_stl_to_gcode(
                             "BambuStudio libsoup-mismatch: libsoup2 og libsoup3 er loaded samtidigt i samme proces. "
                             "Genbyg image med seneste Dockerfile (matcher WebKit/JSC + libsoup automatisk)."
                         )
-                    errors.append(f"{candidate_label}/{label}: {details[:350]}")
+                    errors.append(f"{candidate_label}/{label} (rc={int(proc.returncode)}): {details[:350]}")
                     if "error while loading shared libraries" in details_lower:
                         has_shared_lib_error = True
                         break
@@ -4904,13 +4892,19 @@ def _slice_stl_to_gcode(
                 ("process not compatible with printer" in err)
                 for err in errors_lower
             )
+            has_sigsegv_error = any(
+                ("rc=-11" in err)
+                or ("segmentation fault" in err)
+                or ("signal 11" in err)
+                for err in errors_lower
+            )
 
             # Some Bambu multi-extruder builds reject explicit nozzle overrides
             # with setup/nozzle errors; retry once without explicit nozzle values.
             should_retry_without_support_override = (
                 allow_support_override_fallback
                 and bool(support_load_settings_override)
-                and (has_nozzle_setup_error or has_filament_mapping_error)
+                and (has_nozzle_setup_error or has_filament_mapping_error or has_sigsegv_error)
             )
             if should_retry_without_support_override:
                 _trace(
@@ -5137,7 +5131,7 @@ def _slice_stl_to_gcode(
             # nozzle_volume_type/setup-params errors unless process is auto-selected.
             should_retry_process_auto = (
                 allow_support_override_fallback
-                and (has_nozzle_setup_error or has_filament_mapping_error)
+                and (has_nozzle_setup_error or has_filament_mapping_error or has_sigsegv_error)
                 and bool(print_profile_value)
             )
             if should_retry_process_auto:
