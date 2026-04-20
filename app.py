@@ -4440,16 +4440,17 @@ def _slice_stl_to_gcode(
         if not isinstance(overrides, dict) or not overrides:
             return []
 
-        ordered_keys = (
-            "filament_map_mode",
-            "filament_map",
-            "filament_nozzle_map",
-            "filament_volume_map",
-            "print_extruder_id",
-            "printer_extruder_id",
-            "extruder_count",
-            "extruder_nozzle_count",
-            "extruder_nozzle_volume_type",
+        # NOTE:
+        # This AppRun build does NOT accept arbitrary `--<config_key>` flags.
+        # It only accepts specific CLI options, and they use kebab-case.
+        # Keep this allow-list strict to avoid "Invalid option --print_extruder_id".
+        ordered_mappings: tuple[tuple[str, str], ...] = (
+            ("filament_map_mode", "filament-map-mode"),
+            ("filament_map", "filament-map"),
+            ("filament_nozzle_map", "filament-nozzle-map"),
+            ("filament_volume_map", "filament-volume-map"),
+            ("extruder_nozzle_count", "extruder-nozzle-count"),
+            ("extruder_nozzle_volume_type", "extruder-nozzle-volume-type"),
         )
 
         def _to_scalar_text(raw: Any) -> str:
@@ -4469,7 +4470,7 @@ def _slice_stl_to_gcode(
             return str(raw).strip()
 
         cli_args: list[str] = []
-        for key in ordered_keys:
+        for key, cli_name in ordered_mappings:
             if key not in overrides:
                 continue
             text = _to_scalar_text(overrides.get(key))
@@ -4495,15 +4496,12 @@ def _slice_stl_to_gcode(
                 "filament_map",
                 "filament_nozzle_map",
                 "filament_volume_map",
-                "print_extruder_id",
-                "printer_extruder_id",
-                "extruder_count",
                 "extruder_nozzle_count",
                 "extruder_nozzle_volume_type",
             }:
                 text = text.replace(";", ",").replace("|", ",")
 
-            cli_args.append(f"--{key}={text}")
+            cli_args.append(f"--{cli_name}={text}")
 
         return cli_args
 
