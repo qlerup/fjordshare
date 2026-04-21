@@ -106,6 +106,11 @@ BAMBUSTUDIO_LOAD_FILAMENTS = str(os.getenv("BAMBUSTUDIO_LOAD_FILAMENTS", "")).st
 BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK = str(os.getenv("BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK", "0")).strip().lower() in {"1", "true", "yes", "on"}
 BAMBUSTUDIO_SLICE_DEBUG_ALWAYS = str(os.getenv("BAMBUSTUDIO_SLICE_DEBUG_ALWAYS", "0")).strip().lower() in {"1", "true", "yes", "on"}
 BAMBUSTUDIO_SLICE_DEBUG_MAX_EVENTS = 400
+try:
+    BAMBUSTUDIO_SLICE_DEBUG_MAX_FILES = int(str(os.getenv("BAMBUSTUDIO_SLICE_DEBUG_MAX_FILES", "200")) or "200")
+except Exception:
+    BAMBUSTUDIO_SLICE_DEBUG_MAX_FILES = 200
+BAMBUSTUDIO_SLICE_DEBUG_MAX_FILES = max(20, min(2000, BAMBUSTUDIO_SLICE_DEBUG_MAX_FILES))
 SLICER_PRINTER_BED_MAP_SETTING_KEY = "slicer_printer_bed_map_v1"
 SLICER_PRINTER_BED_HIDDEN_SETTING_KEY = "slicer_printer_bed_hidden_v1"
 try:
@@ -148,6 +153,12 @@ ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES = int(str(os.getenv("ZIP_UPLOAD_MAX_UNCOMPRESS
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
 UI_VERSION_MARKER = str(os.getenv("UI_VERSION_MARKER", "TMP-2026-04-12-07")).strip() or "TMP-2026-04-12-07"
+try:
+    SQLITE_TIMEOUT_SEC = float(str(os.getenv("SQLITE_TIMEOUT_SEC", "15")) or "15")
+except Exception:
+    SQLITE_TIMEOUT_SEC = 15.0
+SQLITE_TIMEOUT_SEC = max(2.0, min(120.0, SQLITE_TIMEOUT_SEC))
+SQLITE_BUSY_TIMEOUT_MS = int(SQLITE_TIMEOUT_SEC * 1000)
 ACTIVITY_LOG_LIMIT_DEFAULT = 200
 ACTIVITY_LOG_LIMIT_MAX = 1000
 ACTIVITY_KIND_LABELS = {
@@ -2819,6 +2830,52 @@ def _build_modern_profile_args(
             return True
         return False
 
+    def _mapping_slot_count_from_overrides() -> int:
+        if not isinstance(normalized_overrides, dict):
+            return 0
+        best = 0
+        for key in (
+            "filament_map",
+            "filament_nozzle_map",
+            "filament_map_2",
+            "filament_volume_map",
+        ):
+            if key not in normalized_overrides:
+                continue
+            raw = normalized_overrides.get(key)
+            if raw is None:
+                continue
+
+            values: list[str] = []
+            if isinstance(raw, (list, tuple, set)):
+                values = [str(item or "").strip() for item in raw if str(item or "").strip()]
+            elif isinstance(raw, str):
+                text = raw.strip()
+                if not text:
+                    continue
+                if text.startswith("[") and text.endswith("]"):
+                    try:
+                        parsed = json.loads(text)
+                    except Exception:
+                        parsed = None
+                    if isinstance(parsed, (list, tuple, set)):
+                        values = [str(item or "").strip() for item in parsed if str(item or "").strip()]
+                if not values:
+                    split_values = [part.strip() for part in re.split(r"[;,|]", text) if part.strip()]
+                    if split_values:
+                        values = split_values
+            else:
+                numeric_tokens = _extract_float_numbers(raw, max_items=16)
+                if numeric_tokens:
+                    values = [f"{token:g}" for token in numeric_tokens]
+
+            if values:
+                best = max(best, len(values))
+            else:
+                best = max(best, 1)
+
+        return best
+
     def _override_extruder_count_from_overrides() -> int:
         raw = normalized_overrides.get("extruder_count") if isinstance(normalized_overrides, dict) else None
         if raw is None:
@@ -2890,12 +2947,22 @@ def _build_modern_profile_args(
     required_extruders = override_extruders or _infer_required_extruder_count_for_slice(machine_json, process_json)
     if required_extruders <= 0:
         required_extruders = 1
+    mapping_slot_count = _mapping_slot_count_from_overrides()
+
+    def _desired_filament_slots() -> int:
+        if not explicit_filament_mapping_overrides:
+            return required_extruders
+        if mapping_slot_count > 0:
+            return max(1, mapping_slot_count)
+        if override_extruders > 1:
+            return override_extruders
+        return 1
 
     # If caller provided load-filaments explicitly (from env/runtime config),
     # expand it to the required extruder count so dual-extruder profiles do not
     # fail auto mapping when only one filament entry is present.
     if effective_load_filaments:
-        desired_filament_slots = 1 if explicit_filament_mapping_overrides else required_extruders
+        desired_filament_slots = _desired_filament_slots()
         effective_load_filaments = _expand_load_filaments_for_extruders(
             effective_load_filaments,
             desired_filament_slots,
@@ -2920,7 +2987,7 @@ def _build_modern_profile_args(
         return args
 
     if not effective_load_filaments and filament_json:
-        desired_filament_slots = 1 if explicit_filament_mapping_overrides else required_extruders
+        desired_filament_slots = _desired_filament_slots()
         effective_filaments = _expand_load_filaments_for_extruders(filament_json, desired_filament_slots)
         args.extend(["--load-filaments", effective_filaments])
 
@@ -3814,19 +3881,75 @@ def _build_support_override_load_settings(
             "filament_volume_map",
         }
 
-        def _coerce_mapping_index_value(existing_value: Any, index_value: int) -> Any:
-            token = str(max(0, int(index_value)))
+        def _parse_mapping_tokens(raw_value: Any) -> list[str]:
+            if raw_value is None:
+                return []
+            if isinstance(raw_value, (list, tuple, set)):
+                source_items = list(raw_value)
+            else:
+                text = str(raw_value or "").strip()
+                if not text:
+                    return []
+                split_tokens = [part.strip() for part in re.split(r"[;,|]", text) if part.strip()]
+                if len(split_tokens) > 1:
+                    source_items = split_tokens
+                else:
+                    numeric_tokens = _extract_float_numbers(raw_value, max_items=32)
+                    source_items = [f"{token:g}" for token in numeric_tokens] if numeric_tokens else [text]
+
+            out_tokens: list[str] = []
+            for item in source_items:
+                try:
+                    parsed = int(round(float(item)))
+                except Exception:
+                    continue
+                out_tokens.append(str(max(0, parsed)))
+            return out_tokens
+
+        def _coerce_mapping_values_for_process(existing_value: Any, incoming_value: Any) -> Any:
+            tokens = _parse_mapping_tokens(incoming_value)
+            if not tokens:
+                tokens = ["0"]
+
+            wanted = 1
+            if detected_extruder_count > 1:
+                wanted = detected_extruder_count
+
             if isinstance(existing_value, (list, tuple, set)):
-                existing_items = list(existing_value)
-                wanted = len(existing_items) if existing_items else 1
-                return [token for _ in range(wanted)]
-            if isinstance(existing_value, str):
-                text = existing_value.strip()
-                if text.startswith("[") and text.endswith("]"):
-                    return [token]
-            if existing_value is None:
-                return [token]
-            return token
+                existing_items = [item for item in list(existing_value) if str(item or "").strip()]
+                if existing_items:
+                    wanted = max(wanted, len(existing_items))
+            elif isinstance(existing_value, str):
+                existing_text = existing_value.strip()
+                if existing_text.startswith("[") and existing_text.endswith("]"):
+                    try:
+                        parsed_existing = json.loads(existing_text)
+                    except Exception:
+                        parsed_existing = None
+                    if isinstance(parsed_existing, list) and parsed_existing:
+                        wanted = max(wanted, len(parsed_existing))
+                else:
+                    split_existing = [part.strip() for part in re.split(r"[;,|]", existing_text) if part.strip()]
+                    if len(split_existing) > 1:
+                        wanted = max(wanted, len(split_existing))
+
+            if len(tokens) < wanted:
+                tokens.extend([tokens[-1]] * (wanted - len(tokens)))
+            elif len(tokens) > wanted:
+                tokens = tokens[:wanted]
+
+            if wanted <= 1:
+                if isinstance(existing_value, (list, tuple, set)):
+                    return [tokens[0]]
+                if isinstance(existing_value, str):
+                    text = existing_value.strip()
+                    if text.startswith("[") and text.endswith("]"):
+                        return [tokens[0]]
+                if existing_value is None:
+                    return [tokens[0]]
+                return tokens[0]
+
+            return list(tokens)
 
         for key, incoming in profile_process_overrides.items():
             if key not in override_template_payload and key not in manual_mapping_keys:
@@ -3851,17 +3974,7 @@ def _build_support_override_load_settings(
                 target_extruder = str(parsed_extruder if parsed_extruder > 0 else 1)
                 next_value = _coerce_process_override_value_like(existing, target_extruder)
             elif key in {"filament_map", "filament_nozzle_map", "filament_map_2", "filament_volume_map"}:
-                parsed_index = 0
-                try:
-                    if isinstance(incoming, (int, float)) and not isinstance(incoming, bool):
-                        parsed_index = int(round(float(incoming)))
-                    else:
-                        numbers = _extract_float_numbers(incoming, max_items=1)
-                        if numbers:
-                            parsed_index = int(round(float(numbers[0])))
-                except Exception:
-                    parsed_index = 0
-                next_value = _coerce_mapping_index_value(existing, parsed_index)
+                next_value = _coerce_mapping_values_for_process(existing, incoming)
             elif key == "filament_map_mode":
                 mode_text = str(incoming or "").strip().lower().replace("_", " ").replace("-", " ")
                 if mode_text in {"manual", "manual map"}:
@@ -4466,6 +4579,13 @@ def _slice_stl_to_gcode(
         def _to_scalar_text(raw: Any) -> str:
             if raw is None:
                 return ""
+            if isinstance(raw, (list, tuple, set)):
+                parts: list[str] = []
+                for item in list(raw):
+                    item_text = _to_scalar_text(item)
+                    if item_text:
+                        parts.append(item_text)
+                return ",".join(parts)
             if isinstance(raw, bool):
                 return "1" if raw else "0"
             if isinstance(raw, int) and not isinstance(raw, bool):
@@ -5227,10 +5347,9 @@ def _slice_stl_to_gcode(
                     )
                     errors.append(f"explicit-process-plain-fallback: {explicit_plain_text[:350]}")
 
-            # Direct single-extruder retry for multi-extruder filament mapping errors.
-            # Forces extruder_count=1 so _expand_load_filaments_for_extruders sends
-            # only one filament, bypassing BambuStudio's auto-mapping which fails
-            # for H2D-style dual extruders with identical filaments.
+            # Explicit manual-map retry for multi-extruder filament mapping errors.
+            # Keep dual extruder slots and pass explicit dual-value filament/nozzle
+            # maps so H2D-style profiles can resolve mapping deterministically.
             should_retry_manual_filament_map = (
                 allow_support_override_fallback
                 and has_filament_mapping_error
@@ -5241,15 +5360,16 @@ def _slice_stl_to_gcode(
             )
             if should_retry_manual_filament_map:
                 preferred_index = max(1, int(resolved_preferred_extruder_id))
+                preferred_nozzle_index = max(0, preferred_index - 1)
                 manual_map_overrides = dict(normalized_process_overrides)
                 manual_map_overrides["extruder_count"] = 2
                 manual_map_overrides["print_extruder_id"] = preferred_index
                 manual_map_overrides["printer_extruder_id"] = preferred_index
                 # Force manual mapping path in Bambu CLI (avoids auto-map rejection).
                 manual_map_overrides["filament_map_mode"] = "Manual"
-                manual_map_overrides["filament_map"] = preferred_index
-                manual_map_overrides["filament_nozzle_map"] = max(0, preferred_index - 1)
-                manual_map_overrides["filament_volume_map"] = 0
+                manual_map_overrides["filament_map"] = f"{preferred_index},{preferred_index}"
+                manual_map_overrides["filament_nozzle_map"] = f"{preferred_nozzle_index},{preferred_nozzle_index}"
+                manual_map_overrides["filament_volume_map"] = "0,0"
                 _trace(
                     "retry-start",
                     {
@@ -6027,6 +6147,26 @@ def _write_slice_debug_record(
     payload: dict[str, Any],
     preferred_dir: Optional[Path] = None,
 ) -> Optional[Path]:
+    def _prune_debug_dir(debug_dir: Path) -> None:
+        keep = int(BAMBUSTUDIO_SLICE_DEBUG_MAX_FILES)
+        if keep <= 0:
+            return
+        try:
+            candidates = [
+                p for p in debug_dir.glob("slice-debug-*.json")
+                if p.is_file()
+            ]
+            if len(candidates) <= keep:
+                return
+            candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for old_path in candidates[keep:]:
+                try:
+                    old_path.unlink(missing_ok=True)
+                except Exception:
+                    continue
+        except Exception:
+            return
+
     try:
         target_dir: Optional[Path] = None
         if isinstance(preferred_dir, Path):
@@ -6044,6 +6184,7 @@ def _write_slice_debug_record(
         target = target_dir / f"slice-debug-{stamp}-file-{max(0, int(file_id))}.json"
         safe_payload = _slice_debug_json_safe(payload)
         target.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _prune_debug_dir(target_dir)
         return target
     except Exception:
         try:
@@ -6057,6 +6198,7 @@ def _write_slice_debug_record(
             target = BAMBU_SLICE_DEBUG_DIR / f"slice-debug-{stamp}-file-{max(0, int(file_id))}.json"
             safe_payload = _slice_debug_json_safe(payload)
             target.write_text(json.dumps(safe_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            _prune_debug_dir(BAMBU_SLICE_DEBUG_DIR)
             return target
         except Exception:
             return None
@@ -6931,9 +7073,10 @@ def _bootstrap_thumbnail_queue() -> None:
 
 
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT_SEC)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute(f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_MS)}")
     return conn
 
 
@@ -7836,8 +7979,6 @@ def _serialize_slice_output_row(row: sqlite3.Row, share_token: Optional[str] = N
         content_url = url_for("api_file_content", file_id=int(row["id"]))
         download_url = url_for("api_file_download", file_id=int(row["id"]))
 
-    summary = _extract_gcode_summary_from_row(row)
-
     return {
         "id": int(row["id"]),
         "filename": str(row["filename"] or ""),
@@ -7846,7 +7987,10 @@ def _serialize_slice_output_row(row: sqlite3.Row, share_token: Optional[str] = N
         "uploaded_at": str(row["uploaded_at"] or ""),
         "content_url": content_url,
         "download_url": download_url,
-        "summary": summary,
+        # Avoid heavy G-code parsing on every file list refresh.
+        # The previous implementation read and scanned G-code files during list serialization,
+        # which can cause long response times/timeouts on large folders or network storage.
+        "summary": {},
     }
 
 
