@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-APP_DIR="${APP_DIR:-/volume1/docker/fjordshare}"
+APP_DIR="${APP_DIR:-/opt/fjordshare}"
 WAIT_TIMEOUT_SEC="${WAIT_TIMEOUT_SEC:-180}"
 WAIT_INTERVAL_SEC="${WAIT_INTERVAL_SEC:-2}"
 

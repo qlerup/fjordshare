@@ -10,7 +10,7 @@ if [ -z "${APP_DIR:-}" ]; then
 	elif [ -f "./docker-compose.yml" ]; then
 		APP_DIR="$(pwd)"
 	else
-		APP_DIR="/volume1/docker/fjordshare"
+		APP_DIR="/opt/fjordshare"
 	fi
 fi
 

@@ -38,9 +38,9 @@
       STARTUP_RETRY_ATTEMPTS: ${STARTUP_RETRY_ATTEMPTS:-24}
       STARTUP_RETRY_DELAY_SEC: ${STARTUP_RETRY_DELAY_SEC:-5}
     volumes:
-      - "${DATA_DIR:-/volume1/docker/fjordshare/data}:/data"
-      - "${UPLOADS_HOST_DIR:-/volume1/docker/fjordshare/uploads}:/uploads"
-      - "${THUMBS_HOST_DIR:-/volume1/docker/fjordshare/thumbs}:/thumbs"
+      - "${DATA_DIR:-/opt/fjordshare-data/appdata}:/data"
+      - "${UPLOADS_HOST_DIR:-/opt/fjordshare-data/uploads}:/uploads"
+      - "${THUMBS_HOST_DIR:-/opt/fjordshare-data/thumbs}:/thumbs"
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/api/health || exit 1"]
       interval: 10s

@@ -220,9 +220,9 @@ load_env_with_defaults() {
   fi
 
   : "${APP_PORT:=9090}"
-  : "${DATA_DIR:=/volume1/docker/fjordshare/data}"
-  : "${UPLOADS_HOST_DIR:=/volume1/docker/fjordshare/uploads}"
-  : "${THUMBS_HOST_DIR:=/volume1/docker/fjordshare/thumbs}"
+  : "${DATA_DIR:=/opt/fjordshare-data/appdata}"
+  : "${UPLOADS_HOST_DIR:=/opt/fjordshare-data/uploads}"
+  : "${THUMBS_HOST_DIR:=/opt/fjordshare-data/thumbs}"
   : "${TZ:=Europe/Copenhagen}"
   : "${THUMB_SIZE_PX:=480}"
   : "${BAMBUSTUDIO_APPIMAGE_URL:=}"
@@ -243,7 +243,7 @@ load_env_with_defaults() {
   : "${EXPECT_UPLOADS_FSTYPES:=}"
   : "${EXPECT_THUMBS_FSTYPES:=}"
   : "${SETUP_NFS_UPLOADS_ENABLED:=0}"
-  : "${SETUP_NFS_EXPORT:=10.10.0.161:/volume1/ProxmoxFjordshare}"
+  : "${SETUP_NFS_EXPORT:=10.10.0.161:/shared/ProxmoxFjordshare}"
   : "${SETUP_NFS_MOUNT_ROOT:=${HOME:-/root}/synology/fjordshare-data}"
   : "${SETUP_NFS_UPLOADS_SUBDIR:=uploads}"
   : "${SETUP_NFS_FSTAB_OPTIONS:=vers=3,_netdev,nofail}"
@@ -371,7 +371,7 @@ step_2_uploads_target() {
       fi
     else
       SETUP_NFS_UPLOADS_ENABLED="1"
-      SETUP_NFS_EXPORT="$(ask_input "NFS export (server:/path)" "$SETUP_NFS_EXPORT" "10.10.0.161:/volume1/ProxmoxFjordshare" "Synology NFS share in server:/path format.")"
+      SETUP_NFS_EXPORT="$(ask_input "NFS export (server:/path)" "$SETUP_NFS_EXPORT" "10.10.0.161:/shared/ProxmoxFjordshare" "Synology NFS share in server:/path format.")"
       SETUP_NFS_MOUNT_ROOT="$(ask_input "Local NFS mount root" "$SETUP_NFS_MOUNT_ROOT" "/home/qlerup/synology/fjordshare-data" "Local mount root on host/LXC. Must be absolute.")"
       SETUP_NFS_UPLOADS_SUBDIR="$(ask_input "Uploads subdir inside NFS mount" "$SETUP_NFS_UPLOADS_SUBDIR" "uploads" "Subfolder name only.")"
       SETUP_NFS_FSTAB_OPTIONS="$(ask_input "NFS fstab options" "$SETUP_NFS_FSTAB_OPTIONS" "vers=3,_netdev,nofail" "Mount options written to /etc/fstab.")"
@@ -386,7 +386,7 @@ step_2_uploads_target() {
     fi
   else
     SETUP_NFS_UPLOADS_ENABLED="0"
-    UPLOADS_HOST_DIR="$(ask_input "UPLOADS_HOST_DIR (local path)" "$UPLOADS_HOST_DIR" "/volume1/docker/fjordshare/uploads" "Absolute local path for uploaded/shared files.")"
+    UPLOADS_HOST_DIR="$(ask_input "UPLOADS_HOST_DIR (local path)" "$UPLOADS_HOST_DIR" "/opt/fjordshare-data/uploads" "Absolute local path for uploaded/shared files.")"
     EXPECT_UPLOADS_FSTYPES=""
   fi
 }
@@ -394,8 +394,8 @@ step_2_uploads_target() {
 step_3_storage() {
   echo
   echo "Step 3/5: App data + thumbnails paths"
-  DATA_DIR="$(ask_input "DATA_DIR (DB + internal app state)" "$DATA_DIR" "/volume1/docker/fjordshare/data" "Should usually be local disk for SQLite stability.")"
-  THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR" "/volume1/docker/fjordshare/thumbs" "Local or NAS, your choice.")"
+  DATA_DIR="$(ask_input "DATA_DIR (DB + internal app state)" "$DATA_DIR" "/opt/fjordshare-data/appdata" "Should usually be local disk for SQLite stability.")"
+  THUMBS_HOST_DIR="$(ask_input "THUMBS_HOST_DIR (thumbnails)" "$THUMBS_HOST_DIR" "/opt/fjordshare-data/thumbs" "Local or NAS, your choice.")"
 }
 
 step_4_slicer() {
@@ -517,9 +517,9 @@ echo "      4) Slicer defaults"
 echo "      5) Optional strict fs-type checks"
 echo "    Input examples:"
 echo "      - APP_PORT: 9090 or 9080"
-echo "      - DATA_DIR: /volume1/docker/fjordshare/data"
+echo "      - DATA_DIR: /opt/fjordshare-data/appdata"
 echo "      - UPLOADS_HOST_DIR: /mnt/fjordshare-nfs/uploads"
-echo "      - NFS export: 10.10.0.161:/volume1/ProxmoxFjordshare"
+echo "      - NFS export: 10.10.0.161:/shared/ProxmoxFjordshare"
 
 if [ ! -f "$EXAMPLE_ENV" ]; then
   echo "ERROR: Missing .env.example in repo root."
