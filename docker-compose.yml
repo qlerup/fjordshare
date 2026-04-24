@@ -7,6 +7,18 @@
     container_name: fjordshare
     ports:
       - "${APP_PORT:-9090}:8080"
+    command: >
+      gunicorn wsgi:application
+      --worker-class gthread
+      --workers ${GUNICORN_WORKERS:-1}
+      --threads ${GUNICORN_THREADS:-8}
+      --bind 0.0.0.0:8080
+      --timeout ${GUNICORN_TIMEOUT:-120}
+      --graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT:-30}
+      --keep-alive ${GUNICORN_KEEP_ALIVE:-5}
+      --max-requests ${GUNICORN_MAX_REQUESTS:-1000}
+      --max-requests-jitter ${GUNICORN_MAX_REQUESTS_JITTER:-100}
+      --access-logfile - --error-logfile - --log-level ${GUNICORN_LOG_LEVEL:-info}
     environment:
       DATA_DIR: /data
       UPLOAD_ROOT: /uploads
@@ -23,6 +35,8 @@
       BAMBUSTUDIO_LOAD_FILAMENTS: ${BAMBUSTUDIO_LOAD_FILAMENTS:-}
       BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK: ${BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK:-0}
       UI_VERSION_MARKER: ${UI_VERSION_MARKER:-}
+      STARTUP_RETRY_ATTEMPTS: ${STARTUP_RETRY_ATTEMPTS:-24}
+      STARTUP_RETRY_DELAY_SEC: ${STARTUP_RETRY_DELAY_SEC:-5}
     volumes:
       - "${DATA_DIR:-/volume1/docker/fjordshare/data}:/data"
       - "${UPLOADS_HOST_DIR:-/volume1/docker/fjordshare/uploads}:/uploads"
@@ -34,4 +48,3 @@
       retries: 10
       start_period: 20s
     restart: unless-stopped
-

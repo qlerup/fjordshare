@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import threading
 import zipfile
 from contextlib import closing
@@ -159,6 +160,16 @@ except Exception:
     SQLITE_TIMEOUT_SEC = 15.0
 SQLITE_TIMEOUT_SEC = max(2.0, min(120.0, SQLITE_TIMEOUT_SEC))
 SQLITE_BUSY_TIMEOUT_MS = int(SQLITE_TIMEOUT_SEC * 1000)
+try:
+    STARTUP_RETRY_ATTEMPTS = int(str(os.getenv("STARTUP_RETRY_ATTEMPTS", "24")) or "24")
+except Exception:
+    STARTUP_RETRY_ATTEMPTS = 24
+STARTUP_RETRY_ATTEMPTS = max(1, min(120, STARTUP_RETRY_ATTEMPTS))
+try:
+    STARTUP_RETRY_DELAY_SEC = float(str(os.getenv("STARTUP_RETRY_DELAY_SEC", "5")) or "5")
+except Exception:
+    STARTUP_RETRY_DELAY_SEC = 5.0
+STARTUP_RETRY_DELAY_SEC = max(1.0, min(30.0, STARTUP_RETRY_DELAY_SEC))
 ACTIVITY_LOG_LIMIT_DEFAULT = 200
 ACTIVITY_LOG_LIMIT_MAX = 1000
 ACTIVITY_KIND_LABELS = {
@@ -574,6 +585,30 @@ def _ensure_storage_dirs() -> None:
     SLICER_PROFILE_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     _migrate_legacy_slicer_profile_files()
     _normalize_existing_uploaded_profile_json_files()
+
+
+def _run_startup_preflight() -> None:
+    attempts = STARTUP_RETRY_ATTEMPTS
+    delay_sec = STARTUP_RETRY_DELAY_SEC
+    for attempt in range(1, attempts + 1):
+        try:
+            _ensure_storage_dirs()
+            init_db()
+            migrate_thumbnail_render_style_if_needed()
+            if attempt > 1:
+                print(
+                    f"[startup] storage/db became available on attempt {attempt}/{attempts}.",
+                    flush=True,
+                )
+            return
+        except Exception as exc:
+            print(
+                f"[startup] preflight attempt {attempt}/{attempts} failed: {exc}",
+                flush=True,
+            )
+            if attempt >= attempts:
+                raise
+            time.sleep(delay_sec)
 
 
 def _load_or_create_secret() -> str:
@@ -8239,9 +8274,7 @@ def build_share_url(token: str, use_external_base_url: bool = False) -> str:
     return f"{base}/s/{token}"
 
 
-_ensure_storage_dirs()
-init_db()
-migrate_thumbnail_render_style_if_needed()
+_run_startup_preflight()
 
 app = Flask(__name__)
 app.secret_key = _load_or_create_secret()
@@ -8286,16 +8319,27 @@ def setup_guard():
 
 @app.route("/api/health")
 def api_health():
-    return jsonify(
-        {
-            "ok": True,
-            "service": "fjordshare",
-            "users": users_count(),
-            "data_dir": str(DATA_DIR),
-            "upload_root": str(UPLOAD_ROOT),
-            "thumbs_dir": str(THUMBS_DIR),
-        }
-    )
+    users_value: Optional[int] = None
+    db_ok = True
+    db_error = ""
+    try:
+        users_value = users_count()
+    except Exception as exc:
+        db_ok = False
+        db_error = str(exc)
+
+    payload: Dict[str, Any] = {
+        "ok": True,
+        "db_ok": db_ok,
+        "service": "fjordshare",
+        "users": users_value,
+        "data_dir": str(DATA_DIR),
+        "upload_root": str(UPLOAD_ROOT),
+        "thumbs_dir": str(THUMBS_DIR),
+    }
+    if db_error:
+        payload["db_error"] = db_error[:240]
+    return jsonify(payload)
 
 
 @app.get("/api/slice/status")
@@ -10766,7 +10810,10 @@ def api_share_upload_tus_override(token: str, upload_id: str):
     return jsonify({"ok": False, "error": "Unsupported method"}), 405, tus_headers()
 
 
-_bootstrap_thumbnail_queue()
+try:
+    _bootstrap_thumbnail_queue()
+except Exception as exc:
+    print(f"[startup] thumbnail queue bootstrap skipped: {exc}", flush=True)
 
 
 if __name__ == "__main__":

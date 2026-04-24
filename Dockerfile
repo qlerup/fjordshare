@@ -259,7 +259,6 @@ RUN mkdir -p /app/static/vendor \
 
 EXPOSE 8080
 
-CMD ["gunicorn", "--workers", "1", "--worker-class", "gthread", "--threads", "8", "--timeout", "120", "--bind", "0.0.0.0:8080", "wsgi:application"]
-
+CMD ["gunicorn", "--workers", "1", "--worker-class", "gthread", "--threads", "8", "--timeout", "120", "--graceful-timeout", "30", "--keep-alive", "5", "--max-requests", "1000", "--max-requests-jitter", "100", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "--bind", "0.0.0.0:8080", "wsgi:application"]
 
 
