@@ -808,6 +808,12 @@ input[type="checkbox"] {
   cursor: pointer;
 }
 
+.folder-tile:focus-visible {
+  outline: none;
+  border-color: rgba(91, 140, 255, 0.8);
+  box-shadow: 0 0 0 2px rgba(91, 140, 255, 0.18);
+}
+
 .folder-tile:hover {
   border-color: rgba(91, 140, 255, 0.55);
   background: var(--panel-3);
@@ -899,6 +905,15 @@ input[type="checkbox"] {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.folder-tile-actions {
+  display: none;
+  justify-content: flex-end;
+}
+
+.mapper-shell.select-mode .folder-tile-actions {
+  display: flex;
 }
 
 .mapper-section-title {
@@ -1589,6 +1604,112 @@ input[type="checkbox"] {
 .table.compact th,
 .table.compact td {
   padding: 6px;
+}
+
+.print-ready-admin-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.print-ready-user-group {
+  display: grid;
+  gap: 10px;
+}
+
+.print-ready-user-group h4 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.print-ready-projects {
+  display: grid;
+  gap: 12px;
+}
+
+.print-ready-project-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  overflow-x: auto;
+}
+
+.print-ready-project-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.print-ready-project-title {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.print-ready-table {
+  min-width: 860px;
+}
+
+.print-ready-table td:nth-child(1),
+.print-ready-table td:nth-child(2),
+.print-ready-table td:nth-child(3) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.print-ready-table td:nth-child(4) {
+  width: 74px;
+  font-variant-numeric: tabular-nums;
+}
+
+.print-ready-attachments {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.print-ready-attachments a {
+  width: 42px;
+  height: 42px;
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.print-ready-attachments img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.print-ready-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  background: var(--panel);
+}
+
+.print-ready-modal-card {
+  width: min(620px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+}
+
+.print-ready-modal-card .toolbar {
+  justify-content: flex-start;
 }
 
 .log-entry-type {
@@ -2672,6 +2793,11 @@ input[type="checkbox"] {
 
   .metadata-nav-right {
     justify-content: flex-start;
+  }
+
+  .print-ready-project-head {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .upload-monitor {

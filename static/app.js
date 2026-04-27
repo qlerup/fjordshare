@@ -16,6 +16,7 @@
     files: [],
     zipJobs: [],
     shares: [],
+    printReadyProjects: [],
     users: [],
     adminLogs: [],
     pendingMetadata: [],
@@ -72,8 +73,11 @@
     slicePlateLoadToken: 0,
     infoDrawerHideTimer: null,
     selectMode: false,
+    selectPurpose: "",
     selectedFolderPaths: new Set(),
     selectedFileIds: new Set(),
+    excludedFolderPaths: new Set(),
+    excludedFileIds: new Set(),
     folderPreviewCache: Object.create(null),
     folderPreviewLoading: new Set(),
     folderPreviewRequestToken: 0,
@@ -93,6 +97,7 @@
     settingsTabs: document.getElementById("settingsTabs"),
     settingsTabSelect: document.getElementById("settingsTabSelect"),
     settingsPanelShares: document.getElementById("settings-panel-shares"),
+    settingsPanelPrintReady: document.getElementById("settings-panel-print-ready"),
     settingsPanelDns: document.getElementById("settings-panel-dns"),
     settingsPanelUsers: document.getElementById("settings-panel-users"),
     settingsPanelLogs: document.getElementById("settings-panel-logs"),
@@ -132,6 +137,8 @@
     mapperMenuCreateFolder: document.getElementById("mapperMenuCreateFolder"),
     mapperMenuRenameFolder: document.getElementById("mapperMenuRenameFolder"),
     mapperSelectSummary: document.getElementById("mapperSelectSummary"),
+    mapperSelectPrintReadyBtn: document.getElementById("mapperSelectPrintReadyBtn"),
+    mapperSelectClearBtn: document.getElementById("mapperSelectClearBtn"),
     mapperSelectDeleteBtn: document.getElementById("mapperSelectDeleteBtn"),
     mapperSelectPrintedBtn: document.getElementById("mapperSelectPrintedBtn"),
     mapperSelectExitBtn: document.getElementById("mapperSelectExitBtn"),
@@ -264,6 +271,15 @@
     shareResultWrap: document.getElementById("shareResultWrap"),
     shareResultLink: document.getElementById("shareResultLink"),
     copyShareLinkBtn: document.getElementById("copyShareLinkBtn"),
+    printReadyModal: document.getElementById("printReadyModal"),
+    printReadyModalCloseBtn: document.getElementById("printReadyModalCloseBtn"),
+    printReadyModalSummary: document.getElementById("printReadyModalSummary"),
+    printReadyZipLink: document.getElementById("printReadyZipLink"),
+    printReadyPdfLink: document.getElementById("printReadyPdfLink"),
+    printReadyModalStatus: document.getElementById("printReadyModalStatus"),
+    printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
+    printReadyStatus: document.getElementById("printReadyStatus"),
+    printReadyAdminList: document.getElementById("printReadyAdminList"),
     sharesListStatus: document.getElementById("sharesListStatus"),
     sharesTableBody: document.getElementById("sharesTableBody"),
     dnsExternalBaseUrlInput: document.getElementById("dnsExternalBaseUrlInput"),
@@ -1061,6 +1077,7 @@
 
     const panelMap = {
       shares: els.settingsPanelShares,
+      "print-ready": els.settingsPanelPrintReady,
       dns: els.settingsPanelDns,
       users: els.settingsPanelUsers,
       logs: els.settingsPanelLogs,
@@ -1103,6 +1120,47 @@
     return String((els.folderSelect && els.folderSelect.value) || state.currentFolder || "");
   }
 
+  function pathMatchesPrefix(path, prefix) {
+    const value = String(path || "").trim();
+    const base = String(prefix || "").trim();
+    return !!base && (value === base || value.startsWith(`${base}/`));
+  }
+
+  function isPrintReadySelectMode() {
+    return !!state.selectMode && state.selectPurpose === "print-ready";
+  }
+
+  function selectedFolderCoversPath(path) {
+    const value = String(path || "").trim();
+    if (!value) return false;
+    return Array.from(state.selectedFolderPaths).some((folderPath) => pathMatchesPrefix(value, folderPath));
+  }
+
+  function excludedFolderCoversPath(path) {
+    const value = String(path || "").trim();
+    if (!value) return false;
+    return Array.from(state.excludedFolderPaths).some((folderPath) => pathMatchesPrefix(value, folderPath));
+  }
+
+  function isFolderEffectivelySelected(folderPath) {
+    const key = String(folderPath || "").trim();
+    if (!key) return false;
+    if (state.selectedFolderPaths.has(key)) return true;
+    if (!isPrintReadySelectMode()) return false;
+    if (state.excludedFolderPaths.has(key)) return false;
+    return selectedFolderCoversPath(key) && !excludedFolderCoversPath(key);
+  }
+
+  function isFileEffectivelySelected(file) {
+    const id = Number(file && file.id ? file.id : 0);
+    if (!id) return false;
+    if (state.selectedFileIds.has(id)) return true;
+    if (!isPrintReadySelectMode()) return false;
+    if (state.excludedFileIds.has(id)) return false;
+    const folder = String((file && file.folder_path) || "").trim();
+    return selectedFolderCoversPath(folder) && !excludedFolderCoversPath(folder);
+  }
+
   function selectedCount() {
     return state.selectedFolderPaths.size + state.selectedFileIds.size;
   }
@@ -1111,9 +1169,24 @@
     return state.selectedFileIds.size;
   }
 
+  function printReadySelectionCount() {
+    const directlySelected = state.selectedFolderPaths.size + state.selectedFileIds.size;
+    const excluded = state.excludedFolderPaths.size + state.excludedFileIds.size;
+    return { directlySelected, excluded };
+  }
+
   function clearSelections() {
     state.selectedFolderPaths.clear();
     state.selectedFileIds.clear();
+    state.excludedFolderPaths.clear();
+    state.excludedFileIds.clear();
+  }
+
+  function cleanupPrintReadyExclusions() {
+    if (!isPrintReadySelectMode()) return;
+    if (state.selectedFolderPaths.size > 0) return;
+    state.excludedFolderPaths.clear();
+    state.excludedFileIds.clear();
   }
 
   async function deleteSelectedInSelectMode() {
@@ -1169,10 +1242,64 @@
     await loadFiles();
   }
 
-  function toggleSelectMode(forceValue = null) {
+  function closePrintReadyModal() {
+    if (els.printReadyModal) els.printReadyModal.classList.add("hidden");
+    showStatus(els.printReadyModalStatus, "");
+  }
+
+  function openPrintReadyModal(project) {
+    if (!project || !els.printReadyModal) return;
+    const fileCount = Number(project.file_count || (Array.isArray(project.files) ? project.files.length : 0) || 0);
+    const qty = Number(project.total_quantity || 0);
+    if (els.printReadyModalSummary) {
+      els.printReadyModalSummary.textContent = `${project.title || "Klar til print"} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}`;
+    }
+    if (els.printReadyZipLink) {
+      els.printReadyZipLink.href = String(project.zip_url || "#");
+    }
+    if (els.printReadyPdfLink) {
+      els.printReadyPdfLink.href = String(project.pdf_url || "#");
+    }
+    showStatus(els.printReadyModalStatus, "Projektet er sendt til admin-sektionen.", "ok");
+    els.printReadyModal.classList.remove("hidden");
+  }
+
+  async function markSelectionPrintReady() {
+    const fileIds = Array.from(state.selectedFileIds).map((v) => Number(v || 0)).filter((v) => v > 0);
+    const folderPaths = Array.from(state.selectedFolderPaths).map((v) => String(v || "").trim()).filter(Boolean);
+    const excludedFileIds = Array.from(state.excludedFileIds).map((v) => Number(v || 0)).filter((v) => v > 0);
+    const excludedFolderPaths = Array.from(state.excludedFolderPaths).map((v) => String(v || "").trim()).filter(Boolean);
+    const total = fileIds.length + folderPaths.length;
+    if (!total) {
+      showStatus(els.uploadStatus, "Vælg mindst én fil eller mappe til klar til print.", "error");
+      return;
+    }
+
+    const data = await api("/api/print-ready", {
+      method: "POST",
+      body: {
+        file_ids: fileIds,
+        folder_paths: folderPaths,
+        excluded_file_ids: excludedFileIds,
+        excluded_folder_paths: excludedFolderPaths,
+      },
+    });
+
+    const project = data.project || null;
+    toggleSelectMode(false);
+    await loadFiles();
+    if (state.role === "admin") {
+      await loadPrintReadyProjects();
+    }
+    openPrintReadyModal(project);
+  }
+
+  function toggleSelectMode(forceValue = null, purpose = "manage") {
     const next = forceValue == null ? !state.selectMode : !!forceValue;
-    if (state.selectMode === next) return;
+    const nextPurpose = next ? String(purpose || "manage") : "";
+    if (state.selectMode === next && state.selectPurpose === nextPurpose) return;
     state.selectMode = next;
+    state.selectPurpose = nextPurpose;
     if (!next) {
       clearSelections();
     } else {
@@ -1183,53 +1310,118 @@
     renderFiles();
   }
 
+  function startPrintReadySelection() {
+    toggleSelectMode(true, "print-ready");
+    showStatus(els.uploadStatus, "Vælg filer eller mapper til printprojektet. Mapper vælger automatisk alt indhold.", "ok");
+  }
+
   function toggleFolderSelection(folderPath) {
     const key = String(folderPath || "").trim();
     if (!key) return;
+    if (isPrintReadySelectMode()) {
+      if (state.selectedFolderPaths.has(key)) {
+        state.selectedFolderPaths.delete(key);
+        for (const value of Array.from(state.excludedFolderPaths)) {
+          if (pathMatchesPrefix(value, key)) state.excludedFolderPaths.delete(value);
+        }
+        return;
+      }
+      if (state.excludedFolderPaths.has(key)) {
+        state.excludedFolderPaths.delete(key);
+        return;
+      }
+      if (isFolderEffectivelySelected(key)) {
+        state.excludedFolderPaths.add(key);
+        for (const value of Array.from(state.selectedFolderPaths)) {
+          if (pathMatchesPrefix(value, key)) state.selectedFolderPaths.delete(value);
+        }
+        for (const id of Array.from(state.excludedFileIds)) {
+          const file = state.files.find((item) => Number(item && item.id ? item.id : 0) === Number(id));
+          if (file && pathMatchesPrefix(String(file.folder_path || ""), key)) state.excludedFileIds.delete(id);
+        }
+        return;
+      }
+      state.selectedFolderPaths.add(key);
+      for (const value of Array.from(state.excludedFolderPaths)) {
+        if (pathMatchesPrefix(value, key)) state.excludedFolderPaths.delete(value);
+      }
+      return;
+    }
+
     if (state.selectedFolderPaths.has(key)) state.selectedFolderPaths.delete(key);
     else state.selectedFolderPaths.add(key);
   }
 
-  function toggleFileSelection(fileId) {
+  function toggleFileSelection(fileId, file = null) {
     const id = Number(fileId || 0);
     if (!id) return;
+    const row = file || fileById(id);
+    if (isPrintReadySelectMode()) {
+      if (state.selectedFileIds.has(id)) {
+        state.selectedFileIds.delete(id);
+        return;
+      }
+      if (state.excludedFileIds.has(id)) {
+        state.excludedFileIds.delete(id);
+        return;
+      }
+      if (row && isFileEffectivelySelected(row)) {
+        state.excludedFileIds.add(id);
+        return;
+      }
+      state.selectedFileIds.add(id);
+      return;
+    }
+
     if (state.selectedFileIds.has(id)) state.selectedFileIds.delete(id);
     else state.selectedFileIds.add(id);
   }
 
   function pruneSelections() {
-    const currentFolderPath = currentFolder() || state.homeFolder || "";
-    const childPathSet = new Set(listDirectChildren(currentFolderPath).map((c) => String(c.path || "")));
-    const fileIdSet = new Set(state.files.map((f) => Number(f.id || 0)).filter((n) => n > 0));
-
-    for (const folderPath of Array.from(state.selectedFolderPaths)) {
-      if (!childPathSet.has(folderPath)) state.selectedFolderPaths.delete(folderPath);
-    }
-    for (const id of Array.from(state.selectedFileIds)) {
-      if (!fileIdSet.has(Number(id))) state.selectedFileIds.delete(Number(id));
-    }
+    if (!state.selectMode) clearSelections();
   }
 
   function updateSelectModeUi() {
     const on = !!state.selectMode;
+    const printReadyMode = isPrintReadySelectMode();
     if (els.mapperShell) els.mapperShell.classList.toggle("select-mode", on);
+    if (els.mapperShell) els.mapperShell.classList.toggle("print-ready-select-mode", printReadyMode);
 
     const count = selectedCount();
     const fileCount = selectedFileCount();
     if (els.mapperSelectSummary) {
-      els.mapperSelectSummary.textContent = on ? `${count} valgt` : "";
+      if (printReadyMode) {
+        const stats = printReadySelectionCount();
+        const excludedText = stats.excluded > 0 ? ` · ${stats.excluded} fravalgt` : "";
+        els.mapperSelectSummary.textContent = `Klar til print: ${stats.directlySelected} valgt${excludedText}`;
+      } else {
+        els.mapperSelectSummary.textContent = on ? `${count} valgt` : "";
+      }
       els.mapperSelectSummary.classList.toggle("hidden", !on);
     }
     if (els.mapperSelectExitBtn) {
       els.mapperSelectExitBtn.classList.toggle("hidden", !on);
+      els.mapperSelectExitBtn.textContent = printReadyMode ? "Annuller" : "Afslut vælg";
+    }
+    if (els.mapperSelectPrintReadyBtn) {
+      const showPrintReadyBtn = !on || printReadyMode;
+      els.mapperSelectPrintReadyBtn.classList.toggle("hidden", !showPrintReadyBtn);
+      els.mapperSelectPrintReadyBtn.disabled = printReadyMode && count <= 0;
+      els.mapperSelectPrintReadyBtn.textContent = printReadyMode
+        ? (count > 0 ? `Filer valgt / Projekt klar til print (${count})` : "Filer valgt / Projekt klar til print")
+        : "Vælg filer til projektet";
+    }
+    if (els.mapperSelectClearBtn) {
+      els.mapperSelectClearBtn.classList.toggle("hidden", !printReadyMode);
+      els.mapperSelectClearBtn.disabled = count <= 0 && state.excludedFolderPaths.size <= 0 && state.excludedFileIds.size <= 0;
     }
     if (els.mapperSelectDeleteBtn) {
-      els.mapperSelectDeleteBtn.classList.toggle("hidden", !on);
+      els.mapperSelectDeleteBtn.classList.toggle("hidden", !on || printReadyMode);
       els.mapperSelectDeleteBtn.disabled = count <= 0;
       els.mapperSelectDeleteBtn.textContent = count > 0 ? `Slet (${count})` : "Slet";
     }
     if (els.mapperSelectPrintedBtn) {
-      const allowPrinted = on && state.role === "admin";
+      const allowPrinted = on && !printReadyMode && state.role === "admin";
       els.mapperSelectPrintedBtn.classList.toggle("hidden", !allowPrinted);
       els.mapperSelectPrintedBtn.disabled = fileCount <= 0;
       els.mapperSelectPrintedBtn.textContent = fileCount > 0 ? `Printet (${fileCount})` : "Printet";
@@ -1246,7 +1438,7 @@
     }
     if (els.mapperMenuShare) {
       const hasShareSelection = selectedShareFoldersFromSelection().length > 0;
-      els.mapperMenuShare.disabled = !on || !hasShareSelection;
+      els.mapperMenuShare.disabled = !on || printReadyMode || !hasShareSelection;
     }
     if (els.mapperMenuRenameFolder) {
       els.mapperMenuRenameFolder.disabled = !on || state.selectedFolderPaths.size !== 1;
@@ -1257,7 +1449,7 @@
       els.mapperSearchBtn.classList.toggle("disabled", on);
     }
     if (els.folderUpBtn) {
-      els.folderUpBtn.classList.toggle("disabled", on);
+      els.folderUpBtn.classList.toggle("disabled", false);
     }
     if (els.mapperDropZone) {
       els.mapperDropZone.classList.toggle("disabled", on);
@@ -1303,7 +1495,7 @@
     if (els.folderUpBtn) {
       const parent = parentFolder(folder);
       const canGoUp = !!parent && state.folders.some((f) => String(f.path || "") === parent);
-      els.folderUpBtn.disabled = state.selectMode || !canGoUp;
+      els.folderUpBtn.disabled = !canGoUp;
     }
   }
 
@@ -1320,15 +1512,18 @@
     els.folderList.innerHTML = children
       .map((child) => {
         const perm = child.permission ? ` · ${esc(child.permission)}` : "";
-        const isSelected = state.selectedFolderPaths.has(String(child.path || ""));
+        const isSelected = isFolderEffectivelySelected(String(child.path || ""));
         const previewHtml = folderTilePreviewHtml(child.path);
         return `
-          <button class="folder-tile ${isSelected ? "selected" : ""}" type="button" data-folder="${esc(child.path)}">
+          <div class="folder-tile ${isSelected ? "selected" : ""}" data-folder="${esc(child.path)}" role="button" tabindex="0">
             <span class="select-mark ${isSelected ? "selected" : ""}"></span>
             <div class="folder-tile-preview">${previewHtml}</div>
             <div class="folder-tile-name">${esc(child.name)}</div>
             <div class="folder-tile-meta">${esc(child.path)}${perm}</div>
-          </button>
+            <div class="folder-tile-actions">
+              <button class="btn small folder-tile-open" type="button" data-folder-open="${esc(child.path)}">Åbn</button>
+            </div>
+          </div>
         `;
       })
       .join("");
@@ -6094,7 +6289,7 @@
     const html = state.files
       .map((file) => {
         const id = Number(file.id || 0);
-        const isSelected = state.selectedFileIds.has(id);
+        const isSelected = isFileEffectivelySelected(file);
         const isPrinted = !!file.printed;
         const printedBadge = isPrinted ? `<span class="file-print-badge">Printet</span>` : "";
         const sliceBadge = sliceBadgeHtml(file);
@@ -7141,6 +7336,101 @@
       showStatus(els.sharesListStatus, "Deling slettet.", "ok");
       await loadShares();
     }
+  }
+
+  async function loadPrintReadyProjects() {
+    if (state.role !== "admin" || !els.printReadyAdminList) return;
+    try {
+      const data = await api("/api/admin/print-ready");
+      state.printReadyProjects = Array.isArray(data.items) ? data.items : [];
+      showStatus(els.printReadyStatus, "");
+    } catch (err) {
+      state.printReadyProjects = [];
+      showStatus(els.printReadyStatus, err.message || "Kunne ikke hente klar til print", "error");
+    }
+    renderPrintReadyProjects();
+  }
+
+  function printReadyAttachmentHtml(attachments) {
+    const list = Array.isArray(attachments) ? attachments : [];
+    if (!list.length) return `<span class="hint">Ingen</span>`;
+    return `
+      <div class="print-ready-attachments">
+        ${list.slice(0, 4).map((item) => {
+          const url = String(item.content_url || "#");
+          const name = String(item.original_name || "Billede");
+          return `<a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(name)}"><img src="${esc(url)}" alt="${esc(name)}" loading="lazy"></a>`;
+        }).join("")}
+        ${list.length > 4 ? `<span class="print-ready-more">+${list.length - 4}</span>` : ""}
+      </div>
+    `;
+  }
+
+  function renderPrintReadyProjects() {
+    if (!els.printReadyAdminList) return;
+    const projects = Array.isArray(state.printReadyProjects) ? state.printReadyProjects : [];
+    if (!projects.length) {
+      els.printReadyAdminList.innerHTML = `<div class="hint">Ingen projekter er markeret klar til print endnu.</div>`;
+      return;
+    }
+
+    const groups = new Map();
+    for (const project of projects) {
+      const user = String(project.owner_username || "Ukendt bruger");
+      if (!groups.has(user)) groups.set(user, []);
+      groups.get(user).push(project);
+    }
+
+    els.printReadyAdminList.innerHTML = Array.from(groups.entries()).map(([username, items]) => `
+      <section class="print-ready-user-group">
+        <h4>${esc(username)}</h4>
+        <div class="print-ready-projects">
+          ${items.map((project) => renderPrintReadyProjectCard(project)).join("")}
+        </div>
+      </section>
+    `).join("");
+  }
+
+  function renderPrintReadyProjectCard(project) {
+    const files = Array.isArray(project.files) ? project.files : [];
+    const fileCount = Number(project.file_count || files.length || 0);
+    const qty = Number(project.total_quantity || 0);
+    const rows = files.map((file) => `
+      <tr>
+        <td>${esc(file.display_path || file.folder_path || "-")}</td>
+        <td><a href="${esc(file.download_url || "#")}" target="_blank" rel="noopener">${esc(file.filename || "-")}</a></td>
+        <td>${esc(file.note || "-")}</td>
+        <td>${Number(file.quantity || 1)}</td>
+        <td>${printReadyAttachmentHtml(file.attachments)}</td>
+      </tr>
+    `).join("");
+    return `
+      <article class="print-ready-project-card">
+        <div class="print-ready-project-head">
+          <div>
+            <div class="print-ready-project-title">${esc(project.title || "Klar til print")}</div>
+            <div class="hint">${esc(formatDate(project.created_at))} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}</div>
+            ${project.selected_summary ? `<div class="hint">${esc(project.selected_summary)}</div>` : ""}
+          </div>
+          <div class="toolbar">
+            <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
+            <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener">Download PDF produktions info fil</a>
+          </div>
+        </div>
+        <table class="table compact print-ready-table">
+          <thead>
+            <tr>
+              <th>Sti i mappe</th>
+              <th>Filnavn</th>
+              <th>Info</th>
+              <th>Antal</th>
+              <th>Billeder</th>
+            </tr>
+          </thead>
+          <tbody>${rows || `<tr><td colspan="5" class="hint">Ingen filer.</td></tr>`}</tbody>
+        </table>
+      </article>
+    `;
   }
 
   async function loadDns() {
@@ -9349,8 +9639,10 @@
       if (card) {
         const id = Number(card.dataset.fileId || 0);
         if (id) {
-          toggleFileSelection(id);
+          toggleFileSelection(id, fileById(id));
+          cleanupPrintReadyExclusions();
           renderFiles();
+          renderFolderBrowser();
         }
       }
       return;
@@ -9471,6 +9763,7 @@
         setTab(tab);
         if (tab === "settings" && state.role === "admin") {
           if (state.currentSettingsTab === "shares") await loadShares();
+          if (state.currentSettingsTab === "print-ready") await loadPrintReadyProjects();
           if (state.currentSettingsTab === "dns") await loadDns();
           if (state.currentSettingsTab === "users") await loadUsers();
           if (state.currentSettingsTab === "logs") await loadAdminLogs();
@@ -9486,6 +9779,7 @@
         const tab = String(btn.dataset.settingsTab || "shares");
         setSettingsTab(tab);
         if (tab === "shares") await loadShares();
+        if (tab === "print-ready") await loadPrintReadyProjects();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
         if (tab === "logs") await loadAdminLogs();
@@ -9499,6 +9793,7 @@
         const tab = String(els.settingsTabSelect.value || "shares");
         setSettingsTab(tab);
         if (tab === "shares") await loadShares();
+        if (tab === "print-ready") await loadPrintReadyProjects();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
         if (tab === "logs") await loadAdminLogs();
@@ -9508,15 +9803,44 @@
 
     if (els.folderList) {
       els.folderList.addEventListener("click", async (event) => {
+        const openBtn = event.target.closest("[data-folder-open]");
+        if (openBtn && els.folderSelect) {
+          event.stopPropagation();
+          els.folderSelect.value = openBtn.dataset.folderOpen || "";
+          state.currentFolder = els.folderSelect.value;
+          await loadFiles();
+          return;
+        }
         const btn = event.target.closest("[data-folder]");
         if (!btn || !els.folderSelect) return;
         if (state.selectMode) {
           toggleFolderSelection(btn.dataset.folder || "");
+          cleanupPrintReadyExclusions();
           renderFolderBrowser();
+          renderFiles();
           updateSelectModeUi();
           return;
         }
         els.folderSelect.value = btn.dataset.folder || "";
+        state.currentFolder = els.folderSelect.value;
+        await loadFiles();
+      });
+
+      els.folderList.addEventListener("keydown", async (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        if (event.target.closest("[data-folder-open]")) return;
+        const tile = event.target.closest("[data-folder]");
+        if (!tile || !els.folderSelect) return;
+        event.preventDefault();
+        if (state.selectMode) {
+          toggleFolderSelection(tile.dataset.folder || "");
+          cleanupPrintReadyExclusions();
+          renderFolderBrowser();
+          renderFiles();
+          updateSelectModeUi();
+          return;
+        }
+        els.folderSelect.value = tile.dataset.folder || "";
         state.currentFolder = els.folderSelect.value;
         await loadFiles();
       });
@@ -9525,10 +9849,29 @@
     if (els.mapperSelectExitBtn) {
       els.mapperSelectExitBtn.addEventListener("click", () => toggleSelectMode(false));
     }
+    if (els.mapperSelectClearBtn) {
+      els.mapperSelectClearBtn.addEventListener("click", () => {
+        clearSelections();
+        renderFolderBrowser();
+        renderFiles();
+        updateSelectModeUi();
+      });
+    }
     if (els.mapperSelectDeleteBtn) {
       els.mapperSelectDeleteBtn.addEventListener("click", () => {
         deleteSelectedInSelectMode().catch((err) => {
           showStatus(els.uploadStatus, err.message || "Kunne ikke slette valgte elementer", "error");
+        });
+      });
+    }
+    if (els.mapperSelectPrintReadyBtn) {
+      els.mapperSelectPrintReadyBtn.addEventListener("click", () => {
+        if (!isPrintReadySelectMode()) {
+          startPrintReadySelection();
+          return;
+        }
+        markSelectionPrintReady().catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke markere klar til print", "error");
         });
       });
     }
@@ -9542,7 +9885,6 @@
 
     if (els.folderUpBtn) {
       els.folderUpBtn.addEventListener("click", async () => {
-        if (state.selectMode) return;
         const current = currentFolder();
         const parent = parentFolder(current);
         if (!parent) return;
@@ -9600,7 +9942,8 @@
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
-      if (shareModalOpen) return;
+      const printReadyModalOpen = !!(els.printReadyModal && !els.printReadyModal.classList.contains("hidden"));
+      if (shareModalOpen || printReadyModalOpen) return;
       if (!state.selectMode) return;
       toggleSelectMode(false);
     });
@@ -10253,6 +10596,11 @@
         closeSlicerUploadModal();
         return;
       }
+      const printReadyModalOpen = !!(els.printReadyModal && !els.printReadyModal.classList.contains("hidden"));
+      if (printReadyModalOpen) {
+        closePrintReadyModal();
+        return;
+      }
       const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
       if (shareModalOpen) {
         closeShareModal();
@@ -10419,6 +10767,17 @@
       });
     }
 
+    if (els.printReadyModalCloseBtn) {
+      els.printReadyModalCloseBtn.addEventListener("click", closePrintReadyModal);
+    }
+    if (els.printReadyModal) {
+      els.printReadyModal.addEventListener("click", (event) => {
+        if (event.target === els.printReadyModal || event.target.classList.contains("modal-backdrop")) {
+          closePrintReadyModal();
+        }
+      });
+    }
+
     if (els.createShareBtn) {
       els.createShareBtn.addEventListener("click", () => {
         createShare().catch((err) => {
@@ -10444,6 +10803,14 @@
       els.sharesTableBody.addEventListener("click", (event) => {
         onShareTableClick(event).catch((err) => {
           showStatus(els.sharesListStatus, err.message || "Fejl i deling", "error");
+        });
+      });
+    }
+
+    if (els.printReadyRefreshBtn) {
+      els.printReadyRefreshBtn.addEventListener("click", () => {
+        loadPrintReadyProjects().catch((err) => {
+          showStatus(els.printReadyStatus, err.message || "Kunne ikke hente klar til print", "error");
         });
       });
     }
@@ -10611,6 +10978,7 @@
     await loadFiles();
     if (state.role === "admin") {
       await loadShares();
+      await loadPrintReadyProjects();
       await loadDns();
       await loadUsers();
       setSettingsTab("shares");

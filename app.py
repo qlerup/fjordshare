@@ -3,6 +3,7 @@
 import base64
 import configparser
 import hashlib
+import io
 import json
 import math
 import mimetypes
@@ -45,9 +46,11 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
-    from PIL import Image, ImageOps
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
 except Exception:
     Image = None
+    ImageDraw = None
+    ImageFont = None
     ImageOps = None
 
 try:
@@ -7299,6 +7302,39 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON activity_logs(created_at DESC, id DESC);
             CREATE INDEX IF NOT EXISTS idx_activity_logs_kind ON activity_logs(kind, action, id DESC);
 
+            CREATE TABLE IF NOT EXISTS print_ready_projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_user_id INTEGER NOT NULL,
+                owner_username TEXT NOT NULL,
+                owner_home_folder TEXT NOT NULL,
+                title TEXT NOT NULL,
+                selected_summary TEXT,
+                status TEXT NOT NULL DEFAULT 'ready',
+                created_by TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_print_ready_projects_created ON print_ready_projects(created_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_print_ready_projects_owner ON print_ready_projects(owner_user_id, id DESC);
+
+            CREATE TABLE IF NOT EXISTS print_ready_project_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                folder_path TEXT NOT NULL,
+                rel_path TEXT NOT NULL,
+                display_path TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                note TEXT,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                file_size INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(project_id) REFERENCES print_ready_projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_print_ready_project_files_project ON print_ready_project_files(project_id, sort_order, id);
+            CREATE INDEX IF NOT EXISTS idx_print_ready_project_files_file ON print_ready_project_files(file_id);
+
             CREATE TABLE IF NOT EXISTS share_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 token_hash TEXT UNIQUE NOT NULL,
@@ -7373,6 +7409,23 @@ def init_db() -> None:
             "UPDATE folders SET folder_kind='user' WHERE folder_kind IS NULL OR TRIM(folder_kind)=''"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_kind ON folders(folder_kind)")
+
+        project_cols = [r[1] for r in conn.execute("PRAGMA table_info(print_ready_projects)").fetchall()]
+        if "owner_home_folder" not in project_cols:
+            conn.execute("ALTER TABLE print_ready_projects ADD COLUMN owner_home_folder TEXT NOT NULL DEFAULT ''")
+        if "selected_summary" not in project_cols:
+            conn.execute("ALTER TABLE print_ready_projects ADD COLUMN selected_summary TEXT")
+        if "status" not in project_cols:
+            conn.execute("ALTER TABLE print_ready_projects ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'")
+        conn.execute(
+            "UPDATE print_ready_projects SET status='ready' WHERE status IS NULL OR TRIM(status)=''"
+        )
+
+        project_file_cols = [r[1] for r in conn.execute("PRAGMA table_info(print_ready_project_files)").fetchall()]
+        if "display_path" not in project_file_cols:
+            conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN display_path TEXT NOT NULL DEFAULT ''")
+        if "sort_order" not in project_file_cols:
+            conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
         conn.commit()
 
 
@@ -8291,6 +8344,544 @@ def serialize_file_attachment_row(row: sqlite3.Row) -> dict:
         "uploaded_at": str(row["uploaded_at"] or ""),
         "content_url": content_url,
     }
+
+
+def _parse_positive_int_list(raw: Any) -> list[int]:
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for value in raw:
+        try:
+            item_id = int(value)
+        except Exception:
+            continue
+        if item_id <= 0 or item_id in seen:
+            continue
+        seen.add(item_id)
+        out.append(item_id)
+    return out
+
+
+def _project_display_path(owner_home_folder: str, folder_path: str, filename: str) -> str:
+    _ = filename
+    home = normalize_folder_path(owner_home_folder)
+    folder = normalize_folder_path(folder_path)
+    if home and folder == home:
+        return "."
+    if home and folder.startswith(home + "/"):
+        rel_folder = folder[len(home) + 1 :]
+    else:
+        rel_folder = folder
+    return normalize_folder_path(rel_folder) if rel_folder else "."
+
+
+def _safe_zip_arcname(*parts: str) -> str:
+    segments: list[str] = []
+    for part in parts:
+        text = str(part or "").replace("\\", "/").strip().strip("/")
+        if not text:
+            continue
+        for segment in text.split("/"):
+            clean = sanitize_filename(segment)
+            if clean and clean not in {".", ".."}:
+                segments.append(clean)
+    return "/".join(segments) or "fil"
+
+
+def _selected_print_ready_rows(
+    user: User,
+    raw_file_ids: Any,
+    raw_folder_paths: Any,
+    raw_excluded_file_ids: Any = None,
+    raw_excluded_folder_paths: Any = None,
+) -> tuple[list[sqlite3.Row], list[str], list[int]]:
+    file_ids = _parse_positive_int_list(raw_file_ids)
+    folder_paths = _collapse_folder_prefixes(raw_folder_paths if isinstance(raw_folder_paths, list) else [])
+    excluded_file_ids = set(_parse_positive_int_list(raw_excluded_file_ids))
+    excluded_folder_paths = _collapse_folder_prefixes(raw_excluded_folder_paths if isinstance(raw_excluded_folder_paths, list) else [])
+    direct_file_ids = set(file_ids)
+
+    if not file_ids and not folder_paths:
+        raise ValueError("Vælg mindst én fil eller mappe")
+
+    for folder in folder_paths:
+        if not permission_allows(permission_for_user_folder(user, folder), "view"):
+            raise PermissionError(f"Ingen adgang til mappe: {folder}")
+
+    selected_rows: list[sqlite3.Row] = []
+    with closing(get_conn()) as conn:
+        if folder_paths:
+            folder_where, folder_params = _folder_clauses(folder_paths)
+            selected_rows.extend(
+                conn.execute(
+                    f"SELECT * FROM files WHERE {folder_where}",
+                    tuple(folder_params),
+                ).fetchall()
+            )
+        if file_ids:
+            placeholders = ",".join("?" for _ in file_ids)
+            selected_rows.extend(
+                conn.execute(
+                    f"SELECT * FROM files WHERE id IN ({placeholders})",
+                    tuple(file_ids),
+                ).fetchall()
+            )
+
+    rows_by_id: dict[int, sqlite3.Row] = {}
+    for row in selected_rows:
+        fid = int(row["id"])
+        if fid in rows_by_id:
+            continue
+        if not user_can_access_file(user, row, "view"):
+            raise PermissionError("Ingen adgang til en eller flere filer")
+        if fid not in direct_file_ids:
+            folder = normalize_folder_path(str(row["folder_path"] or ""))
+            if fid in excluded_file_ids:
+                continue
+            if any(folder == excluded or folder.startswith(excluded + "/") for excluded in excluded_folder_paths):
+                continue
+        rows_by_id[fid] = row
+
+    rows = sorted(
+        rows_by_id.values(),
+        key=lambda r: (str(r["folder_path"] or "").lower(), str(r["filename"] or "").lower(), int(r["id"])),
+    )
+    if not rows:
+        raise ValueError("Der blev ikke fundet nogen filer i det valgte")
+    return rows, folder_paths, file_ids
+
+
+def _print_ready_title(folder_paths: list[str], file_ids: list[int]) -> str:
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    if len(folder_paths) == 1 and not file_ids:
+        return f"Klar til print: {folder_paths[0]}"
+    if len(folder_paths) > 1 and not file_ids:
+        return f"Klar til print: {len(folder_paths)} mapper"
+    if file_ids and not folder_paths:
+        return f"Klar til print: {len(file_ids)} filer"
+    return f"Klar til print: blandet valg {stamp}"
+
+
+def _print_ready_selected_summary(folder_paths: list[str], file_ids: list[int]) -> str:
+    parts: list[str] = []
+    if folder_paths:
+        parts.append("Mapper: " + ", ".join(folder_paths[:8]))
+        if len(folder_paths) > 8:
+            parts.append(f"+{len(folder_paths) - 8} mapper")
+    if file_ids:
+        parts.append(f"Direkte valgte filer: {len(file_ids)}")
+    return " | ".join(parts)
+
+
+def create_print_ready_project(
+    user: User,
+    rows: list[sqlite3.Row],
+    folder_paths: list[str],
+    file_ids: list[int],
+) -> int:
+    home_folder = ensure_user_storage_ready(user)
+    title = _print_ready_title(folder_paths, file_ids)
+    summary = _print_ready_selected_summary(folder_paths, file_ids)
+    with closing(get_conn()) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO print_ready_projects(
+                owner_user_id, owner_username, owner_home_folder,
+                title, selected_summary, status, created_by, created_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                int(user.id),
+                str(user.username or ""),
+                home_folder,
+                title,
+                summary,
+                "ready",
+                str(user.username or ""),
+                now_iso(),
+            ),
+        )
+        project_id = int(cur.lastrowid)
+        for index, row in enumerate(rows, start=1):
+            folder = normalize_folder_path(str(row["folder_path"] or ""))
+            filename = str(row["filename"] or "")
+            display_path = _project_display_path(home_folder, folder, filename)
+            conn.execute(
+                """
+                INSERT INTO print_ready_project_files(
+                    project_id, file_id, folder_path, rel_path, display_path,
+                    filename, note, quantity, file_size, sort_order
+                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    project_id,
+                    int(row["id"]),
+                    folder,
+                    str(row["rel_path"] or ""),
+                    display_path,
+                    filename,
+                    str(row["note"] or ""),
+                    max(1, int(row["quantity"] or 1)),
+                    int(row["file_size"] or 0),
+                    index,
+                ),
+            )
+        conn.commit()
+
+    log_activity(
+        kind="print-ready",
+        action="create",
+        message=f"Klar til print oprettet med {len(rows)} filer.",
+        level="info",
+        folder_path=folder_paths[0] if folder_paths else str(rows[0]["folder_path"] or ""),
+        target=title,
+        actor=str(user.username or ""),
+    )
+    return project_id
+
+
+def _fetch_print_ready_project(project_id: int) -> Optional[sqlite3.Row]:
+    with closing(get_conn()) as conn:
+        return conn.execute(
+            "SELECT * FROM print_ready_projects WHERE id=?",
+            (int(project_id),),
+        ).fetchone()
+
+
+def _can_access_print_ready_project(project_row: sqlite3.Row) -> bool:
+    if current_user.is_admin:
+        return True
+    return int(project_row["owner_user_id"] or 0) == int(current_user.id)
+
+
+def _print_ready_file_rows(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT
+            pf.*,
+            f.ext AS current_ext,
+            f.mime_type AS current_mime_type,
+            f.uploaded_at AS current_uploaded_at,
+            f.uploaded_by AS current_uploaded_by
+        FROM print_ready_project_files pf
+        LEFT JOIN files f ON f.id = pf.file_id
+        WHERE pf.project_id=?
+        ORDER BY pf.sort_order, pf.id
+        """,
+        (int(project_id),),
+    ).fetchall()
+
+
+def _attachment_rows_for_files(conn: sqlite3.Connection, file_ids: list[int]) -> dict[int, list[sqlite3.Row]]:
+    out: dict[int, list[sqlite3.Row]] = {int(fid): [] for fid in file_ids}
+    if not file_ids:
+        return out
+    placeholders = ",".join("?" for _ in file_ids)
+    rows = conn.execute(
+        f"""
+        SELECT id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+        FROM file_attachments
+        WHERE file_id IN ({placeholders})
+        ORDER BY file_id, uploaded_at, id
+        """,
+        tuple(file_ids),
+    ).fetchall()
+    for row in rows:
+        out.setdefault(int(row["file_id"]), []).append(row)
+    return out
+
+
+def serialize_print_ready_project(
+    project_row: sqlite3.Row,
+    file_rows: Optional[list[sqlite3.Row]] = None,
+    attachment_map: Optional[dict[int, list[sqlite3.Row]]] = None,
+) -> dict:
+    project_id = int(project_row["id"])
+    files: list[dict] = []
+    total_quantity = 0
+    if file_rows is not None:
+        attachment_map = attachment_map or {}
+        for row in file_rows:
+            file_id = int(row["file_id"])
+            quantity = max(1, int(row["quantity"] or 1))
+            total_quantity += quantity
+            attachments = [serialize_file_attachment_row(a) for a in attachment_map.get(file_id, [])]
+            files.append(
+                {
+                    "id": int(row["id"]),
+                    "file_id": file_id,
+                    "folder_path": str(row["folder_path"] or ""),
+                    "display_path": str(row["display_path"] or ""),
+                    "filename": str(row["filename"] or ""),
+                    "note": str(row["note"] or ""),
+                    "quantity": quantity,
+                    "file_size": int(row["file_size"] or 0),
+                    "attachments": attachments,
+                    "content_url": url_for("api_file_content", file_id=file_id),
+                    "download_url": url_for("api_file_download", file_id=file_id),
+                }
+            )
+    return {
+        "id": project_id,
+        "owner_user_id": int(project_row["owner_user_id"] or 0),
+        "owner_username": str(project_row["owner_username"] or ""),
+        "title": str(project_row["title"] or ""),
+        "selected_summary": str(project_row["selected_summary"] or ""),
+        "status": str(project_row["status"] or "ready"),
+        "created_at": str(project_row["created_at"] or ""),
+        "file_count": len(files) if file_rows is not None else 0,
+        "total_quantity": total_quantity,
+        "files": files,
+        "zip_url": url_for("api_print_ready_zip", project_id=project_id),
+        "pdf_url": url_for("api_print_ready_pdf", project_id=project_id),
+    }
+
+
+def get_print_ready_project_payload(project_id: int) -> tuple[Optional[dict], Optional[dict]]:
+    with closing(get_conn()) as conn:
+        project = conn.execute(
+            "SELECT * FROM print_ready_projects WHERE id=?",
+            (int(project_id),),
+        ).fetchone()
+        if project is None:
+            return None, {"ok": False, "error": "Projektet findes ikke", "status": 404}
+        if not _can_access_print_ready_project(project):
+            return None, {"ok": False, "error": "Ingen adgang", "status": 403}
+        files = _print_ready_file_rows(conn, int(project_id))
+        attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+    return serialize_print_ready_project(project, files, attachment_map), None
+
+
+def _load_print_ready_for_download(project_id: int) -> tuple[sqlite3.Row, list[sqlite3.Row], dict[int, list[sqlite3.Row]]]:
+    with closing(get_conn()) as conn:
+        project = conn.execute(
+            "SELECT * FROM print_ready_projects WHERE id=?",
+            (int(project_id),),
+        ).fetchone()
+        if project is None:
+            raise FileNotFoundError("Projektet findes ikke")
+        if not _can_access_print_ready_project(project):
+            raise PermissionError("Ingen adgang")
+        files = _print_ready_file_rows(conn, int(project_id))
+        attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+    return project, files, attachment_map
+
+
+def _load_pdf_font(size: int, bold: bool = False) -> Any:
+    if ImageFont is None:
+        return None
+    names = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+    ]
+    for name in names:
+        try:
+            return ImageFont.truetype(name, size)  # type: ignore[name-defined]
+        except Exception:
+            continue
+    try:
+        return ImageFont.load_default()  # type: ignore[name-defined]
+    except Exception:
+        return None
+
+
+def _draw_wrapped_text(draw: Any, text: str, xy: tuple[int, int], width: int, font: Any, fill: str = "#111111", line_gap: int = 4) -> int:
+    x, y = xy
+    value = str(text or "").strip()
+    if not value:
+        value = "-"
+    words = value.replace("\r", "").split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        try:
+            bbox = draw.textbbox((0, 0), candidate, font=font)
+            candidate_width = int(bbox[2] - bbox[0])
+        except Exception:
+            candidate_width = len(candidate) * 8
+        if current and candidate_width > width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    if not lines:
+        lines = ["-"]
+
+    line_height = 18
+    try:
+        bbox = draw.textbbox((0, 0), "Ag", font=font)
+        line_height = int(bbox[3] - bbox[1]) + line_gap
+    except Exception:
+        pass
+
+    for line in lines[:8]:
+        draw.text((x, y), line, fill=fill, font=font)
+        y += line_height
+    if len(lines) > 8:
+        draw.text((x, y), "...", fill=fill, font=font)
+        y += line_height
+    return y
+
+
+def _pdf_attachment_thumbnails(attachment_rows: list[sqlite3.Row], max_items: int = 3) -> list[Any]:
+    thumbs: list[Any] = []
+    if Image is None:
+        return thumbs
+    for row in attachment_rows[:max_items]:
+        try:
+            path = _attachment_abs_path_from_rel(str(row["rel_name"] or ""))
+            with Image.open(path) as src:
+                img = ImageOps.exif_transpose(src)
+                if img.mode not in {"RGB", "L"}:
+                    img = img.convert("RGB")
+                elif img.mode == "L":
+                    img = img.convert("RGB")
+                img.thumbnail((96, 72))
+                thumbs.append(img.copy())
+        except Exception:
+            continue
+    return thumbs
+
+
+def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attachment_map: dict[int, list[sqlite3.Row]]) -> bytes:
+    if Image is None or ImageDraw is None:
+        raise RuntimeError("Pillow mangler, så PDF kan ikke laves")
+
+    page_w, page_h = 1754, 1240
+    margin = 54
+    row_gap = 12
+    header_h = 118
+    table_header_h = 34
+    col_x = [margin, 320, 620, 1030, 1120]
+    col_w = [250, 280, 390, 70, page_w - margin - 1120]
+    font_title = _load_pdf_font(30, bold=True)
+    font_meta = _load_pdf_font(17)
+    font_head = _load_pdf_font(16, bold=True)
+    font_body = _load_pdf_font(15)
+
+    pages: list[Any] = []
+    page = Image.new("RGB", (page_w, page_h), "white")
+    draw = ImageDraw.Draw(page)
+
+    def add_header(page_no: int) -> int:
+        nonlocal draw
+        draw.rectangle((0, 0, page_w, page_h), fill="white")
+        draw.text((margin, 34), "Produktionsinfo - Klar til print", fill="#111111", font=font_title)
+        draw.text((margin, 76), f"Bruger: {project['owner_username']}  |  Projekt: {project['title']}", fill="#333333", font=font_meta)
+        draw.text((margin, 102), f"Oprettet: {project['created_at']}  |  Side {page_no}", fill="#555555", font=font_meta)
+        y0 = header_h + 10
+        draw.rectangle((margin, y0, page_w - margin, y0 + table_header_h), fill="#e9eef5", outline="#c8d1dc")
+        headers = ["Sti i mappe", "Filnavn", "Info", "Antal", "Vedhaeftede billeder"]
+        for x, title in zip(col_x, headers):
+            draw.text((x + 8, y0 + 8), title, fill="#111111", font=font_head)
+        return y0 + table_header_h + row_gap
+
+    y = add_header(1)
+    page_no = 1
+    for row in files:
+        file_id = int(row["file_id"])
+        attachments = attachment_map.get(file_id, [])
+        thumbs = _pdf_attachment_thumbnails(attachments)
+        text_probe = Image.new("RGB", (10, 10), "white")
+        probe_draw = ImageDraw.Draw(text_probe)
+        text_heights = [
+            _draw_wrapped_text(probe_draw, str(row["display_path"] or ""), (0, 0), col_w[0] - 16, font_body),
+            _draw_wrapped_text(probe_draw, str(row["filename"] or ""), (0, 0), col_w[1] - 16, font_body),
+            _draw_wrapped_text(probe_draw, str(row["note"] or ""), (0, 0), col_w[2] - 16, font_body),
+        ]
+        thumb_h = 86 if thumbs or attachments else 24
+        row_h = max(80, max(text_heights) + 18, thumb_h + 18)
+        if y + row_h > page_h - margin:
+            pages.append(page)
+            page_no += 1
+            page = Image.new("RGB", (page_w, page_h), "white")
+            draw = ImageDraw.Draw(page)
+            y = add_header(page_no)
+
+        draw.rectangle((margin, y, page_w - margin, y + row_h), fill="#ffffff", outline="#d8dee7")
+        for x in col_x[1:]:
+            draw.line((x, y, x, y + row_h), fill="#d8dee7", width=1)
+        _draw_wrapped_text(draw, str(row["display_path"] or ""), (col_x[0] + 8, y + 10), col_w[0] - 16, font_body)
+        _draw_wrapped_text(draw, str(row["filename"] or ""), (col_x[1] + 8, y + 10), col_w[1] - 16, font_body)
+        _draw_wrapped_text(draw, str(row["note"] or ""), (col_x[2] + 8, y + 10), col_w[2] - 16, font_body)
+        draw.text((col_x[3] + 22, y + 10), str(max(1, int(row["quantity"] or 1))), fill="#111111", font=font_body)
+
+        img_x = col_x[4] + 8
+        img_y = y + 8
+        if thumbs:
+            for thumb in thumbs:
+                draw.rectangle((img_x - 1, img_y - 1, img_x + thumb.width + 1, img_y + thumb.height + 1), outline="#c8d1dc")
+                page.paste(thumb, (img_x, img_y))
+                img_x += 110
+        else:
+            draw.text((img_x, img_y + 4), "Ingen billeder", fill="#666666", font=font_body)
+        if len(attachments) > len(thumbs):
+            draw.text((img_x, img_y + 22), f"+{len(attachments) - len(thumbs)} flere", fill="#666666", font=font_body)
+        y += row_h + row_gap
+
+    pages.append(page)
+    out = io.BytesIO()
+    pages[0].save(out, format="PDF", save_all=True, append_images=pages[1:], resolution=150.0)
+    return out.getvalue()
+
+
+def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attachment_map: dict[int, list[sqlite3.Row]]) -> bytes:
+    out = io.BytesIO()
+    pdf_bytes = build_print_ready_pdf(project, files, attachment_map)
+    used_names: set[str] = set()
+
+    def unique_name(name: str) -> str:
+        base = name
+        stem = str(Path(base).with_suffix(""))
+        suffix = Path(base).suffix
+        idx = 1
+        while base in used_names:
+            idx += 1
+            base = f"{stem}_{idx}{suffix}"
+        used_names.add(base)
+        return base
+
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("produktions-info.pdf", pdf_bytes)
+        for row in files:
+            display_folder = str(row["display_path"] or "").strip()
+            if display_folder == ".":
+                display_folder = ""
+            file_arc = unique_name(
+                _safe_zip_arcname(
+                    "filer",
+                    display_folder,
+                    str(row["filename"] or "fil"),
+                )
+            )
+            try:
+                path = file_disk_path(row)
+                if path.exists() and path.is_file():
+                    zf.write(path, file_arc)
+            except Exception:
+                continue
+
+            file_label = _safe_zip_arcname(display_folder, Path(str(row["filename"] or "fil")).stem or "fil")
+            for attachment in attachment_map.get(int(row["file_id"]), []):
+                try:
+                    attachment_path = _attachment_abs_path_from_rel(str(attachment["rel_name"] or ""))
+                    if not attachment_path.exists() or not attachment_path.is_file():
+                        continue
+                    attachment_arc = unique_name(
+                        _safe_zip_arcname(
+                            "billeder",
+                            file_label,
+                            str(attachment["original_name"] or attachment_path.name),
+                        )
+                    )
+                    zf.write(attachment_path, attachment_arc)
+                except Exception:
+                    continue
+    return out.getvalue()
 
 
 def tus_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -9312,6 +9903,109 @@ def api_files_printed_batch():
         conn.commit()
 
     return jsonify({"ok": True, "updated": len(updated_ids), "ids": sorted(updated_ids), "printed": printed})
+
+
+@app.route("/api/print-ready", methods=["POST"])
+@login_required
+def api_print_ready_create():
+    body = request.get_json(silent=True) or {}
+    try:
+        rows, folder_paths, file_ids = _selected_print_ready_rows(
+            current_user,
+            body.get("file_ids"),
+            body.get("folder_paths"),
+            body.get("excluded_file_ids"),
+            body.get("excluded_folder_paths"),
+        )
+        project_id = create_print_ready_project(current_user, rows, folder_paths, file_ids)
+        project, err = get_print_ready_project_payload(project_id)
+        if err is not None:
+            return jsonify({"ok": False, "error": str(err.get("error") or "Projektet kunne ikke læses")}), int(err.get("status") or 500)
+        return jsonify({"ok": True, "project": project})
+    except PermissionError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke markere klar til print: {exc}"}), 500
+
+
+@app.route("/api/print-ready/<int:project_id>", methods=["GET"])
+@login_required
+def api_print_ready_project(project_id: int):
+    project, err = get_print_ready_project_payload(int(project_id))
+    if err is not None:
+        return jsonify({"ok": False, "error": str(err.get("error") or "Fejl")}), int(err.get("status") or 500)
+    return jsonify({"ok": True, "project": project})
+
+
+@app.route("/api/print-ready/<int:project_id>/production-info.pdf", methods=["GET"])
+@login_required
+def api_print_ready_pdf(project_id: int):
+    try:
+        project, files, attachment_map = _load_print_ready_for_download(int(project_id))
+        pdf_bytes = build_print_ready_pdf(project, files, attachment_map)
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+    except PermissionError:
+        return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke lave PDF: {exc}"}), 500
+
+    name = sanitize_filename(f"produktions-info-{int(project_id)}.pdf")
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=name,
+    )
+
+
+@app.route("/api/print-ready/<int:project_id>/projekt.zip", methods=["GET"])
+@login_required
+def api_print_ready_zip(project_id: int):
+    try:
+        project, files, attachment_map = _load_print_ready_for_download(int(project_id))
+        zip_bytes = build_print_ready_zip(project, files, attachment_map)
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+    except PermissionError:
+        return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke lave ZIP: {exc}"}), 500
+
+    name_source = str(project["title"] or f"print-ready-{int(project_id)}")
+    name = sanitize_filename(f"{name_source}.zip")
+    return send_file(
+        io.BytesIO(zip_bytes),
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=name,
+    )
+
+
+@app.route("/api/admin/print-ready", methods=["GET"])
+@login_required
+def api_admin_print_ready():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    with closing(get_conn()) as conn:
+        project_rows = conn.execute(
+            """
+            SELECT *
+            FROM print_ready_projects
+            ORDER BY id DESC
+            LIMIT 200
+            """
+        ).fetchall()
+        items: list[dict] = []
+        for project_row in project_rows:
+            files = _print_ready_file_rows(conn, int(project_row["id"]))
+            attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+            items.append(serialize_print_ready_project(project_row, files, attachment_map))
+
+    return jsonify({"ok": True, "items": items})
 
 
 @app.route("/api/files/by-upload-client/<client_id>", methods=["GET"])
