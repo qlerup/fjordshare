@@ -8527,7 +8527,7 @@ def create_print_ready_project(
                 home_folder,
                 title,
                 summary,
-                "ready",
+                "draft",
                 str(user.username or ""),
                 now_iso(),
             ),
@@ -10084,6 +10084,7 @@ def api_admin_print_ready():
             """
             SELECT *
             FROM print_ready_projects
+            WHERE status='ready'
             ORDER BY id DESC
             LIMIT 200
             """
@@ -10095,6 +10096,45 @@ def api_admin_print_ready():
             items.append(serialize_print_ready_project(project_row, files, attachment_map))
 
     return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/print-ready/<int:project_id>/send", methods=["POST"])
+@login_required
+def api_print_ready_send(project_id: int):
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+    if not _can_access_print_ready_project(project):
+        return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+
+    if str(project["status"] or "").lower() == "ready":
+        # Already sent; return current payload
+        payload, err = get_print_ready_project_payload(int(project_id))
+        if err is not None:
+            return jsonify({"ok": False, "error": str(err.get("error") or "Fejl")}), int(err.get("status") or 500)
+        return jsonify({"ok": True, "project": payload})
+
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE print_ready_projects SET status=? WHERE id=?",
+            ("ready", int(project_id)),
+        )
+        conn.commit()
+
+    log_activity(
+        kind="print-ready",
+        action="send",
+        message=f"Projekt sendt til admin: {int(project_id)}",
+        level="info",
+        folder_path=str(project["owner_home_folder"] or ""),
+        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        actor=str(current_user.username or ""),
+    )
+
+    payload, err = get_print_ready_project_payload(int(project_id))
+    if err is not None:
+        return jsonify({"ok": False, "error": str(err.get("error") or "Fejl")}), int(err.get("status") or 500)
+    return jsonify({"ok": True, "project": payload})
 
 
 @app.route("/api/files/by-upload-client/<client_id>", methods=["GET"])

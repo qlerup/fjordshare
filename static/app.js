@@ -82,6 +82,7 @@
     folderPreviewLoading: new Set(),
     folderPreviewRequestToken: 0,
     modelModalCloseGuardUntil: 0,
+    currentPrintReadyProjectId: 0,
   };
 
   const els = {
@@ -274,6 +275,7 @@
     printReadyModal: document.getElementById("printReadyModal"),
     printReadyModalCloseBtn: document.getElementById("printReadyModalCloseBtn"),
     printReadyModalSummary: document.getElementById("printReadyModalSummary"),
+    printReadySendBtn: document.getElementById("printReadySendBtn"),
     printReadyZipLink: document.getElementById("printReadyZipLink"),
     printReadyPdfLink: document.getElementById("printReadyPdfLink"),
     printReadyModalStatus: document.getElementById("printReadyModalStatus"),
@@ -1249,10 +1251,12 @@
   function closePrintReadyModal() {
     if (els.printReadyModal) els.printReadyModal.classList.add("hidden");
     showStatus(els.printReadyModalStatus, "");
+    state.currentPrintReadyProjectId = 0;
   }
 
   function openPrintReadyModal(project) {
     if (!project || !els.printReadyModal) return;
+    state.currentPrintReadyProjectId = Number(project.id || 0) || 0;
     const fileCount = Number(project.file_count || (Array.isArray(project.files) ? project.files.length : 0) || 0);
     const qty = Number(project.total_quantity || 0);
     if (els.printReadyModalSummary) {
@@ -1264,8 +1268,30 @@
     if (els.printReadyPdfLink) {
       els.printReadyPdfLink.href = String(project.pdf_url || "#");
     }
-    showStatus(els.printReadyModalStatus, "Projektet er sendt til admin-sektionen.", "ok");
+    const isReady = String(project.status || "").toLowerCase() === "ready";
+    if (els.printReadySendBtn) {
+      els.printReadySendBtn.disabled = isReady || !state.currentPrintReadyProjectId;
+      els.printReadySendBtn.textContent = isReady ? "Allerede sendt" : "Send til print";
+    }
+    showStatus(
+      els.printReadyModalStatus,
+      isReady ? "Projektet er sendt til admin-sektionen." : "Projektet er ikke sendt endnu.",
+      isReady ? "ok" : "info"
+    );
     els.printReadyModal.classList.remove("hidden");
+  }
+
+  async function sendCurrentPrintReadyProject() {
+    const id = Number(state.currentPrintReadyProjectId || 0);
+    if (!id) return;
+    const data = await api(`/api/print-ready/${id}/send`, { method: "POST" });
+    const project = data && data.project ? data.project : null;
+    if (project) {
+      openPrintReadyModal(project);
+    }
+    if (state.role === "admin") {
+      await loadPrintReadyProjects();
+    }
   }
 
   async function markSelectionPrintReady() {
@@ -10779,6 +10805,13 @@
         if (event.target === els.printReadyModal || event.target.classList.contains("modal-backdrop")) {
           closePrintReadyModal();
         }
+      });
+    }
+    if (els.printReadySendBtn) {
+      els.printReadySendBtn.addEventListener("click", () => {
+        sendCurrentPrintReadyProject().catch((err) => {
+          showStatus(els.printReadyModalStatus, err.message || "Kunne ikke sende til admin", "error");
+        });
       });
     }
 
