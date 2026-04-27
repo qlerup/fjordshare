@@ -10,6 +10,7 @@
     username: (boot && boot.dataset.username) || "",
     role: ((boot && boot.dataset.role) || "user").toLowerCase(),
     homeFolder: (boot && boot.dataset.homeFolder) || "",
+    dailyFolder: (boot && boot.dataset.dailyFolder) || "",
     currentFolder: "",
     folders: [],
     files: [],
@@ -1437,12 +1438,19 @@
         }
       }
       if (!state.currentFolder) {
+        const daily = state.role !== "admin" ? String(state.dailyFolder || "") : "";
+        if (daily && options.includes(daily)) {
+          state.currentFolder = daily;
+        }
+      }
+      if (!state.currentFolder) {
         if (home && options.includes(home)) state.currentFolder = home;
         else state.currentFolder = options[0] || "";
       }
     }
     if (state.currentFolder && !options.includes(state.currentFolder)) {
-      state.currentFolder = options[0] || "";
+      const daily = state.role !== "admin" ? String(state.dailyFolder || "") : "";
+      state.currentFolder = daily && options.includes(daily) ? daily : (options[0] || "");
     }
 
     if (els.folderSelect) {
@@ -6373,7 +6381,7 @@
     return `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
-  function uploadSingleTus(file, folder, clientUploadId, onProgress) {
+  function uploadSingleTus(file, folder, baseFolder, clientUploadId, onProgress) {
     return new Promise((resolve, reject) => {
       if (!(window.tus && typeof window.tus.Upload === "function")) {
         reject(new Error("tus-js-client er ikke tilgængelig"));
@@ -6400,6 +6408,7 @@
         metadata: {
           filename: file.name,
           folder: folder,
+          baseFolder: baseFolder || folder,
           lastModified: String(file.lastModified || 0),
           clientUploadId: clientUploadId,
         },
@@ -6753,7 +6762,7 @@
       const cleanDir = String(relDir || "").replace(/\\/g, "/").split("/").filter(Boolean).join("/");
       const targetFolder = cleanDir ? `${base}/${cleanDir}` : base;
       for (const file of files) {
-        uploadItems.push({ file, folder: targetFolder });
+        uploadItems.push({ file, folder: targetFolder, baseFolder: base });
       }
     }
 
@@ -6778,6 +6787,7 @@
           return {
             file: entry,
             folder: fallbackFolder,
+            baseFolder: fallbackFolder,
           };
         }
         const file = entry.file;
@@ -6788,9 +6798,15 @@
           .filter(Boolean)
           .join("/");
         if (!targetFolder) return null;
+        const baseFolder = String(entry.baseFolder || fallbackFolder || "")
+          .replace(/\\/g, "/")
+          .split("/")
+          .filter(Boolean)
+          .join("/");
         return {
           file,
           folder: targetFolder,
+          baseFolder: baseFolder || targetFolder,
         };
       })
       .filter(Boolean);
@@ -6816,6 +6832,7 @@
         const item = list[i];
         const file = item.file;
         const targetFolder = String(item.folder || fallbackFolder || "").trim();
+        const baseFolder = String(item.baseFolder || fallbackFolder || "").trim();
         const cid = makeClientUploadId();
         const itemKey = _uploadItemKey(file.name, i);
         uploadUiState.currentPhaseLabel = "Uploader";
@@ -6826,7 +6843,7 @@
         renderUploadMonitor();
 
         try {
-          await uploadSingleTus(file, targetFolder, cid, (uploadedBytes, totalBytes) => {
+          await uploadSingleTus(file, targetFolder, baseFolder, cid, (uploadedBytes, totalBytes) => {
             const pct = totalBytes > 0 ? Math.round((uploadedBytes / totalBytes) * 100) : 0;
             uploadUiState.currentLoaded = Number(uploadedBytes || 0);
             uploadUiState.currentTotal = Number(totalBytes || file.size || 0);

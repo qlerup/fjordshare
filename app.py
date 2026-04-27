@@ -87,6 +87,9 @@ SLICER_PLATE_ASSET_ALLOWED_EXTS = {".stl", ".obj", ".glb", ".gltf", ".3mf"}
 
 PERMISSION_RANK = {"view": 1, "upload": 2, "manage": 3}
 RANK_PERMISSION = {v: k for (k, v) in PERMISSION_RANK.items()}
+FOLDER_KIND_USER = "user"
+FOLDER_KIND_APP_DAILY = "app_daily"
+DATE_FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
@@ -7214,6 +7217,7 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 folder_path TEXT UNIQUE NOT NULL,
                 owner_user_id INTEGER,
+                folder_kind TEXT NOT NULL DEFAULT 'user',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE SET NULL
             );
@@ -7361,6 +7365,14 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_files_thumb_status ON files(thumb_status)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_files_printed ON files(printed)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_files_slice_status ON files(slice_status)")
+
+        folder_cols = [r[1] for r in conn.execute("PRAGMA table_info(folders)").fetchall()]
+        if "folder_kind" not in folder_cols:
+            conn.execute("ALTER TABLE folders ADD COLUMN folder_kind TEXT NOT NULL DEFAULT 'user'")
+        conn.execute(
+            "UPDATE folders SET folder_kind='user' WHERE folder_kind IS NULL OR TRIM(folder_kind)=''"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_kind ON folders(folder_kind)")
         conn.commit()
 
 
@@ -7448,14 +7460,29 @@ def migrate_thumbnail_render_style_if_needed() -> None:
     set_setting("thumb_render_style_version", THUMB_RENDER_STYLE_VERSION)
 
 
-def ensure_folder_record(folder_path: str, owner_user_id: Optional[int] = None) -> None:
+def _clean_folder_kind(value: str) -> str:
+    kind = str(value or "").strip().lower()
+    if kind not in {FOLDER_KIND_USER, FOLDER_KIND_APP_DAILY}:
+        kind = FOLDER_KIND_USER
+    return kind
+
+
+def ensure_folder_record(
+    folder_path: str,
+    owner_user_id: Optional[int] = None,
+    folder_kind: str = FOLDER_KIND_USER,
+) -> None:
     folder = normalize_folder_path(folder_path)
     if not folder:
         return
+    clean_kind = _clean_folder_kind(folder_kind)
     with closing(get_conn()) as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO folders(folder_path, owner_user_id, created_at) VALUES(?,?,?)",
-            (folder, int(owner_user_id) if owner_user_id else None, now_iso()),
+            """
+            INSERT OR IGNORE INTO folders(folder_path, owner_user_id, folder_kind, created_at)
+            VALUES(?,?,?,?)
+            """,
+            (folder, int(owner_user_id) if owner_user_id else None, clean_kind, now_iso()),
         )
         conn.commit()
 
@@ -7467,8 +7494,11 @@ def ensure_user_home_folder(user_id: int, username: str, home_folder: str) -> No
 
     with closing(get_conn()) as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO folders(folder_path, owner_user_id, created_at) VALUES(?,?,?)",
-            (folder, int(user_id), now_iso()),
+            """
+            INSERT OR IGNORE INTO folders(folder_path, owner_user_id, folder_kind, created_at)
+            VALUES(?,?,?,?)
+            """,
+            (folder, int(user_id), FOLDER_KIND_USER, now_iso()),
         )
         conn.execute(
             "INSERT OR REPLACE INTO user_folder_access(user_id, folder_path, permission, created_at) VALUES(?,?,?,?)",
@@ -7498,14 +7528,171 @@ def ensure_user_storage_ready(user: User) -> str:
     return home_folder
 
 
+def _today_folder_segment() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _is_direct_child_folder(parent: str, child: str) -> bool:
+    parent_norm = normalize_folder_path(parent)
+    child_norm = normalize_folder_path(child)
+    if not parent_norm or not child_norm.startswith(parent_norm + "/"):
+        return False
+    remainder = child_norm[len(parent_norm) + 1 :]
+    return bool(remainder) and "/" not in remainder
+
+
+def _folder_kind_for_path(folder_path: str) -> str:
+    folder = normalize_folder_path(folder_path)
+    if not folder:
+        return FOLDER_KIND_USER
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT folder_kind FROM folders WHERE folder_path=?",
+            (folder,),
+        ).fetchone()
+    return _clean_folder_kind(str(row["folder_kind"] or "")) if row else FOLDER_KIND_USER
+
+
 def ensure_user_daily_upload_folder(user: User) -> str:
     home_folder = ensure_user_storage_ready(user)
-    day_segment = datetime.now().strftime("%Y-%m-%d")
+    day_segment = _today_folder_segment()
     day_folder = normalize_folder_path(f"{home_folder}/{day_segment}")
     _, abs_day_folder = folder_abs_path(day_folder)
     abs_day_folder.mkdir(parents=True, exist_ok=True)
-    ensure_folder_record(day_folder, owner_user_id=int(user.id))
+    with closing(get_conn()) as conn:
+        existing = conn.execute(
+            "SELECT folder_kind FROM folders WHERE folder_path=?",
+            (day_folder,),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                """
+                INSERT INTO folders(folder_path, owner_user_id, folder_kind, created_at)
+                VALUES(?,?,?,?)
+                """,
+                (day_folder, int(user.id), FOLDER_KIND_APP_DAILY, now_iso()),
+            )
+        elif _clean_folder_kind(str(existing["folder_kind"] or "")) == FOLDER_KIND_APP_DAILY:
+            conn.execute(
+                "UPDATE folders SET owner_user_id=COALESCE(owner_user_id, ?) WHERE folder_path=?",
+                (int(user.id), day_folder),
+            )
+        conn.commit()
     return day_folder
+
+
+def _folder_tree_has_file_rows(conn: sqlite3.Connection, folder_path: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM files
+        WHERE folder_path=? OR folder_path LIKE ?
+        LIMIT 1
+        """,
+        (folder_path, f"{folder_path}/%"),
+    ).fetchone()
+    return row is not None
+
+
+def _folder_tree_has_child_folder_rows(conn: sqlite3.Connection, folder_path: str) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM folders
+        WHERE folder_path LIKE ?
+        LIMIT 1
+        """,
+        (f"{folder_path}/%",),
+    ).fetchone()
+    return row is not None
+
+
+def _folder_abs_is_empty(folder_path: str) -> bool:
+    _, abs_folder = folder_abs_path(folder_path)
+    if not abs_folder.exists():
+        return True
+    if not abs_folder.is_dir():
+        return False
+    try:
+        next(abs_folder.iterdir())
+        return False
+    except StopIteration:
+        return True
+
+
+def cleanup_empty_user_daily_folders(user: User) -> int:
+    home_folder = ensure_user_storage_ready(user)
+    today_segment = _today_folder_segment()
+    removed = 0
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT folder_path
+            FROM folders
+            WHERE owner_user_id=? AND folder_kind=?
+            ORDER BY LENGTH(folder_path) DESC
+            """,
+            (int(user.id), FOLDER_KIND_APP_DAILY),
+        ).fetchall()
+        for row in rows:
+            folder = normalize_folder_path(str(row["folder_path"] or ""))
+            if not _is_direct_child_folder(home_folder, folder):
+                continue
+            segment = folder.rsplit("/", 1)[-1]
+            if segment == today_segment or not DATE_FOLDER_RE.match(segment):
+                continue
+            if _folder_tree_has_child_folder_rows(conn, folder):
+                continue
+            if _folder_tree_has_file_rows(conn, folder):
+                continue
+            if not _folder_abs_is_empty(folder):
+                continue
+
+            _, abs_folder = folder_abs_path(folder)
+            try:
+                if abs_folder.exists():
+                    abs_folder.rmdir()
+            except Exception:
+                continue
+            conn.execute("DELETE FROM folders WHERE folder_path=?", (folder,))
+            removed += 1
+        conn.commit()
+
+    if removed:
+        log_activity(
+            kind="folder",
+            action="cleanup",
+            message=f"Fjernede {removed} tomme app-oprettede datomapper.",
+            level="info",
+            folder_path=home_folder,
+            target=f"{removed} datomapper",
+            actor=str(user.username or ""),
+        )
+    return removed
+
+
+def prepare_user_daily_folders(user: User) -> str:
+    ensure_user_storage_ready(user)
+    cleanup_empty_user_daily_folders(user)
+    return ensure_user_daily_upload_folder(user)
+
+
+def resolve_user_upload_folder(user: User, requested_folder: str, base_folder: str = "") -> str:
+    home_folder = ensure_user_storage_ready(user)
+    requested = normalize_folder_path(str(requested_folder or ""))
+    base = normalize_folder_path(str(base_folder or ""))
+    if base == home_folder:
+        daily_folder = ensure_user_daily_upload_folder(user)
+        if not requested or requested == home_folder:
+            return daily_folder
+        if requested.startswith(home_folder + "/"):
+            suffix = requested[len(home_folder) + 1 :]
+            if suffix:
+                return normalize_folder_path(f"{daily_folder}/{suffix}")
+        return daily_folder
+    if not requested or requested == home_folder:
+        return ensure_user_daily_upload_folder(user)
+    return requested
 
 
 def create_user(username: str, password: str, role: str = "user") -> int:
@@ -7630,12 +7817,15 @@ def list_accessible_folders(user: User) -> list[dict]:
         perm = permission_for_user_folder(user, path)
         if not permission_allows(perm, "view"):
             continue
+        folder_kind = _folder_kind_for_path(path)
         items.append(
             {
                 "path": path,
                 "permission": perm,
                 "can_upload": permission_allows(perm, "upload"),
                 "can_manage": permission_allows(perm, "manage"),
+                "folder_kind": folder_kind,
+                "is_app_daily": folder_kind == FOLDER_KIND_APP_DAILY,
             }
         )
 
@@ -8416,7 +8606,10 @@ def login():
                 ).fetchone()
             if row and check_password_hash(str(row["password_hash"]), password):
                 try:
-                    ensure_user_storage_ready(user)
+                    if user.is_admin:
+                        ensure_user_storage_ready(user)
+                    else:
+                        prepare_user_daily_folders(user)
                 except Exception:
                     pass
                 login_user(user)
@@ -8437,8 +8630,13 @@ def logout():
 @login_required
 def index():
     default_folder = normalize_folder_path(str(current_user.home_folder or ""))
+    daily_folder = ""
     try:
-        default_folder = ensure_user_storage_ready(current_user)
+        if current_user.is_admin:
+            default_folder = ensure_user_storage_ready(current_user)
+        else:
+            default_folder = ensure_user_storage_ready(current_user)
+            daily_folder = prepare_user_daily_folders(current_user)
     except Exception:
         pass
     return render_template(
@@ -8446,12 +8644,19 @@ def index():
         username=current_user.username,
         role=current_user.role,
         home_folder=default_folder,
+        daily_folder=daily_folder,
     )
 
 
 @app.route("/api/me")
 @login_required
 def api_me():
+    daily_folder = ""
+    if not current_user.is_admin:
+        try:
+            daily_folder = ensure_user_daily_upload_folder(current_user)
+        except Exception:
+            daily_folder = ""
     return jsonify(
         {
             "ok": True,
@@ -8460,6 +8665,7 @@ def api_me():
                 "username": str(current_user.username),
                 "role": str(current_user.role),
                 "home_folder": normalize_folder_path(str(current_user.home_folder or "")),
+                "daily_folder": daily_folder,
             },
         }
     )
@@ -10446,7 +10652,11 @@ def api_upload_tus_create():
                 return jsonify({"ok": False, "error": f"Kunne ikke klargøre hjemmemappe: {exc}"}), 500, tus_headers()
     else:
         try:
-            folder = ensure_user_daily_upload_folder(current_user)
+            folder = resolve_user_upload_folder(
+                current_user,
+                str(meta.get("folder") or ""),
+                str(meta.get("baseFolder") or ""),
+            )
         except Exception as exc:
             return jsonify({"ok": False, "error": f"Kunne ikke klargøre dagsmappe: {exc}"}), 500, tus_headers()
 
