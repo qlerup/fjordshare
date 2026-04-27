@@ -7445,6 +7445,7 @@
           <div class="toolbar">
             <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
             <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener">Download PDF produktions info fil</a>
+            <button class="btn danger" type="button" data-print-ready-action="cancel" data-id="${Number(project.id || 0)}">Annuller</button>
           </div>
         </div>
         <table class="table compact print-ready-table">
@@ -7461,6 +7462,22 @@
         </table>
       </article>
     `;
+  }
+
+  async function onPrintReadyAdminClick(event) {
+    const btn = event.target.closest("[data-print-ready-action]");
+    if (!btn) return;
+    const action = String(btn.dataset.printReadyAction || "");
+    const id = Number(btn.dataset.id || 0);
+    if (!id) return;
+
+    if (action === "cancel") {
+      const ok = window.confirm("Vil du annullere dette projekt? Brugeren skal derefter sende et nyt.");
+      if (!ok) return;
+      await api(`/api/admin/print-ready/${id}/cancel`, { method: "POST" });
+      showStatus(els.printReadyStatus, "Projekt annulleret.", "ok");
+      await loadPrintReadyProjects();
+    }
   }
 
   async function loadDns() {
@@ -10848,6 +10865,14 @@
       els.printReadyRefreshBtn.addEventListener("click", () => {
         loadPrintReadyProjects().catch((err) => {
           showStatus(els.printReadyStatus, err.message || "Kunne ikke hente klar til print", "error");
+        });
+      });
+    }
+
+    if (els.printReadyAdminList) {
+      els.printReadyAdminList.addEventListener("click", (event) => {
+        onPrintReadyAdminClick(event).catch((err) => {
+          showStatus(els.printReadyStatus, err.message || "Fejl i annullering", "error");
         });
       });
     }

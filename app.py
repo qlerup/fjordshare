@@ -10098,6 +10098,36 @@ def api_admin_print_ready():
     return jsonify({"ok": True, "items": items})
 
 
+@app.route("/api/admin/print-ready/<int:project_id>/cancel", methods=["POST"])
+@login_required
+def api_admin_print_ready_cancel(project_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE print_ready_projects SET status=? WHERE id=?",
+            ("cancelled", int(project_id)),
+        )
+        conn.commit()
+
+    log_activity(
+        kind="print-ready",
+        action="cancel",
+        message=f"Projekt annulleret: {int(project_id)}",
+        level="info",
+        folder_path=str(project["owner_home_folder"] or ""),
+        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        actor=str(current_user.username or ""),
+    )
+
+    return jsonify({"ok": True})
+
+
 @app.route("/api/print-ready/<int:project_id>/send", methods=["POST"])
 @login_required
 def api_print_ready_send(project_id: int):
