@@ -5,6 +5,7 @@ These scripts are helper scripts for operating and maintaining FjordShare on NAS
 ## Scripts
 
 - `fjordshare-start.sh`: starts/builds FjordShare (`--fresh` for no-cache rebuild).
+- `fjordshare-update.sh`: normal update path. Backs up `.env` and the SQLite DB when possible, pulls the current Git branch, rebuilds, starts, and waits for health.
 - `fjordshare-force-update.sh`: forces git sync and deployment update.
 - `fjordshare-cleanup.sh`: removes containers/images/volumes/networks for FjordShare (destructive).
 
@@ -12,6 +13,23 @@ These scripts are helper scripts for operating and maintaining FjordShare on NAS
 
 Run these scripts on the machine where the FjordShare Docker deployment is located.
 Always review script contents before running.
+
+Typical update:
+
+```sh
+cd /opt/fjordshare
+sh "Useful Scripts/fjordshare-update.sh"
+```
+
+Useful options:
+
+```sh
+sh "Useful Scripts/fjordshare-update.sh" --no-cache
+sh "Useful Scripts/fjordshare-update.sh" --no-build
+sh "Useful Scripts/fjordshare-update.sh" --branch main
+```
+
+Use `fjordshare-force-update.sh` only when the local checkout needs to be reset to GitHub.
 
 ## Bambu Studio presets (BBL)
 
