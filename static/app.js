@@ -7413,7 +7413,7 @@
         <div class="print-ready-project-head">
           <div>
             <div class="print-ready-project-title">${esc(project.title || "Klar til print")}</div>
-            <div class="hint">${esc(formatDate(project.created_at))} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}</div>
+            <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}</div>
             ${project.selected_summary ? `<div class="hint">${esc(project.selected_summary)}</div>` : ""}
           </div>
           <div class="toolbar">

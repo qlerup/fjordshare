@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
     LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8
+    LC_ALL=C.UTF-8 \
+    TZ=Europe/Copenhagen
 
 ARG TUS_JS_VERSION=4.2.3
 ARG BAMBUSTUDIO_APPIMAGE_URL=
@@ -14,10 +15,13 @@ ARG BAMBUSTUDIO_STRICT_LIB_CHECK=0
 WORKDIR /app
 
 RUN set -eux; \
+    export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
+        fonts-dejavu-core \
+        tzdata \
         libasound2 \
         libdbus-1-3 \
         libdrm2 \
@@ -260,5 +264,3 @@ RUN mkdir -p /app/static/vendor \
 EXPOSE 8080
 
 CMD ["gunicorn", "--workers", "1", "--worker-class", "gthread", "--threads", "8", "--timeout", "120", "--graceful-timeout", "30", "--keep-alive", "5", "--max-requests", "1000", "--max-requests-jitter", "100", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "--bind", "0.0.0.0:8080", "wsgi:application"]
-
-

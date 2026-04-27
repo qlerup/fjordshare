@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from flask import (
     Flask,
@@ -92,6 +93,7 @@ PERMISSION_RANK = {"view": 1, "upload": 2, "manage": 3}
 RANK_PERMISSION = {v: k for (k, v) in PERMISSION_RANK.items()}
 FOLDER_KIND_USER = "user"
 FOLDER_KIND_APP_DAILY = "app_daily"
+APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Copenhagen").strip() or "Europe/Copenhagen"
 DATE_FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp"}
@@ -212,6 +214,27 @@ ZIP_EXTRACT_WORKER_STARTED = False
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def app_timezone() -> Any:
+    try:
+        return ZoneInfo(APP_TIMEZONE)
+    except Exception:
+        return datetime.now().astimezone().tzinfo or timezone.utc
+
+
+def now_local() -> datetime:
+    return datetime.now(app_timezone())
+
+
+def format_local_datetime(raw: Any) -> str:
+    dt = parse_iso_or_none(raw)
+    if dt is None:
+        return str(raw or "-")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(app_timezone())
+    return local.strftime("%d-%m-%Y %H:%M")
 
 
 def parse_bool(value: Any) -> bool:
@@ -7582,7 +7605,7 @@ def ensure_user_storage_ready(user: User) -> str:
 
 
 def _today_folder_segment() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+    return now_local().strftime("%Y-%m-%d")
 
 
 def _is_direct_child_folder(parent: str, child: str) -> bool:
@@ -8367,13 +8390,20 @@ def _project_display_path(owner_home_folder: str, folder_path: str, filename: st
     _ = filename
     home = normalize_folder_path(owner_home_folder)
     folder = normalize_folder_path(folder_path)
-    if home and folder == home:
-        return "."
-    if home and folder.startswith(home + "/"):
-        rel_folder = folder[len(home) + 1 :]
-    else:
-        rel_folder = folder
-    return normalize_folder_path(rel_folder) if rel_folder else "."
+    return folder or home or "."
+
+
+def _print_ready_display_path(project_row: sqlite3.Row, file_row: sqlite3.Row) -> str:
+    home = normalize_folder_path(str(project_row["owner_home_folder"] or ""))
+    stored = normalize_folder_path(str(file_row["display_path"] or ""))
+    folder = normalize_folder_path(str(file_row["folder_path"] or ""))
+    if stored and stored != ".":
+        if home and (stored == home or stored.startswith(home + "/")):
+            return stored
+        if home:
+            return normalize_folder_path(f"{home}/{stored}")
+        return stored
+    return folder or home or "."
 
 
 def _safe_zip_arcname(*parts: str) -> str:
@@ -8453,7 +8483,7 @@ def _selected_print_ready_rows(
 
 
 def _print_ready_title(folder_paths: list[str], file_ids: list[int]) -> str:
-    stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    stamp = now_local().strftime("%Y-%m-%d %H:%M")
     if len(folder_paths) == 1 and not file_ids:
         return f"Klar til print: {folder_paths[0]}"
     if len(folder_paths) > 1 and not file_ids:
@@ -8612,7 +8642,7 @@ def serialize_print_ready_project(
                     "id": int(row["id"]),
                     "file_id": file_id,
                     "folder_path": str(row["folder_path"] or ""),
-                    "display_path": str(row["display_path"] or ""),
+                    "display_path": _print_ready_display_path(project_row, row),
                     "filename": str(row["filename"] or ""),
                     "note": str(row["note"] or ""),
                     "quantity": quantity,
@@ -8630,6 +8660,7 @@ def serialize_print_ready_project(
         "selected_summary": str(project_row["selected_summary"] or ""),
         "status": str(project_row["status"] or "ready"),
         "created_at": str(project_row["created_at"] or ""),
+        "created_at_display": format_local_datetime(project_row["created_at"]),
         "file_count": len(files) if file_rows is not None else 0,
         "total_quantity": total_quantity,
         "files": files,
@@ -8671,11 +8702,28 @@ def _load_print_ready_for_download(project_id: int) -> tuple[sqlite3.Row, list[s
 def _load_pdf_font(size: int, bold: bool = False) -> Any:
     if ImageFont is None:
         return None
+    env_font = os.getenv("PDF_FONT_BOLD" if bold else "PDF_FONT_REGULAR", "").strip()
     names = [
+        env_font,
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/local/share/fonts/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/local/share/fonts/dejavu/DejaVuSans.ttf",
         "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/DejaVuSans-Bold.ttf" if bold else "C:/Windows/Fonts/DejaVuSans.ttf",
     ]
+    try:
+        from matplotlib import font_manager
+
+        names.append(font_manager.findfont("DejaVu Sans:style=Bold" if bold else "DejaVu Sans", fallback_to_default=False))
+    except Exception:
+        pass
+    try:
+        pil_font_dir = Path(str(ImageFont.__file__ or "")).resolve().parent
+        names.append(str(pil_font_dir / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")))
+    except Exception:
+        pass
     for name in names:
+        if not name:
+            continue
         try:
             return ImageFont.truetype(name, size)  # type: ignore[name-defined]
         except Exception:
@@ -8727,10 +8775,14 @@ def _draw_wrapped_text(draw: Any, text: str, xy: tuple[int, int], width: int, fo
     return y
 
 
-def _pdf_attachment_thumbnails(attachment_rows: list[sqlite3.Row], max_items: int = 3) -> list[Any]:
-    thumbs: list[Any] = []
+def _pdf_attachment_images(
+    attachment_rows: list[sqlite3.Row],
+    max_items: int = 3,
+    max_size: tuple[int, int] = (138, 104),
+) -> list[tuple[sqlite3.Row, Any]]:
+    images: list[tuple[sqlite3.Row, Any]] = []
     if Image is None:
-        return thumbs
+        return images
     for row in attachment_rows[:max_items]:
         try:
             path = _attachment_abs_path_from_rel(str(row["rel_name"] or ""))
@@ -8740,11 +8792,15 @@ def _pdf_attachment_thumbnails(attachment_rows: list[sqlite3.Row], max_items: in
                     img = img.convert("RGB")
                 elif img.mode == "L":
                     img = img.convert("RGB")
-                img.thumbnail((96, 72))
-                thumbs.append(img.copy())
+                img.thumbnail(max_size)
+                images.append((row, img.copy()))
         except Exception:
             continue
-    return thumbs
+    return images
+
+
+def _pdf_attachment_thumbnails(attachment_rows: list[sqlite3.Row], max_items: int = 3) -> list[Any]:
+    return [img for _row, img in _pdf_attachment_images(attachment_rows, max_items=max_items, max_size=(138, 104))]
 
 
 def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attachment_map: dict[int, list[sqlite3.Row]]) -> bytes:
@@ -8756,12 +8812,13 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
     row_gap = 12
     header_h = 118
     table_header_h = 34
-    col_x = [margin, 320, 620, 1030, 1120]
-    col_w = [250, 280, 390, 70, page_w - margin - 1120]
+    col_x = [margin, 410, 690, 1050, 1140]
+    col_w = [340, 260, 340, 70, page_w - margin - 1140]
     font_title = _load_pdf_font(30, bold=True)
     font_meta = _load_pdf_font(17)
     font_head = _load_pdf_font(16, bold=True)
     font_body = _load_pdf_font(15)
+    created_label = format_local_datetime(project["created_at"])
 
     pages: list[Any] = []
     page = Image.new("RGB", (page_w, page_h), "white")
@@ -8772,10 +8829,10 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
         draw.rectangle((0, 0, page_w, page_h), fill="white")
         draw.text((margin, 34), "Produktionsinfo - Klar til print", fill="#111111", font=font_title)
         draw.text((margin, 76), f"Bruger: {project['owner_username']}  |  Projekt: {project['title']}", fill="#333333", font=font_meta)
-        draw.text((margin, 102), f"Oprettet: {project['created_at']}  |  Side {page_no}", fill="#555555", font=font_meta)
+        draw.text((margin, 102), f"Oprettet: {created_label}  |  Side {page_no}", fill="#555555", font=font_meta)
         y0 = header_h + 10
         draw.rectangle((margin, y0, page_w - margin, y0 + table_header_h), fill="#e9eef5", outline="#c8d1dc")
-        headers = ["Sti i mappe", "Filnavn", "Info", "Antal", "Vedhaeftede billeder"]
+        headers = ["Sti i mappe", "Filnavn", "Info", "Antal", "Vedhæftede billeder"]
         for x, title in zip(col_x, headers):
             draw.text((x + 8, y0 + 8), title, fill="#111111", font=font_head)
         return y0 + table_header_h + row_gap
@@ -8784,16 +8841,17 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
     page_no = 1
     for row in files:
         file_id = int(row["file_id"])
+        display_path = _print_ready_display_path(project, row)
         attachments = attachment_map.get(file_id, [])
         thumbs = _pdf_attachment_thumbnails(attachments)
         text_probe = Image.new("RGB", (10, 10), "white")
         probe_draw = ImageDraw.Draw(text_probe)
         text_heights = [
-            _draw_wrapped_text(probe_draw, str(row["display_path"] or ""), (0, 0), col_w[0] - 16, font_body),
+            _draw_wrapped_text(probe_draw, display_path, (0, 0), col_w[0] - 16, font_body),
             _draw_wrapped_text(probe_draw, str(row["filename"] or ""), (0, 0), col_w[1] - 16, font_body),
             _draw_wrapped_text(probe_draw, str(row["note"] or ""), (0, 0), col_w[2] - 16, font_body),
         ]
-        thumb_h = 86 if thumbs or attachments else 24
+        thumb_h = 118 if thumbs or attachments else 24
         row_h = max(80, max(text_heights) + 18, thumb_h + 18)
         if y + row_h > page_h - margin:
             pages.append(page)
@@ -8805,7 +8863,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
         draw.rectangle((margin, y, page_w - margin, y + row_h), fill="#ffffff", outline="#d8dee7")
         for x in col_x[1:]:
             draw.line((x, y, x, y + row_h), fill="#d8dee7", width=1)
-        _draw_wrapped_text(draw, str(row["display_path"] or ""), (col_x[0] + 8, y + 10), col_w[0] - 16, font_body)
+        _draw_wrapped_text(draw, display_path, (col_x[0] + 8, y + 10), col_w[0] - 16, font_body)
         _draw_wrapped_text(draw, str(row["filename"] or ""), (col_x[1] + 8, y + 10), col_w[1] - 16, font_body)
         _draw_wrapped_text(draw, str(row["note"] or ""), (col_x[2] + 8, y + 10), col_w[2] - 16, font_body)
         draw.text((col_x[3] + 22, y + 10), str(max(1, int(row["quantity"] or 1))), fill="#111111", font=font_body)
@@ -8816,7 +8874,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
             for thumb in thumbs:
                 draw.rectangle((img_x - 1, img_y - 1, img_x + thumb.width + 1, img_y + thumb.height + 1), outline="#c8d1dc")
                 page.paste(thumb, (img_x, img_y))
-                img_x += 110
+                img_x += 152
         else:
             draw.text((img_x, img_y + 4), "Ingen billeder", fill="#666666", font=font_body)
         if len(attachments) > len(thumbs):
@@ -8824,6 +8882,37 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
         y += row_h + row_gap
 
     pages.append(page)
+
+    appendix_no = 0
+    for row in files:
+        file_id = int(row["file_id"])
+        display_path = _print_ready_display_path(project, row)
+        attachment_rows = attachment_map.get(file_id, [])
+        for attachment_row, image in _pdf_attachment_images(attachment_rows, max_items=1000, max_size=(page_w - (margin * 2), page_h - 260)):
+            appendix_no += 1
+            page_no += 1
+            attachment_page = Image.new("RGB", (page_w, page_h), "white")
+            attachment_draw = ImageDraw.Draw(attachment_page)
+            attachment_draw.text((margin, 40), f"Bilag {appendix_no} - Vedhæftet billede", fill="#111111", font=font_title)
+            attachment_draw.text((margin, 82), f"Fil: {row['filename']}", fill="#333333", font=font_meta)
+            attachment_draw.text((margin, 108), f"Sti: {display_path}", fill="#333333", font=font_meta)
+            attachment_draw.text(
+                (margin, 134),
+                f"Billede: {attachment_row['original_name'] or attachment_row['rel_name']}  |  Side {page_no}",
+                fill="#555555",
+                font=font_meta,
+            )
+
+            img_x = max(margin, int((page_w - image.width) / 2))
+            img_y = 178
+            attachment_draw.rectangle(
+                (img_x - 2, img_y - 2, img_x + image.width + 2, img_y + image.height + 2),
+                outline="#c8d1dc",
+                width=2,
+            )
+            attachment_page.paste(image, (img_x, img_y))
+            pages.append(attachment_page)
+
     out = io.BytesIO()
     pages[0].save(out, format="PDF", save_all=True, append_images=pages[1:], resolution=150.0)
     return out.getvalue()
@@ -8848,7 +8937,7 @@ def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attach
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("produktions-info.pdf", pdf_bytes)
         for row in files:
-            display_folder = str(row["display_path"] or "").strip()
+            display_folder = _print_ready_display_path(project, row)
             if display_folder == ".":
                 display_folder = ""
             file_arc = unique_name(
