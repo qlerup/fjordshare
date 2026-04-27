@@ -93,11 +93,11 @@
     statShares: document.getElementById("statShares"),
     sidebarNav: document.getElementById("sidebarNav"),
     tabFiles: document.getElementById("tab-files"),
+    tabPrintReady: document.getElementById("tab-print-ready"),
     tabSettings: document.getElementById("tab-settings"),
     settingsTabs: document.getElementById("settingsTabs"),
     settingsTabSelect: document.getElementById("settingsTabSelect"),
     settingsPanelShares: document.getElementById("settings-panel-shares"),
-    settingsPanelPrintReady: document.getElementById("settings-panel-print-ready"),
     settingsPanelDns: document.getElementById("settings-panel-dns"),
     settingsPanelUsers: document.getElementById("settings-panel-users"),
     settingsPanelLogs: document.getElementById("settings-panel-logs"),
@@ -343,6 +343,10 @@
     settings: {
       title: "Indstillinger",
       subtitle: "Delinger, DNS, brugere og slicer-profiler",
+    },
+    "print-ready": {
+      title: "Projekter klar til print",
+      subtitle: "Printprojekter markeret af brugere",
     },
   };
 
@@ -1032,6 +1036,7 @@
     const target = String(tab || "files");
     const map = {
       files: els.tabFiles,
+      "print-ready": els.tabPrintReady,
       settings: els.tabSettings,
     };
     Object.entries(map).forEach(([key, section]) => {
@@ -1077,7 +1082,6 @@
 
     const panelMap = {
       shares: els.settingsPanelShares,
-      "print-ready": els.settingsPanelPrintReady,
       dns: els.settingsPanelDns,
       users: els.settingsPanelUsers,
       logs: els.settingsPanelLogs,
@@ -9761,9 +9765,11 @@
         if (!btn) return;
         const tab = btn.dataset.tab;
         setTab(tab);
+        if (tab === "print-ready" && state.role === "admin") {
+          await loadPrintReadyProjects();
+        }
         if (tab === "settings" && state.role === "admin") {
           if (state.currentSettingsTab === "shares") await loadShares();
-          if (state.currentSettingsTab === "print-ready") await loadPrintReadyProjects();
           if (state.currentSettingsTab === "dns") await loadDns();
           if (state.currentSettingsTab === "users") await loadUsers();
           if (state.currentSettingsTab === "logs") await loadAdminLogs();
@@ -9779,7 +9785,6 @@
         const tab = String(btn.dataset.settingsTab || "shares");
         setSettingsTab(tab);
         if (tab === "shares") await loadShares();
-        if (tab === "print-ready") await loadPrintReadyProjects();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
         if (tab === "logs") await loadAdminLogs();
@@ -9793,7 +9798,6 @@
         const tab = String(els.settingsTabSelect.value || "shares");
         setSettingsTab(tab);
         if (tab === "shares") await loadShares();
-        if (tab === "print-ready") await loadPrintReadyProjects();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
         if (tab === "logs") await loadAdminLogs();

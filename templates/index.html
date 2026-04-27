@@ -19,6 +19,7 @@
 
     <nav id="sidebarNav" class="nav">
       <button class="nav-item active" data-tab="files">Mapper</button>
+      <button class="nav-item admin-only" data-tab="print-ready">Projekter klar til print</button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
     </nav>
 
@@ -138,6 +139,18 @@
       </div>
     </aside>
 
+    <section id="tab-print-ready" class="tab-section hidden admin-only">
+      <div class="panel">
+        <div class="toolbar">
+          <h3>Projekter klar til print</h3>
+          <button id="printReadyRefreshBtn" class="icon-btn" type="button" title="Opdater klar til print" aria-label="Opdater klar til print">&#8635;</button>
+        </div>
+        <p class="hint">Brugerprojekter der er markeret klar til produktion.</p>
+        <div id="printReadyStatus" class="status hidden"></div>
+        <div id="printReadyAdminList" class="print-ready-admin-list"></div>
+      </div>
+    </section>
+
     <section id="tab-settings" class="tab-section hidden admin-only">
       <div class="panel">
         <div class="settings-header">
@@ -146,7 +159,6 @@
         </div>
         <nav id="settingsTabs" class="tabs">
           <button class="tab-btn active" data-settings-tab="shares">Delinger</button>
-          <button class="tab-btn" data-settings-tab="print-ready">Klar til print</button>
           <button class="tab-btn" data-settings-tab="dns">DNS</button>
           <button class="tab-btn" data-settings-tab="users">Brugere</button>
           <button class="tab-btn" data-settings-tab="logs">Logs</button>
@@ -155,7 +167,6 @@
         <div class="tabs-mobile">
           <select id="settingsTabSelect" aria-label="Vælg indstillingsfane">
             <option value="shares" selected>Delinger</option>
-            <option value="print-ready">Klar til print</option>
             <option value="dns">DNS</option>
             <option value="users">Brugere</option>
             <option value="logs">Logs</option>
@@ -182,18 +193,6 @@
             </thead>
             <tbody id="sharesTableBody"></tbody>
           </table>
-        </div>
-      </div>
-
-      <div id="settings-panel-print-ready" class="settings-subpanel hidden">
-        <div class="panel">
-          <div class="toolbar">
-            <h3>Klar til print</h3>
-            <button id="printReadyRefreshBtn" class="icon-btn" type="button" title="Opdater klar til print" aria-label="Opdater klar til print">&#8635;</button>
-          </div>
-          <p class="hint">Brugerprojekter der er markeret klar til produktion.</p>
-          <div id="printReadyStatus" class="status hidden"></div>
-          <div id="printReadyAdminList" class="print-ready-admin-list"></div>
         </div>
       </div>
 
