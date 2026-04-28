@@ -78,7 +78,7 @@
           <button id="createFolderBtn" class="btn" type="button">Opret mappe</button>
         </div>
 
-        <input id="fileInput" type="file" multiple style="display:none;">
+        <input id="fileInput" type="file" accept=".step,.3mf,.stl" multiple style="display:none;">
 
         <div id="uploadStatus" class="status hidden"></div>
 
@@ -124,7 +124,7 @@
             <div class="file-info-attachments-title">Billeder til filen</div>
             <button id="fileInfoAttachUploadBtn" class="btn" type="button">Upload billede</button>
           </div>
-          <input id="fileInfoAttachInput" type="file" accept="image/*" multiple style="display:none;">
+          <input id="fileInfoAttachInput" type="file" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.avif,.heic,.heif" multiple style="display:none;">
           <div id="fileInfoAttachDropZone" class="file-info-attach-dropzone">Slip billeder her for at uploade</div>
           <div id="fileInfoAttachStatus" class="status hidden"></div>
           <div id="fileInfoAttachList" class="file-info-attach-list"></div>
@@ -770,7 +770,7 @@
         <div class="metadata-attachments-title">Billeder til filen</div>
         <button id="metadataAttachUploadBtn" class="btn" type="button">Upload billede</button>
       </div>
-      <input id="metadataAttachInput" type="file" accept="image/*" multiple style="display:none;">
+      <input id="metadataAttachInput" type="file" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.avif,.heic,.heif" multiple style="display:none;">
       <div id="metadataAttachDropZone" class="file-info-attach-dropzone">Slip billeder her for at uploade</div>
       <div id="metadataAttachStatus" class="status hidden"></div>
       <div id="metadataAttachList" class="file-info-attach-list"></div>

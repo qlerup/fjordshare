@@ -374,6 +374,27 @@
     el.textContent = message;
   }
 
+  const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".step", ".3mf", ".stl"]);
+  const PRIMARY_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl";
+
+  function fileExt(filename) {
+    const name = String(filename || "").trim().toLowerCase();
+    const idx = name.lastIndexOf(".");
+    return idx >= 0 ? name.slice(idx) : "";
+  }
+
+  function isSupportedPrimaryUpload(file) {
+    return !!file && PRIMARY_UPLOAD_ALLOWED_EXTS.has(fileExt(file.name));
+  }
+
+  function unsupportedPrimaryUploadMessage(files) {
+    const list = Array.from(files || []).filter(Boolean);
+    const names = list.slice(0, 3).map((file) => String(file && file.name ? file.name : "Fil")).join(", ");
+    const extra = list.length > 3 ? ` +${list.length - 3} flere` : "";
+    const subject = list.length === 1 ? names : `${list.length} filer${names ? ` (${names}${extra})` : ""}`;
+    return `${subject} understøttes ikke. Upload kun ${PRIMARY_UPLOAD_ALLOWED_LABEL} filer.`;
+  }
+
   const uploadUiState = {
     totalFiles: 0,
     totalBytes: 0,
@@ -7005,7 +7026,7 @@
       return;
     }
 
-    const list = incoming
+    let list = incoming
       .map((entry) => {
         if (!entry) return null;
         if (entry instanceof File) {
@@ -7037,15 +7058,39 @@
       .filter(Boolean);
 
     if (!list.length) return;
+    const unsupported = list.filter((item) => !isSupportedPrimaryUpload(item.file));
+    if (unsupported.length) {
+      const message = unsupportedPrimaryUploadMessage(unsupported.map((item) => item.file));
+      if (unsupported.length === list.length) {
+        showStatus(els.uploadStatus, message, "error");
+        return;
+      }
+      showStatus(els.uploadStatus, message, "error");
+      list = list.filter((item) => isSupportedPrimaryUpload(item.file));
+    }
 
     resetUploadUiState();
-    uploadUiState.totalFiles = list.length;
+    const unsupportedCount = unsupported.length;
+    const attemptedCount = list.length + unsupportedCount;
+    uploadUiState.totalFiles = attemptedCount;
     uploadUiState.totalBytes = list.reduce((sum, item) => sum + Number(item.file && item.file.size ? item.file.size : 0), 0);
+    uploadUiState.processedFiles = unsupportedCount;
+    uploadUiState.failedFiles = unsupportedCount;
     uploadUiState.collapsed = false;
     uploadStopRequested = false;
     uploadWasStopped = false;
     uploadTransferActive = true;
     showUploadMonitor();
+    unsupported.forEach((item, idx) => {
+      const file = item && item.file;
+      addUploadMonitorItem(
+        file && file.name ? file.name : "Fil",
+        false,
+        `Ikke understøttet · brug ${PRIMARY_UPLOAD_ALLOWED_LABEL}`,
+        _uploadItemKey(file && file.name ? file.name : "Fil", `unsupported-${idx}`),
+        0
+      );
+    });
     renderUploadMonitor();
 
     showStatus(els.uploadStatus, `Starter upload af ${list.length} filer...`, "ok");
@@ -7114,7 +7159,7 @@
     if (uploaded.length) {
       const failedPart = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : "";
       const doneLabel = uploadWasStopped ? "Upload stoppet" : "Upload færdig";
-      showStatus(els.uploadStatus, `${doneLabel}: ${uploaded.length}/${list.length} filer${failedPart}.`, uploadUiState.failedFiles ? "error" : "ok");
+      showStatus(els.uploadStatus, `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}.`, uploadUiState.failedFiles ? "error" : "ok");
       const resolved = await resolveUploadedItems(uploaded);
       const firstFolder = resolved.length ? String(resolved[0].folder_path || "").trim() : "";
       await loadFolders();

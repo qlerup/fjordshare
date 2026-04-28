@@ -49,6 +49,27 @@
     el.textContent = message;
   }
 
+  const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".step", ".3mf", ".stl"]);
+  const PRIMARY_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl";
+
+  function fileExt(filename) {
+    const name = String(filename || "").trim().toLowerCase();
+    const idx = name.lastIndexOf(".");
+    return idx >= 0 ? name.slice(idx) : "";
+  }
+
+  function isSupportedPrimaryUpload(file) {
+    return !!file && PRIMARY_UPLOAD_ALLOWED_EXTS.has(fileExt(file.name));
+  }
+
+  function unsupportedPrimaryUploadMessage(files) {
+    const list = Array.from(files || []).filter(Boolean);
+    const names = list.slice(0, 3).map((file) => String(file && file.name ? file.name : "Fil")).join(", ");
+    const extra = list.length > 3 ? ` +${list.length - 3} flere` : "";
+    const subject = list.length === 1 ? names : `${list.length} filer${names ? ` (${names}${extra})` : ""}`;
+    return `${subject} understøttes ikke. Upload kun ${PRIMARY_UPLOAD_ALLOWED_LABEL} filer.`;
+  }
+
   async function api(path, options = {}) {
     const init = Object.assign({ credentials: "same-origin" }, options);
     if (init.body && typeof init.body === "object" && !(init.body instanceof FormData)) {
@@ -237,9 +258,21 @@
   }
 
   async function startUpload(files) {
-    const list = Array.from(files || []);
-    if (!list.length) return;
+    const rawList = Array.from(files || []);
+    if (!rawList.length) return;
+    const unsupported = rawList.filter((file) => !isSupportedPrimaryUpload(file));
+    const list = rawList.filter((file) => isSupportedPrimaryUpload(file));
+    if (unsupported.length) {
+      const message = unsupportedPrimaryUploadMessage(unsupported);
+      if (!list.length) {
+        showStatus(els.shareUploadStatus, message, "error");
+        return;
+      }
+      showStatus(els.shareUploadStatus, message, "error");
+    }
     const folder = (els.shareFolderSelect && els.shareFolderSelect.value) || "";
+    let uploadedCount = 0;
+    let failedCount = unsupported.length;
     for (let i = 0; i < list.length; i += 1) {
       const file = list[i];
       const clientUploadId = makeClientUploadId();
@@ -248,11 +281,14 @@
           const pct = total > 0 ? Math.round((uploaded / total) * 100) : 0;
           showStatus(els.shareUploadStatus, `Uploader ${i + 1}/${list.length}: ${file.name} (${pct}%)`, "ok");
         });
+        uploadedCount += 1;
       } catch (err) {
+        failedCount += 1;
         showStatus(els.shareUploadStatus, `Upload fejlede for ${file.name}: ${err.message || err}`, "error");
       }
     }
-    showStatus(els.shareUploadStatus, "Upload færdig.", "ok");
+    const failedPart = failedCount ? ` · fejl: ${failedCount}` : "";
+    showStatus(els.shareUploadStatus, `Upload færdig: ${uploadedCount}/${rawList.length} filer${failedPart}.`, failedCount ? "error" : "ok");
     await loadFiles();
   }
 

@@ -59,6 +59,16 @@ try:
 except Exception:
     register_heif_opener = None
 
+try:
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.annotations import Link as PdfLink
+    from pypdf.generic import Fit as PdfFit
+except Exception:
+    PdfReader = None
+    PdfWriter = None
+    PdfLink = None
+    PdfFit = None
+
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data")).resolve()
 _UPLOAD_ROOT_ENV = str(os.getenv("UPLOAD_ROOT", os.getenv("UPLOAD_DIR", "")) or "").strip()
@@ -100,6 +110,8 @@ THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", "
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
 THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
 THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
+PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl"}
+PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl"
 THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
 THUMB_RENDER_STYLE_VERSION = "7"
@@ -750,6 +762,16 @@ def guess_mime(filename: str, ext: str) -> str:
         return "model/obj"
     guessed, _ = mimetypes.guess_type(filename)
     return guessed or "application/octet-stream"
+
+
+def _is_allowed_primary_3d_upload(filename: str) -> bool:
+    ext = str(Path(str(filename or "")).suffix or "").lower()
+    return ext in PRIMARY_3D_UPLOAD_ALLOWED_EXTS
+
+
+def _unsupported_primary_3d_upload_error(filename: str) -> str:
+    name = str(filename or "Filen").strip() or "Filen"
+    return f"{name} understøttes ikke. Upload kun {PRIMARY_3D_UPLOAD_ALLOWED_LABEL} filer."
 
 
 def parse_iso_or_none(raw: Any) -> Optional[datetime]:
@@ -8803,11 +8825,63 @@ def _pdf_attachment_thumbnails(attachment_rows: list[sqlite3.Row], max_items: in
     return [img for _row, img in _pdf_attachment_images(attachment_rows, max_items=max_items, max_size=(138, 104))]
 
 
+def _add_pdf_internal_links(
+    pdf_bytes: bytes,
+    links: list[dict[str, Any]],
+    page_size_px: tuple[int, int],
+) -> bytes:
+    if not links or PdfReader is None or PdfWriter is None or PdfLink is None or PdfFit is None:
+        return pdf_bytes
+
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        writer = PdfWriter()
+        for pdf_page in reader.pages:
+            writer.add_page(pdf_page)
+
+        page_count = len(writer.pages)
+        source_w_px = max(1.0, float(page_size_px[0] or 1))
+        source_h_px = max(1.0, float(page_size_px[1] or 1))
+        for link in links:
+            source_page = int(link.get("source_page") or 0)
+            target_page = int(link.get("target_page") or 0)
+            rect_px = link.get("rect_px")
+            if source_page < 0 or source_page >= page_count or target_page < 0 or target_page >= page_count:
+                continue
+            if not isinstance(rect_px, (list, tuple)) or len(rect_px) != 4:
+                continue
+
+            page_obj = writer.pages[source_page]
+            page_w_pt = float(page_obj.mediabox.width)
+            page_h_pt = float(page_obj.mediabox.height)
+            scale_x = page_w_pt / source_w_px
+            scale_y = page_h_pt / source_h_px
+            x0, y0, x1, y1 = [float(v) for v in rect_px]
+            left = max(0.0, min(page_w_pt, x0 * scale_x))
+            right = max(0.0, min(page_w_pt, x1 * scale_x))
+            top = max(0.0, min(page_h_pt, page_h_pt - (y0 * scale_y)))
+            bottom = max(0.0, min(page_h_pt, page_h_pt - (y1 * scale_y)))
+            if right <= left or top <= bottom:
+                continue
+
+            writer.add_annotation(
+                source_page,
+                PdfLink(rect=(left, bottom, right, top), target_page_index=target_page, fit=PdfFit.fit()),
+            )
+
+        out = io.BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception:
+        return pdf_bytes
+
+
 def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attachment_map: dict[int, list[sqlite3.Row]]) -> bytes:
     if Image is None or ImageDraw is None:
         raise RuntimeError("Pillow mangler, så PDF kan ikke laves")
 
     page_w, page_h = 1754, 1240
+    pdf_resolution = 150.0
     margin = 54
     row_gap = 12
     header_h = 118
@@ -8821,6 +8895,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
     created_label = format_local_datetime(project["created_at"])
 
     pages: list[Any] = []
+    summary_links: list[dict[str, Any]] = []
     page = Image.new("RGB", (page_w, page_h), "white")
     draw = ImageDraw.Draw(page)
 
@@ -8843,7 +8918,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
         file_id = int(row["file_id"])
         display_path = _print_ready_display_path(project, row)
         attachments = attachment_map.get(file_id, [])
-        thumbs = _pdf_attachment_thumbnails(attachments)
+        thumbs = _pdf_attachment_images(attachments, max_items=3, max_size=(138, 104))
         text_probe = Image.new("RGB", (10, 10), "white")
         probe_draw = ImageDraw.Draw(text_probe)
         text_heights = [
@@ -8871,9 +8946,20 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
         img_x = col_x[4] + 8
         img_y = y + 8
         if thumbs:
-            for thumb in thumbs:
+            source_page_index = len(pages)
+            for attachment_row, thumb in thumbs:
                 draw.rectangle((img_x - 1, img_y - 1, img_x + thumb.width + 1, img_y + thumb.height + 1), outline="#c8d1dc")
                 page.paste(thumb, (img_x, img_y))
+                try:
+                    summary_links.append(
+                        {
+                            "source_page": source_page_index,
+                            "attachment_id": int(attachment_row["id"]),
+                            "rect_px": (img_x - 3, img_y - 3, img_x + thumb.width + 3, img_y + thumb.height + 3),
+                        }
+                    )
+                except Exception:
+                    pass
                 img_x += 152
         else:
             draw.text((img_x, img_y + 4), "Ingen billeder", fill="#666666", font=font_body)
@@ -8884,6 +8970,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
     pages.append(page)
 
     appendix_no = 0
+    attachment_target_pages: dict[int, int] = {}
     for row in files:
         file_id = int(row["file_id"])
         display_path = _print_ready_display_path(project, row)
@@ -8893,6 +8980,10 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
             page_no += 1
             attachment_page = Image.new("RGB", (page_w, page_h), "white")
             attachment_draw = ImageDraw.Draw(attachment_page)
+            try:
+                attachment_target_pages[int(attachment_row["id"])] = len(pages)
+            except Exception:
+                pass
             attachment_draw.text((margin, 40), f"Bilag {appendix_no} - Vedhæftet billede", fill="#111111", font=font_title)
             attachment_draw.text((margin, 82), f"Fil: {row['filename']}", fill="#333333", font=font_meta)
             attachment_draw.text((margin, 108), f"Sti: {display_path}", fill="#333333", font=font_meta)
@@ -8914,8 +9005,21 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
             pages.append(attachment_page)
 
     out = io.BytesIO()
-    pages[0].save(out, format="PDF", save_all=True, append_images=pages[1:], resolution=150.0)
-    return out.getvalue()
+    pages[0].save(out, format="PDF", save_all=True, append_images=pages[1:], resolution=pdf_resolution)
+    pdf_bytes = out.getvalue()
+    resolved_links = []
+    for link in summary_links:
+        target_page = attachment_target_pages.get(int(link.get("attachment_id") or 0))
+        if target_page is None:
+            continue
+        resolved_links.append(
+            {
+                "source_page": int(link.get("source_page") or 0),
+                "target_page": int(target_page),
+                "rect_px": link.get("rect_px"),
+            }
+        )
+    return _add_pdf_internal_links(pdf_bytes, resolved_links, (page_w, page_h))
 
 
 def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attachment_map: dict[int, list[sqlite3.Row]]) -> bytes:
@@ -11353,6 +11457,12 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
 
     try:
         ext = str(Path(filename).suffix or "").lower()
+        if not _is_allowed_primary_3d_upload(filename):
+            try:
+                data_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False, None, _unsupported_primary_3d_upload_error(filename)
         if ext == ".zip":
             owner_user_id: Optional[int] = None
             share_id: Optional[int] = None
@@ -11495,6 +11605,8 @@ def api_upload_tus_create():
     filename = str(meta.get("filename") or "").strip()
     if not filename:
         return jsonify({"ok": False, "error": "Missing filename"}), 400, tus_headers()
+    if not _is_allowed_primary_3d_upload(filename):
+        return jsonify({"ok": False, "error": _unsupported_primary_3d_upload_error(filename)}), 415, tus_headers()
 
     if current_user.is_admin:
         folder = normalize_folder_path(str(meta.get("folder") or ""))
@@ -11703,6 +11815,8 @@ def api_share_upload_tus_create(token: str):
     filename = str(meta.get("filename") or "").strip()
     if not filename:
         return jsonify({"ok": False, "error": "Missing filename"}), 400, tus_headers()
+    if not _is_allowed_primary_3d_upload(filename):
+        return jsonify({"ok": False, "error": _unsupported_primary_3d_upload_error(filename)}), 415, tus_headers()
 
     folder = normalize_folder_path(str(meta.get("folder") or ""))
     if not folder:
