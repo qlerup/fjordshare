@@ -18,6 +18,8 @@ import tempfile
 import time
 import threading
 import zipfile
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -117,6 +119,7 @@ SMS_SETTING_TOKEN_KEY = "sms_gateway_token"  # legacy plaintext key
 SMS_SETTING_TOKEN_ENC_KEY = "sms_gateway_token_enc"
 SMS_SETTING_SENDER_KEY = "sms_gateway_sender"
 SMS_TOKEN_ENCRYPTION_KEY = str(os.getenv("SMS_TOKEN_ENCRYPTION_KEY", "") or "").strip()
+SMS_GATEWAY_URL = "https://gatewayapi.com/rest/mtsms"
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
@@ -215,6 +218,7 @@ ACTIVITY_KIND_LABELS = {
     "zip": "ZIP",
     "delete": "Slet",
     "folder": "Mappe",
+    "sms": "SMS",
     "system": "System",
 }
 
@@ -7744,6 +7748,9 @@ def init_db() -> None:
                 expires_at TEXT,
                 revoked INTEGER NOT NULL DEFAULT 0,
                 use_external_base_url INTEGER NOT NULL DEFAULT 0,
+                project_id INTEGER,
+                file_ids_json TEXT,
+                printed_only INTEGER NOT NULL DEFAULT 0,
                 password_hash TEXT,
                 require_visitor_name INTEGER NOT NULL DEFAULT 0,
                 created_by_user_id INTEGER,
@@ -7839,6 +7846,16 @@ def init_db() -> None:
             conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN display_path TEXT NOT NULL DEFAULT ''")
         if "sort_order" not in project_file_cols:
             conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+
+        share_cols = [r[1] for r in conn.execute("PRAGMA table_info(share_links)").fetchall()]
+        if "project_id" not in share_cols:
+            conn.execute("ALTER TABLE share_links ADD COLUMN project_id INTEGER")
+        if "file_ids_json" not in share_cols:
+            conn.execute("ALTER TABLE share_links ADD COLUMN file_ids_json TEXT")
+        if "printed_only" not in share_cols:
+            conn.execute("ALTER TABLE share_links ADD COLUMN printed_only INTEGER NOT NULL DEFAULT 0")
+        conn.execute("UPDATE share_links SET printed_only=0 WHERE printed_only IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_share_links_project ON share_links(project_id)")
         conn.commit()
 
 
@@ -8020,6 +8037,258 @@ def _load_sms_gateway_settings() -> dict[str, Any]:
         "token_configured": bool(token),
         "encryption_active": encryption_active,
     }
+
+
+def _sms_gateway_msisdn(phone_e164: str) -> str:
+    return re.sub(r"\D", "", str(phone_e164 or ""))
+
+
+def _send_gateway_sms(*, message: str, recipient_e164: str) -> tuple[bool, str]:
+    settings_data = _load_sms_gateway_settings()
+    if not bool(settings_data.get("enabled")):
+        return False, "SMS gateway er slået fra i indstillinger"
+
+    token = str(settings_data.get("token") or "").strip()
+    sender = str(settings_data.get("sender") or "").strip()
+    if not token:
+        return False, "SMS token mangler"
+    if not sender:
+        return False, "SMS afsender mangler"
+
+    msisdn = _sms_gateway_msisdn(recipient_e164)
+    if len(msisdn) < 4:
+        return False, "Ugyldigt modtagernummer"
+
+    body = {
+        "sender": sender,
+        "message": str(message or "").strip(),
+        "recipients": [{"msisdn": int(msisdn)}],
+    }
+    payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    auth_raw = f"{token}:".encode("utf-8")
+    auth = base64.b64encode(auth_raw).decode("ascii")
+
+    req = urllib_request.Request(
+        SMS_GATEWAY_URL,
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"Basic {auth}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            status = int(getattr(resp, "status", 200) or 200)
+            if status >= 300:
+                return False, f"GatewayAPI svarede med HTTP {status}"
+            return True, ""
+    except urllib_error.HTTPError as exc:
+        try:
+            raw = exc.read().decode("utf-8", errors="ignore")
+        except Exception:
+            raw = ""
+        msg = raw.strip()
+        if len(msg) > 240:
+            msg = msg[:240]
+        return False, msg or f"GatewayAPI fejl HTTP {int(exc.code or 0)}"
+    except Exception as exc:
+        return False, str(exc)[:240] or "Uventet SMS fejl"
+
+
+def _sms_text_project_ready(owner_name: str, share_link: str) -> str:
+    name = str(owner_name or "").strip() or "kunde"
+    link = str(share_link or "").strip()
+    return (
+        f"Hej {name}\n\n"
+        "Dit projekt er nu færdigprintet. Pakken med dine ting, vil nu blive pakket, og sendes snarest.\n\n"
+        f"{link}\n\n"
+        "Med venlig hilsen\n"
+        "Christian Glerup"
+    )
+
+
+def _project_sms_state(project_row: sqlite3.Row) -> dict[str, Any]:
+    owner_user_id = int(project_row["owner_user_id"] or 0)
+    owner_username = str(project_row["owner_username"] or "").strip()
+    gateway = _load_sms_gateway_settings()
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT username, sms_enabled, sms_phone_country_code, sms_phone_number
+            FROM users
+            WHERE id=?
+            """,
+            (owner_user_id,),
+        ).fetchone()
+
+    profile = _load_user_sms_profile(owner_user_id) if row is not None else {}
+    sms_enabled_user = bool(parse_bool(row["sms_enabled"])) if row is not None else False
+    recipient_e164 = str(profile.get("sms_phone_e164") or "")
+    available = (
+        bool(gateway.get("enabled"))
+        and bool(str(gateway.get("sender") or "").strip())
+        and bool(str(gateway.get("token") or "").strip())
+        and sms_enabled_user
+        and bool(recipient_e164)
+    )
+
+    return {
+        "available": available,
+        "owner_user_id": owner_user_id,
+        "owner_username": owner_username or str((row["username"] if row is not None else "") or ""),
+        "recipient_e164": recipient_e164,
+    }
+
+
+def _normalize_positive_ids(values: Any) -> list[int]:
+    if not isinstance(values, list):
+        return []
+    out: list[int] = []
+    seen: set[int] = set()
+    for value in values:
+        try:
+            item_id = int(value)
+        except Exception:
+            continue
+        if item_id <= 0 or item_id in seen:
+            continue
+        seen.add(item_id)
+        out.append(item_id)
+    return out
+
+
+def _share_row_file_ids(share_row: sqlite3.Row) -> list[int]:
+    raw = str(share_row["file_ids_json"] or "").strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return []
+    return _normalize_positive_ids(parsed)
+
+
+def _create_project_printed_share(
+    *,
+    project_row: sqlite3.Row,
+    file_ids: list[int],
+    actor_user_id: int,
+) -> str:
+    ids = _normalize_positive_ids(file_ids)
+    if not ids:
+        raise ValueError("Ingen filer at dele")
+
+    placeholders = ",".join("?" for _ in ids)
+    with closing(get_conn()) as conn:
+        file_rows = conn.execute(
+            f"SELECT id, folder_path FROM files WHERE id IN ({placeholders}) ORDER BY id",
+            tuple(ids),
+        ).fetchall()
+        found_ids = {int(r["id"]) for r in file_rows}
+        missing = [fid for fid in ids if fid not in found_ids]
+        if missing:
+            raise ValueError("En eller flere filer findes ikke")
+
+        folder_paths: list[str] = []
+        for row in file_rows:
+            folder = normalize_folder_path(str(row["folder_path"] or ""))
+            if folder and folder not in folder_paths:
+                folder_paths.append(folder)
+        if not folder_paths:
+            raise ValueError("Kunne ikke finde mapper for projektfiler")
+
+        token_plain = secrets.token_urlsafe(18)
+        token_hash = token_digest(token_plain)
+        title = str(project_row["title"] or "").strip() or f"Projekt {int(project_row['id'] or 0)}"
+        share_name = f"Printet: {title}"[:120]
+        external_base = str(get_setting("external_base_url", "") or "").strip()
+        use_external = 1 if external_base else 0
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+        cur = conn.execute(
+            """
+            INSERT INTO share_links(
+                token_hash, token_plain, share_name, folder_path,
+                permission, expires_at, revoked, use_external_base_url,
+                project_id, file_ids_json, printed_only,
+                password_hash, require_visitor_name, created_by_user_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                token_hash,
+                token_plain,
+                share_name,
+                folder_paths[0],
+                "view",
+                expires_at,
+                use_external,
+                int(project_row["id"] or 0),
+                json.dumps(ids, ensure_ascii=False),
+                1,
+                None,
+                0,
+                int(actor_user_id),
+                now_iso(),
+            ),
+        )
+        share_id = int(cur.lastrowid)
+        for folder in folder_paths:
+            conn.execute(
+                "INSERT OR IGNORE INTO share_link_folders(share_id, folder_path, created_at) VALUES(?,?,?)",
+                (share_id, folder, now_iso()),
+            )
+        conn.commit()
+
+    return build_share_url(token_plain, bool(use_external))
+
+
+def _send_project_printed_sms(
+    *,
+    project_row: sqlite3.Row,
+    printed_file_ids: list[int],
+    actor_username: str,
+    actor_user_id: int,
+) -> tuple[bool, str]:
+    sms_state = _project_sms_state(project_row)
+    if not bool(sms_state.get("available")):
+        return False, "SMS er ikke aktiveret for denne bruger/profil"
+
+    share_link = _create_project_printed_share(
+        project_row=project_row,
+        file_ids=printed_file_ids,
+        actor_user_id=actor_user_id,
+    )
+    sms_text = _sms_text_project_ready(str(sms_state.get("owner_username") or ""), share_link)
+    ok, error_text = _send_gateway_sms(
+        message=sms_text,
+        recipient_e164=str(sms_state.get("recipient_e164") or ""),
+    )
+    if ok:
+        log_activity(
+            kind="sms",
+            action="send",
+            message=f"SMS sendt for projekt {int(project_row['id'] or 0)}",
+            level="info",
+            folder_path=str(project_row["owner_home_folder"] or ""),
+            target=str(project_row["title"] or f"Projekt #{int(project_row['id'] or 0)}"),
+            actor=str(actor_username or ""),
+        )
+        return True, ""
+
+    log_activity(
+        kind="sms",
+        action="error",
+        message=f"SMS fejl for projekt {int(project_row['id'] or 0)}: {error_text}",
+        level="error",
+        folder_path=str(project_row["owner_home_folder"] or ""),
+        target=str(project_row["title"] or f"Projekt #{int(project_row['id'] or 0)}"),
+        actor=str(actor_username or ""),
+    )
+    return False, error_text or "Ukendt SMS fejl"
 
 
 def migrate_thumbnail_render_style_if_needed() -> None:
@@ -9119,7 +9388,10 @@ def _print_ready_file_rows(conn: sqlite3.Connection, project_id: int) -> list[sq
             f.ext AS current_ext,
             f.mime_type AS current_mime_type,
             f.uploaded_at AS current_uploaded_at,
-            f.uploaded_by AS current_uploaded_by
+            f.uploaded_by AS current_uploaded_by,
+            f.printed AS current_printed,
+            f.printed_at AS current_printed_at,
+            f.printed_by AS current_printed_by
         FROM print_ready_project_files pf
         LEFT JOIN files f ON f.id = pf.file_id
         WHERE pf.project_id=?
@@ -9156,12 +9428,17 @@ def serialize_print_ready_project(
     project_id = int(project_row["id"])
     files: list[dict] = []
     total_quantity = 0
+    printed_file_count = 0
+    sms_state = _project_sms_state(project_row)
     if file_rows is not None:
         attachment_map = attachment_map or {}
         for row in file_rows:
             file_id = int(row["file_id"])
             quantity = max(1, int(row["quantity"] or 1))
+            is_printed = bool(int(row["current_printed"] or 0))
             total_quantity += quantity
+            if is_printed:
+                printed_file_count += 1
             attachments = [serialize_file_attachment_row(a) for a in attachment_map.get(file_id, [])]
             files.append(
                 {
@@ -9176,6 +9453,9 @@ def serialize_print_ready_project(
                     "attachments": attachments,
                     "content_url": url_for("api_file_content", file_id=file_id),
                     "download_url": url_for("api_file_download", file_id=file_id),
+                    "printed": is_printed,
+                    "printed_at": str(row["current_printed_at"] or ""),
+                    "printed_by": str(row["current_printed_by"] or ""),
                 }
             )
     return {
@@ -9188,8 +9468,10 @@ def serialize_print_ready_project(
         "created_at": str(project_row["created_at"] or ""),
         "created_at_display": format_local_datetime(project_row["created_at"]),
         "file_count": len(files) if file_rows is not None else 0,
+        "printed_file_count": printed_file_count,
         "total_quantity": total_quantity,
         "files": files,
+        "sms_available": bool(sms_state.get("available")),
         "zip_url": url_for("api_print_ready_zip", project_id=project_id),
         "pdf_url": url_for("api_print_ready_pdf", project_id=project_id),
     }
@@ -9669,6 +9951,17 @@ def get_share_folders(conn: sqlite3.Connection, share_id: int, fallback_folder: 
     if fallback and fallback not in out:
         out.append(fallback)
     return out
+
+
+def _share_row_printed_only(share_row: sqlite3.Row) -> bool:
+    return bool(int(share_row["printed_only"] or 0))
+
+
+def _share_row_allows_file_id(share_row: sqlite3.Row, file_id: int) -> bool:
+    allowed_ids = _share_row_file_ids(share_row)
+    if not allowed_ids:
+        return True
+    return int(file_id) in set(allowed_ids)
 
 
 def resolve_share(token: str) -> Optional[sqlite3.Row]:
@@ -10832,6 +11125,177 @@ def api_admin_print_ready_cancel(project_id: int):
     return jsonify({"ok": True})
 
 
+def _set_files_printed_state(conn: sqlite3.Connection, file_ids: list[int], printed: bool, actor: str) -> None:
+    ids = _normalize_positive_ids(file_ids)
+    if not ids:
+        return
+    placeholders = ",".join("?" for _ in ids)
+    now_value = now_iso() if printed else None
+    by_user = str(actor or "") if printed else None
+    conn.execute(
+        f"""
+        UPDATE files
+        SET printed=?, printed_at=?, printed_by=?
+        WHERE id IN ({placeholders})
+        """,
+        (
+            1 if printed else 0,
+            now_value,
+            by_user,
+            *tuple(ids),
+        ),
+    )
+
+
+@app.route("/api/admin/print-ready/<int:project_id>/file/<int:file_id>/complete", methods=["POST"])
+@login_required
+def api_admin_print_ready_complete_file(project_id: int, file_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+
+    body = request.get_json(silent=True) or {}
+    send_sms = bool(parse_bool(body.get("send_sms")))
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT pf.file_id, f.*
+            FROM print_ready_project_files pf
+            LEFT JOIN files f ON f.id = pf.file_id
+            WHERE pf.project_id=? AND pf.file_id=?
+            LIMIT 1
+            """,
+            (int(project_id), int(file_id)),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Filen findes ikke i projektet"}), 404
+        if row["id"] is None:
+            return jsonify({"ok": False, "error": "Filen findes ikke længere"}), 404
+
+        file_ids_for_project = [
+            int(r["file_id"])
+            for r in conn.execute(
+                "SELECT file_id FROM print_ready_project_files WHERE project_id=? ORDER BY sort_order, id",
+                (int(project_id),),
+            ).fetchall()
+        ]
+
+        _set_files_printed_state(conn, [int(file_id)], True, str(current_user.username or ""))
+        files = _print_ready_file_rows(conn, int(project_id))
+        attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+        conn.commit()
+
+    payload = serialize_print_ready_project(project, files, attachment_map)
+
+    log_activity(
+        kind="print-ready",
+        action="complete-file",
+        message=f"Fil markeret printet i projekt {int(project_id)}: file_id={int(file_id)}",
+        level="info",
+        folder_path=str(project["owner_home_folder"] or ""),
+        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        actor=str(current_user.username or ""),
+        file_id=int(file_id),
+    )
+
+    sms_sent = False
+    sms_error = ""
+    if send_sms:
+        try:
+            printed_ids = [int(item["file_id"]) for item in payload.get("files", []) if bool(item.get("printed"))]
+            if not printed_ids:
+                printed_ids = _normalize_positive_ids(file_ids_for_project)
+            sms_sent, sms_error = _send_project_printed_sms(
+                project_row=project,
+                printed_file_ids=printed_ids,
+                actor_username=str(current_user.username or ""),
+                actor_user_id=int(current_user.id),
+            )
+        except Exception as exc:
+            sms_sent = False
+            sms_error = str(exc)[:240] or "Kunne ikke sende SMS"
+
+    return jsonify(
+        {
+            "ok": True,
+            "project": payload,
+            "updated_file_id": int(file_id),
+            "sms_sent": bool(sms_sent),
+            "sms_error": str(sms_error or ""),
+        }
+    )
+
+
+@app.route("/api/admin/print-ready/<int:project_id>/complete", methods=["POST"])
+@login_required
+def api_admin_print_ready_complete_project(project_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+
+    body = request.get_json(silent=True) or {}
+    send_sms = bool(parse_bool(body.get("send_sms")))
+
+    with closing(get_conn()) as conn:
+        file_ids = [
+            int(r["file_id"])
+            for r in conn.execute(
+                "SELECT file_id FROM print_ready_project_files WHERE project_id=? ORDER BY sort_order, id",
+                (int(project_id),),
+            ).fetchall()
+        ]
+        if not file_ids:
+            return jsonify({"ok": False, "error": "Projektet indeholder ingen filer"}), 400
+
+        _set_files_printed_state(conn, file_ids, True, str(current_user.username or ""))
+        conn.execute(
+            "UPDATE print_ready_projects SET status=? WHERE id=?",
+            ("completed", int(project_id)),
+        )
+        conn.commit()
+
+    sms_sent = False
+    sms_error = ""
+    if send_sms:
+        try:
+            sms_sent, sms_error = _send_project_printed_sms(
+                project_row=project,
+                printed_file_ids=file_ids,
+                actor_username=str(current_user.username or ""),
+                actor_user_id=int(current_user.id),
+            )
+        except Exception as exc:
+            sms_sent = False
+            sms_error = str(exc)[:240] or "Kunne ikke sende SMS"
+
+    log_activity(
+        kind="print-ready",
+        action="complete",
+        message=f"Projekt markeret færdigprintet: {int(project_id)}",
+        level="info",
+        folder_path=str(project["owner_home_folder"] or ""),
+        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        actor=str(current_user.username or ""),
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "project_id": int(project_id),
+            "completed": True,
+            "sms_sent": bool(sms_sent),
+            "sms_error": str(sms_error or ""),
+        }
+    )
+
+
 @app.route("/api/print-ready/<int:project_id>/send", methods=["POST"])
 @login_required
 def api_print_ready_send(project_id: int):
@@ -11706,6 +12170,7 @@ def api_shares():
                     SELECT s.*, u.username AS created_by_username
                     FROM share_links s
                     LEFT JOIN users u ON u.id = s.created_by_user_id
+                    WHERE COALESCE(s.project_id, 0)=0
                     ORDER BY s.id DESC
                     """
                 ).fetchall()
@@ -11715,7 +12180,7 @@ def api_shares():
                     SELECT s.*, u.username AS created_by_username
                     FROM share_links s
                     LEFT JOIN users u ON u.id = s.created_by_user_id
-                    WHERE s.created_by_user_id=?
+                    WHERE s.created_by_user_id=? AND COALESCE(s.project_id, 0)=0
                     ORDER BY s.id DESC
                     """,
                     (int(current_user.id),),
@@ -11967,6 +12432,13 @@ def api_share_files(token: str):
     with closing(get_conn()) as conn:
         rows = conn.execute(query, params).fetchall()
 
+    allowed_ids = _share_row_file_ids(row)
+    if allowed_ids:
+        allowed_set = set(int(v) for v in allowed_ids)
+        rows = [r for r in rows if int(r["id"] or 0) in allowed_set]
+    if _share_row_printed_only(row):
+        rows = [r for r in rows if bool(int(r["printed"] or 0))]
+
     touch_share_used(int(row["id"]))
 
     paired_rows = _pair_visible_file_rows_with_slice_output(rows)
@@ -11991,6 +12463,10 @@ def _share_file_row(token: str, file_id: int, needed: str) -> Tuple[Optional[sql
     file_folder = normalize_folder_path(str(file_row["folder_path"] or ""))
     if not share_folder_allowed(file_folder, folders):
         return None, {"ok": False, "error": "Filen tilhører ikke denne deling"}, share_row, folders
+    if not _share_row_allows_file_id(share_row, int(file_id)):
+        return None, {"ok": False, "error": "Filen er ikke med i denne deling"}, share_row, folders
+    if _share_row_printed_only(share_row) and not bool(int(file_row["printed"] or 0)):
+        return None, {"ok": False, "error": "Filen er ikke markeret som printet"}, share_row, folders
 
     return file_row, None, share_row, folders
 

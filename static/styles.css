@@ -1678,6 +1678,31 @@ input[type="checkbox"] {
   font-variant-numeric: tabular-nums;
 }
 
+.print-ready-table td:nth-child(6) {
+  width: 172px;
+}
+
+.print-ready-status-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(52, 211, 153, 0.65);
+  background: rgba(20, 114, 78, 0.82);
+  color: #e8fff5;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.print-ready-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .print-ready-attachments {
   display: flex;
   align-items: center;

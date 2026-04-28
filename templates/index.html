@@ -480,9 +480,26 @@
     <div class="toolbar">
       <button id="printReadySendBtn" class="btn primary" type="button">Send til print</button>
       <a id="printReadyZipLink" class="btn" href="#" target="_blank" rel="noopener">Download zip fil</a>
-      <a id="printReadyPdfLink" class="btn" href="#" target="_blank" rel="noopener">Download PDF produktions info fil</a>
+      <a id="printReadyPdfLink" class="btn" href="#" target="_blank" rel="noopener">Download PDF produktions info</a>
     </div>
     <div id="printReadyModalStatus" class="status hidden"></div>
+  </div>
+</div>
+
+<div id="smsConfirmModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card">
+    <div class="toolbar">
+      <h3>Send SMS opdatering</h3>
+      <button id="smsConfirmCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <p class="hint">Ønsker du at sende opdateringen på sms?</p>
+    <div id="smsConfirmSummary" class="metadata-current-file">-</div>
+    <div id="smsConfirmStatus" class="status hidden"></div>
+    <div class="toolbar end">
+      <button id="smsConfirmNoBtn" class="btn" type="button">Nej</button>
+      <button id="smsConfirmYesBtn" class="btn primary" type="button">Ja, send SMS</button>
+    </div>
   </div>
 </div>
 

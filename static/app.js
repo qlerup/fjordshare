@@ -85,6 +85,8 @@
     folderPreviewRequestToken: 0,
     modelModalCloseGuardUntil: 0,
     currentPrintReadyProjectId: 0,
+    smsConfirmResolver: null,
+    smsConfirmContext: "",
   };
 
   const els = {
@@ -291,6 +293,12 @@
     printReadyZipLink: document.getElementById("printReadyZipLink"),
     printReadyPdfLink: document.getElementById("printReadyPdfLink"),
     printReadyModalStatus: document.getElementById("printReadyModalStatus"),
+    smsConfirmModal: document.getElementById("smsConfirmModal"),
+    smsConfirmCloseBtn: document.getElementById("smsConfirmCloseBtn"),
+    smsConfirmNoBtn: document.getElementById("smsConfirmNoBtn"),
+    smsConfirmYesBtn: document.getElementById("smsConfirmYesBtn"),
+    smsConfirmSummary: document.getElementById("smsConfirmSummary"),
+    smsConfirmStatus: document.getElementById("smsConfirmStatus"),
     printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
     printReadyStatus: document.getElementById("printReadyStatus"),
     printReadyAdminList: document.getElementById("printReadyAdminList"),
@@ -1448,6 +1456,28 @@
     if (els.printReadyModal) els.printReadyModal.classList.add("hidden");
     showStatus(els.printReadyModalStatus, "");
     state.currentPrintReadyProjectId = 0;
+  }
+
+  function settleSmsConfirmModal(sendSms) {
+    const resolver = state.smsConfirmResolver;
+    state.smsConfirmResolver = null;
+    state.smsConfirmContext = "";
+    if (els.smsConfirmModal) els.smsConfirmModal.classList.add("hidden");
+    showStatus(els.smsConfirmStatus, "");
+    if (typeof resolver === "function") resolver(!!sendSms);
+  }
+
+  function askSmsConfirmation(contextText = "") {
+    if (!els.smsConfirmModal) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      state.smsConfirmResolver = resolve;
+      state.smsConfirmContext = String(contextText || "").trim();
+      if (els.smsConfirmSummary) {
+        els.smsConfirmSummary.textContent = state.smsConfirmContext || "Projekt-opdatering";
+      }
+      showStatus(els.smsConfirmStatus, "");
+      els.smsConfirmModal.classList.remove("hidden");
+    });
   }
 
   function openPrintReadyModal(project) {
@@ -7743,14 +7773,28 @@
   function renderPrintReadyProjectCard(project) {
     const files = Array.isArray(project.files) ? project.files : [];
     const fileCount = Number(project.file_count || files.length || 0);
+    const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
+    const allPrinted = fileCount > 0 && printedCount >= fileCount;
     const qty = Number(project.total_quantity || 0);
     const rows = files.map((file) => `
       <tr>
         <td>${esc(file.display_path || file.folder_path || "-")}</td>
         <td><a href="${esc(file.download_url || "#")}" target="_blank" rel="noopener">${esc(file.filename || "-")}</a></td>
-        <td>${esc(file.note || "-")}</td>
+        <td>
+          ${esc(file.note || "-")}
+          ${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : ""}
+        </td>
         <td>${Number(file.quantity || 1)}</td>
         <td>${printReadyAttachmentHtml(file.attachments)}</td>
+        <td>
+          <div class="print-ready-row-actions">
+            ${
+              file.printed
+                ? `<span class="hint">Færdig</span>`
+                : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
+            }
+          </div>
+        </td>
       </tr>
     `).join("");
     return `
@@ -7759,11 +7803,13 @@
           <div>
             <div class="print-ready-project-title">${esc(project.title || "Klar til print")}</div>
             <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}</div>
+            <div class="hint">Printet: ${printedCount}/${fileCount}</div>
             ${project.selected_summary ? `<div class="hint">${esc(project.selected_summary)}</div>` : ""}
           </div>
           <div class="toolbar">
             <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
-            <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener">Download PDF produktions info fil</a>
+            <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener">Download PDF produktions info</a>
+            <button class="btn small primary" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${allPrinted ? " disabled" : ""}>Projekt færdig</button>
             <button class="btn danger" type="button" data-print-ready-action="cancel" data-id="${Number(project.id || 0)}">Annuller</button>
           </div>
         </div>
@@ -7775,9 +7821,10 @@
               <th>Info</th>
               <th>Antal</th>
               <th>Billeder</th>
+              <th>Handling</th>
             </tr>
           </thead>
-          <tbody>${rows || `<tr><td colspan="5" class="hint">Ingen filer.</td></tr>`}</tbody>
+          <tbody>${rows || `<tr><td colspan="6" class="hint">Ingen filer.</td></tr>`}</tbody>
         </table>
       </article>
     `;
@@ -7796,6 +7843,49 @@
       await api(`/api/admin/print-ready/${id}/cancel`, { method: "POST" });
       showStatus(els.printReadyStatus, "Projekt annulleret.", "ok");
       await loadPrintReadyProjects();
+      return;
+    }
+
+    const project = (Array.isArray(state.printReadyProjects) ? state.printReadyProjects : [])
+      .find((item) => Number(item && item.id ? item.id : 0) === id) || null;
+
+    if (action === "complete-file") {
+      const fileId = Number(btn.dataset.fileId || 0);
+      if (!fileId) return;
+      const sendSms = project && project.sms_available
+        ? await askSmsConfirmation(`Projekt: ${project.title || id} · fil markeres som printet`)
+        : false;
+      const data = await api(`/api/admin/print-ready/${id}/file/${fileId}/complete`, {
+        method: "POST",
+        body: { send_sms: sendSms },
+      });
+      const smsSent = !!(data && data.sms_sent);
+      const smsError = String((data && data.sms_error) || "").trim();
+      const smsTail = sendSms
+        ? (smsSent ? " SMS sendt." : (smsError ? ` SMS fejl: ${smsError}` : " SMS blev ikke sendt."))
+        : "";
+      showStatus(els.printReadyStatus, `Fil markeret som printet.${smsTail}`, sendSms && !smsSent ? "error" : "ok");
+      await loadPrintReadyProjects();
+      await loadFiles();
+      return;
+    }
+
+    if (action === "complete-project") {
+      const sendSms = project && project.sms_available
+        ? await askSmsConfirmation(`Projekt: ${project.title || id} · markeres som færdigprintet`)
+        : false;
+      const data = await api(`/api/admin/print-ready/${id}/complete`, {
+        method: "POST",
+        body: { send_sms: sendSms },
+      });
+      const smsSent = !!(data && data.sms_sent);
+      const smsError = String((data && data.sms_error) || "").trim();
+      const smsTail = sendSms
+        ? (smsSent ? " SMS sendt." : (smsError ? ` SMS fejl: ${smsError}` : " SMS blev ikke sendt."))
+        : "";
+      showStatus(els.printReadyStatus, `Projekt markeret som færdigprintet.${smsTail}`, sendSms && !smsSent ? "error" : "ok");
+      await loadPrintReadyProjects();
+      await loadFiles();
     }
   }
 
@@ -11098,6 +11188,11 @@
         closeSlicerUploadModal();
         return;
       }
+      const smsConfirmModalOpen = !!(els.smsConfirmModal && !els.smsConfirmModal.classList.contains("hidden"));
+      if (smsConfirmModalOpen) {
+        settleSmsConfirmModal(false);
+        return;
+      }
       const printReadyModalOpen = !!(els.printReadyModal && !els.printReadyModal.classList.contains("hidden"));
       if (printReadyModalOpen) {
         closePrintReadyModal();
@@ -11284,6 +11379,22 @@
         sendCurrentPrintReadyProject().catch((err) => {
           showStatus(els.printReadyModalStatus, err.message || "Kunne ikke sende til admin", "error");
         });
+      });
+    }
+    if (els.smsConfirmCloseBtn) {
+      els.smsConfirmCloseBtn.addEventListener("click", () => settleSmsConfirmModal(false));
+    }
+    if (els.smsConfirmNoBtn) {
+      els.smsConfirmNoBtn.addEventListener("click", () => settleSmsConfirmModal(false));
+    }
+    if (els.smsConfirmYesBtn) {
+      els.smsConfirmYesBtn.addEventListener("click", () => settleSmsConfirmModal(true));
+    }
+    if (els.smsConfirmModal) {
+      els.smsConfirmModal.addEventListener("click", (event) => {
+        if (event.target === els.smsConfirmModal || event.target.classList.contains("modal-backdrop")) {
+          settleSmsConfirmModal(false);
+        }
       });
     }
 
