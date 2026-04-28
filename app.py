@@ -8076,17 +8076,28 @@ def _sms_gateway_msisdn(phone_e164: str) -> str:
     return re.sub(r"\D", "", str(phone_e164 or ""))
 
 
-def _send_gateway_sms(*, message: str, recipient_e164: str) -> tuple[bool, str]:
+def _send_gateway_sms(
+    *,
+    message: str,
+    recipient_e164: str,
+    token_override: str = "",
+    sender_override: str = "",
+    ignore_enabled: bool = False,
+) -> tuple[bool, str]:
     settings_data = _load_sms_gateway_settings()
-    if not bool(settings_data.get("enabled")):
+    if not ignore_enabled and not bool(settings_data.get("enabled")):
         return False, "SMS gateway er slået fra i indstillinger"
 
-    token = str(settings_data.get("token") or "").strip()
-    sender = str(settings_data.get("sender") or "").strip()
+    token = str(token_override or settings_data.get("token") or "").strip()
+    sender = str(sender_override or settings_data.get("sender") or "").strip()
     if not token:
         return False, "SMS token mangler"
     if not sender:
         return False, "SMS afsender mangler"
+
+    text = str(message or "").strip()
+    if not text:
+        return False, "SMS besked mangler"
 
     msisdn = _sms_gateway_msisdn(recipient_e164)
     if len(msisdn) < 4:
@@ -8094,7 +8105,7 @@ def _send_gateway_sms(*, message: str, recipient_e164: str) -> tuple[bool, str]:
 
     body = {
         "sender": sender,
-        "message": str(message or "").strip(),
+        "message": text,
         "recipients": [{"msisdn": int(msisdn)}],
     }
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
@@ -11785,6 +11796,82 @@ def api_settings_sms():
             "encryption_active": bool(settings_data.get("encryption_active")),
         }
     )
+
+
+@app.route("/api/settings/sms/token", methods=["DELETE"])
+@login_required
+def api_settings_sms_token():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan nulstille SMS token"}), 403
+
+    set_setting(SMS_SETTING_TOKEN_ENC_KEY, "")
+    set_setting(SMS_SETTING_TOKEN_KEY, "")
+
+    log_activity(
+        kind="settings",
+        action="sms-token-reset",
+        message="SMS gateway token nulstillet",
+        level="info",
+        actor=str(current_user.username or ""),
+        target="sms-gateway",
+    )
+
+    settings_data = _load_sms_gateway_settings()
+    return jsonify(
+        {
+            "ok": True,
+            "enabled": bool(settings_data.get("enabled")),
+            "sender": str(settings_data.get("sender") or ""),
+            "token_configured": bool(settings_data.get("token_configured")),
+            "token_preview": str(settings_data.get("token_preview") or ""),
+            "encryption_active": bool(settings_data.get("encryption_active")),
+        }
+    )
+
+
+@app.route("/api/settings/sms/test", methods=["POST"])
+@login_required
+def api_settings_sms_test():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan sende test-SMS"}), 403
+
+    body = request.get_json(silent=True) or {}
+    recipient_raw = str(body.get("recipient") or "").strip()
+    if not recipient_raw:
+        return jsonify({"ok": False, "error": "Indtast modtager nummer"}), 400
+
+    sender = str(body.get("sender") or "").strip()
+    incoming_token = str(body.get("token") or "").strip()
+    current_settings = _load_sms_gateway_settings()
+    current_token_preview = str(current_settings.get("token_preview") or "").strip()
+    if incoming_token and incoming_token == current_token_preview:
+        incoming_token = ""
+
+    if sender and len(sender) > 32:
+        return jsonify({"ok": False, "error": "Afsender navn må maks være 32 tegn"}), 400
+
+    recipient_e164 = recipient_raw if recipient_raw.startswith("+") else _sms_e164(DEFAULT_SMS_COUNTRY_CODE, recipient_raw)
+    sms_text = "FjordShare test-SMS. Hvis du modtager denne besked, virker GatewayAPI opsætningen."
+    ok, error_text = _send_gateway_sms(
+        message=sms_text,
+        recipient_e164=recipient_e164,
+        token_override=incoming_token,
+        sender_override=sender,
+        ignore_enabled=True,
+    )
+
+    log_activity(
+        kind="sms",
+        action="test-send" if ok else "test-error",
+        message=("Test-SMS sendt" if ok else f"Test-SMS fejl: {error_text}"),
+        level="info" if ok else "error",
+        actor=str(current_user.username or ""),
+        target=_sms_gateway_msisdn(recipient_e164),
+    )
+
+    if ok:
+        return jsonify({"ok": True, "sent": True, "recipient": _sms_gateway_msisdn(recipient_e164)})
+    return jsonify({"ok": False, "sent": False, "error": error_text or "Kunne ikke sende test-SMS"}), 400
 
 
 @app.route("/api/settings/dns/effective", methods=["GET"])

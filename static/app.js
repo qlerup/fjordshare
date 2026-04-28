@@ -313,6 +313,9 @@
     smsGatewayEnabledChk: document.getElementById("smsGatewayEnabledChk"),
     smsGatewaySenderInput: document.getElementById("smsGatewaySenderInput"),
     smsGatewayTokenInput: document.getElementById("smsGatewayTokenInput"),
+    smsTestRecipientInput: document.getElementById("smsTestRecipientInput"),
+    smsTestBtn: document.getElementById("smsTestBtn"),
+    smsResetTokenBtn: document.getElementById("smsResetTokenBtn"),
     smsSaveBtn: document.getElementById("smsSaveBtn"),
     smsStatus: document.getElementById("smsStatus"),
     createUserUsername: document.getElementById("createUserUsername"),
@@ -7918,12 +7921,22 @@
 
   function setSmsSettingsFormState(options = {}) {
     const busy = !!(options && options.busy);
+    const action = String((options && options.action) || "");
     if (els.smsGatewayEnabledChk) els.smsGatewayEnabledChk.disabled = busy;
     if (els.smsGatewaySenderInput) els.smsGatewaySenderInput.disabled = busy;
     if (els.smsGatewayTokenInput) els.smsGatewayTokenInput.disabled = busy;
+    if (els.smsTestRecipientInput) els.smsTestRecipientInput.disabled = busy;
+    if (els.smsTestBtn) {
+      els.smsTestBtn.disabled = busy;
+      els.smsTestBtn.textContent = busy && action === "test" ? "Sender..." : "Send test-SMS";
+    }
+    if (els.smsResetTokenBtn) {
+      els.smsResetTokenBtn.disabled = busy;
+      els.smsResetTokenBtn.textContent = busy && action === "reset" ? "Nulstiller..." : "Nulstil token";
+    }
     if (els.smsSaveBtn) {
       els.smsSaveBtn.disabled = busy;
-      els.smsSaveBtn.textContent = busy ? "Gemmer..." : "Gem SMS";
+      els.smsSaveBtn.textContent = busy && action === "save" ? "Gemmer..." : "Gem SMS";
     }
   }
 
@@ -7996,7 +8009,7 @@
     const token = state.smsGatewayTokenPreviewActive && rawToken === state.smsGatewayTokenPreview ? "" : rawToken;
 
     try {
-      setSmsSettingsFormState({ busy: true });
+      setSmsSettingsFormState({ busy: true, action: "save" });
       const data = await api("/api/settings/sms", {
         method: "POST",
         body: { enabled, sender, token },
@@ -8012,6 +8025,50 @@
       );
     } catch (err) {
       showStatus(els.smsStatus, err.message || "Kunne ikke gemme SMS indstillinger", "error");
+    } finally {
+      setSmsSettingsFormState({ busy: false });
+    }
+  }
+
+  async function resetSmsGatewayToken() {
+    if (state.role !== "admin") return;
+    const ok = window.confirm("Vil du nulstille SMS gateway token? Du skal indsætte og gemme en ny token bagefter.");
+    if (!ok) return;
+    try {
+      setSmsSettingsFormState({ busy: true, action: "reset" });
+      const data = await api("/api/settings/sms/token", { method: "DELETE" });
+      applySmsSettings(data || {});
+      showStatus(els.smsStatus, "SMS token er nulstillet. Indsæt en ny token og gem.", "ok");
+      if (els.smsGatewayTokenInput) els.smsGatewayTokenInput.focus();
+    } catch (err) {
+      showStatus(els.smsStatus, err.message || "Kunne ikke nulstille SMS token", "error");
+    } finally {
+      setSmsSettingsFormState({ busy: false });
+    }
+  }
+
+  async function sendSmsTest() {
+    if (state.role !== "admin") return;
+    const recipient = String((els.smsTestRecipientInput && els.smsTestRecipientInput.value) || "").trim();
+    const sender = String((els.smsGatewaySenderInput && els.smsGatewaySenderInput.value) || "").trim();
+    const rawToken = String((els.smsGatewayTokenInput && els.smsGatewayTokenInput.value) || "").trim();
+    const token = state.smsGatewayTokenPreviewActive && rawToken === state.smsGatewayTokenPreview ? "" : rawToken;
+
+    if (!recipient) {
+      showStatus(els.smsStatus, "Indtast modtager nummer til test-SMS.", "error");
+      if (els.smsTestRecipientInput) els.smsTestRecipientInput.focus();
+      return;
+    }
+
+    try {
+      setSmsSettingsFormState({ busy: true, action: "test" });
+      await api("/api/settings/sms/test", {
+        method: "POST",
+        body: { recipient, sender, token },
+      });
+      showStatus(els.smsStatus, "Test-SMS sendt. Gem SMS hvis du har ændret token eller afsender.", "ok");
+    } catch (err) {
+      showStatus(els.smsStatus, err.message || "Kunne ikke sende test-SMS", "error");
     } finally {
       setSmsSettingsFormState({ busy: false });
     }
@@ -11494,6 +11551,20 @@
         });
       });
     }
+    if (els.smsTestBtn) {
+      els.smsTestBtn.addEventListener("click", () => {
+        sendSmsTest().catch((err) => {
+          showStatus(els.smsStatus, err.message || "Kunne ikke sende test-SMS", "error");
+        });
+      });
+    }
+    if (els.smsResetTokenBtn) {
+      els.smsResetTokenBtn.addEventListener("click", () => {
+        resetSmsGatewayToken().catch((err) => {
+          showStatus(els.smsStatus, err.message || "Kunne ikke nulstille SMS token", "error");
+        });
+      });
+    }
     if (els.smsGatewayEnabledChk) {
       els.smsGatewayEnabledChk.addEventListener("change", () => showStatus(els.smsStatus, ""));
     }
@@ -11507,6 +11578,9 @@
         showStatus(els.smsStatus, "");
       });
       els.smsGatewayTokenInput.addEventListener("blur", restoreSmsTokenPreviewIfEmpty);
+    }
+    if (els.smsTestRecipientInput) {
+      els.smsTestRecipientInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
     }
 
     if (els.createUserBtn) {

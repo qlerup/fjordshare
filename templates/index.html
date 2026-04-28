@@ -302,8 +302,15 @@
               <input id="smsGatewayTokenInput" class="input" type="password" placeholder="Indsæt token">
               <p class="hint">Når token er gemt, vises kun de første tegn. Klik i feltet for at skrive en ny.</p>
             </div>
+            <div>
+              <label for="smsTestRecipientInput">Test modtager</label>
+              <input id="smsTestRecipientInput" class="input" type="tel" placeholder="Fx 4526283119" autocomplete="tel">
+              <p class="hint">Brug internationalt nummer uden plus, eller et dansk 8-cifret nummer.</p>
+            </div>
           </div>
           <div class="toolbar end">
+            <button id="smsResetTokenBtn" class="btn danger" type="button">Nulstil token</button>
+            <button id="smsTestBtn" class="btn" type="button">Send test-SMS</button>
             <button id="smsSaveBtn" class="btn primary" type="button">Gem SMS</button>
           </div>
           <div id="smsStatus" class="status hidden"></div>
