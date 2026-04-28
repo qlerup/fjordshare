@@ -128,6 +128,7 @@ BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK = str(os.getenv("BAMBUSTUDIO_ALLOW_PROFILE_FA
 BAMBUSTUDIO_FAST_PRINTER_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_PRINTER_PROFILE", "Bambu Lab H2S 0.4 nozzle")).strip()
 BAMBUSTUDIO_FAST_PRINT_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_PRINT_PROFILE", "0.20mm Standard @BBL H2S")).strip()
 BAMBUSTUDIO_FAST_FILAMENT_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_FILAMENT_PROFILE", "Bambu ABS @BBL H2S")).strip()
+SLICING_DISABLED = str(os.getenv("SLICING_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
 BAMBUSTUDIO_SLICE_DEBUG_ALWAYS = str(os.getenv("BAMBUSTUDIO_SLICE_DEBUG_ALWAYS", "0")).strip().lower() in {"1", "true", "yes", "on"}
 BAMBUSTUDIO_SLICE_DEBUG_MAX_EVENTS = 400
 try:
@@ -9767,6 +9768,7 @@ def index():
         role=current_user.role,
         home_folder=default_folder,
         daily_folder=daily_folder,
+        slicing_disabled="1" if SLICING_DISABLED else "0",
     )
 
 
@@ -10219,6 +10221,8 @@ def api_slicer_plates():
 def api_file_slice(file_id: int):
     if not current_user.is_admin:
         return jsonify({"ok": False, "error": "Kun admin kan starte slicing"}), 403
+    if SLICING_DISABLED:
+        return jsonify({"ok": False, "error": "Slicing er midlertidigt slået fra"}), 503
 
     body = request.get_json(silent=True) or {}
     fast_slice = bool(parse_bool(body.get("fast_slice")))

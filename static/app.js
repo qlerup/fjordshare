@@ -6,6 +6,8 @@
   const boot = document.getElementById("bootstrap");
   const DEFAULT_SLICE_NOZZLE_DIAMETER = "";
   const DEFAULT_SLICE_NOZZLE_FLOW = "";
+  const SLICE_ACTIONS_DISABLED = String((boot && boot.dataset.slicingDisabled) || "0").trim() === "1";
+  const SLICE_DISABLED_TITLE = "Slicing er midlertidigt slået fra";
   const state = {
     username: (boot && boot.dataset.username) || "",
     role: ((boot && boot.dataset.role) || "user").toLowerCase(),
@@ -1765,12 +1767,13 @@
     }[status];
     if (!meta) return "";
     const fileId = Number(file.id || 0);
-    const disabledAttr = status === "queued" ? "disabled" : "";
+    const disabledAttr = SLICE_ACTIONS_DISABLED || status === "queued" ? "disabled" : "";
+    const titleAttr = SLICE_ACTIONS_DISABLED ? `title="${esc(SLICE_DISABLED_TITLE)}"` : "";
     const action = status === "processing" ? "stop-slice" : "open-slice";
     if (!fileId) {
       return `<span class="file-slice-badge ${meta.cls}">${esc(meta.text)}</span>`;
     }
-    return `<button class="file-slice-badge ${meta.cls}" type="button" data-action="${action}" data-file-id="${fileId}" ${disabledAttr}>${esc(meta.text)}</button>`;
+    return `<button class="file-slice-badge ${meta.cls}" type="button" data-action="${action}" data-file-id="${fileId}" ${disabledAttr} ${titleAttr}>${esc(meta.text)}</button>`;
   }
 
   function sliceButtonLabelForStatus(status) {
@@ -5865,6 +5868,10 @@
   }
 
   async function openSliceModal(fileId) {
+    if (SLICE_ACTIONS_DISABLED) {
+      showStatus(els.uploadStatus, `${SLICE_DISABLED_TITLE}.`, "error");
+      return;
+    }
     const file = fileById(fileId);
     if (!file || !file.can_slice || state.role !== "admin") return;
 
@@ -6238,22 +6245,27 @@
       const isQueued = sliceStatus === "queued";
       const isBusy = sliceStatus === "queued" || sliceStatus === "processing";
       els.fileInfoSliceBtn.classList.toggle("hidden", !canSlice);
-      els.fileInfoSliceBtn.disabled = !canSlice || isQueued;
+      els.fileInfoSliceBtn.disabled = !canSlice || isQueued || SLICE_ACTIONS_DISABLED;
       els.fileInfoSliceBtn.dataset.fileId = String(id);
       els.fileInfoSliceBtn.dataset.sliceStatus = sliceStatus;
-      els.fileInfoSliceBtn.textContent = sliceButtonLabelForStatus(sliceStatus);
+      els.fileInfoSliceBtn.textContent = SLICE_ACTIONS_DISABLED ? "Slice slået fra" : sliceButtonLabelForStatus(sliceStatus);
       const errorMessage = String(file.slice_error || "").trim();
-      if (sliceStatus === "error" && errorMessage) {
+      if (SLICE_ACTIONS_DISABLED) {
+        els.fileInfoSliceBtn.title = SLICE_DISABLED_TITLE;
+      } else if (sliceStatus === "error" && errorMessage) {
         els.fileInfoSliceBtn.title = errorMessage;
       } else {
         els.fileInfoSliceBtn.removeAttribute("title");
       }
       if (els.fileInfoFastSliceBtn) {
         els.fileInfoFastSliceBtn.classList.toggle("hidden", !canSlice);
-        els.fileInfoFastSliceBtn.disabled = !canSlice || isBusy;
+        els.fileInfoFastSliceBtn.disabled = !canSlice || isBusy || SLICE_ACTIONS_DISABLED;
         els.fileInfoFastSliceBtn.dataset.fileId = String(id);
         els.fileInfoFastSliceBtn.dataset.sliceStatus = sliceStatus;
-        if (canSlice && !isBusy) {
+        els.fileInfoFastSliceBtn.textContent = SLICE_ACTIONS_DISABLED ? "Fast slice slået fra" : "Fast slice";
+        if (SLICE_ACTIONS_DISABLED) {
+          els.fileInfoFastSliceBtn.title = SLICE_DISABLED_TITLE;
+        } else if (canSlice && !isBusy) {
           els.fileInfoFastSliceBtn.title = "Starter slicing uden dialog, profiler eller ekstra settings";
         } else {
           els.fileInfoFastSliceBtn.removeAttribute("title");
@@ -6336,6 +6348,10 @@
   async function sliceFileById(fileId, profileSelection = null) {
     const id = Number(fileId || 0);
     if (!id) return;
+    if (SLICE_ACTIONS_DISABLED) {
+      showStatus(els.uploadStatus, `${SLICE_DISABLED_TITLE}.`, "error");
+      return;
+    }
     const profiles = profileSelection && typeof profileSelection === "object" ? profileSelection : {};
     const body = {};
     const printerProfile = String(profiles.printer_profile || "").trim();
@@ -6394,6 +6410,10 @@
   async function fastSliceFileById(fileId) {
     const id = Number(fileId || 0);
     if (!id) return;
+    if (SLICE_ACTIONS_DISABLED) {
+      showStatus(els.uploadStatus, `${SLICE_DISABLED_TITLE}.`, "error");
+      return;
+    }
     const data = await api(`/api/files/${id}/slice`, {
       method: "POST",
       body: { fast_slice: true },
@@ -10371,7 +10391,7 @@
     if (els.fileInfoSliceBtn) {
       els.fileInfoSliceBtn.addEventListener("click", async () => {
         const id = Number((els.fileInfoSliceBtn && els.fileInfoSliceBtn.dataset.fileId) || state.currentInfoFileId || 0);
-        if (!id) return;
+        if (!id || els.fileInfoSliceBtn.disabled || SLICE_ACTIONS_DISABLED) return;
         const status = els.fileInfoSliceBtn.dataset.sliceStatus || "";
         if (status === "processing") {
           try {
@@ -10668,7 +10688,10 @@
     updateSliceToolUi();
 
     if (els.sliceModalStartBtn) {
+      els.sliceModalStartBtn.disabled = SLICE_ACTIONS_DISABLED;
+      if (SLICE_ACTIONS_DISABLED) els.sliceModalStartBtn.title = SLICE_DISABLED_TITLE;
       els.sliceModalStartBtn.addEventListener("click", async () => {
+        if (SLICE_ACTIONS_DISABLED) return;
         const id = Number(state.currentSliceFileId || state.currentInfoFileId || 0);
         if (!id) return;
         let profiles = null;
