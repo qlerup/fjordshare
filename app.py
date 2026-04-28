@@ -106,6 +106,7 @@ SLICER_PROFILE_ALLOWED_CONFIG_EXTS = {".ini", ".cfg", ".conf", ".txt"}
 SLICER_PROFILE_MAX_BYTES = int(str(os.getenv("SLICER_PROFILE_MAX_BYTES", str(5 * 1024 * 1024))) or str(5 * 1024 * 1024))
 SLICER_PLATE_ASSET_DIR = ROOT_DIR / "static" / "slicer-plates"
 SLICER_PLATE_ASSET_ALLOWED_EXTS = {".stl", ".obj", ".glb", ".gltf", ".3mf"}
+PREVIEW_MODELS_DIR = DATA_DIR / "previews"
 
 PERMISSION_RANK = {"view": 1, "upload": 2, "manage": 3}
 RANK_PERMISSION = {v: k for (k, v) in PERMISSION_RANK.items()}
@@ -7113,6 +7114,64 @@ def _convert_step_to_obj(input_path: Path, temp_dir: Path) -> Tuple[Optional[Pat
     return None, last_error or "assimp could not convert STEP file"
 
 
+def _ensure_preview_glb_for_row(file_row: sqlite3.Row) -> Optional[Path]:
+    ext = str(file_row["ext"] or "").lower()
+    file_id = int(file_row["id"])
+    source_path = file_disk_path(file_row)
+    if not source_path.exists() or not source_path.is_file():
+        return None
+
+    # For native GLB/GLTF, just return the original path
+    if ext in {".glb", ".gltf"}:
+        return source_path
+
+    PREVIEW_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    preview_path = PREVIEW_MODELS_DIR / f"preview-{file_id}.glb"
+
+    try:
+        src_mtime = int(source_path.stat().st_mtime)
+    except Exception:
+        src_mtime = 0
+    # Regenerate if preview missing or older than source
+    if not preview_path.exists() or int(preview_path.stat().st_mtime) < src_mtime:
+        # Prepare a loadable mesh path
+        render_source = source_path
+        with tempfile.TemporaryDirectory(prefix="preview-", dir=str(DATA_DIR)) as tmp:
+            tmp_dir = Path(tmp)
+            if ext in {".step", ".stp"}:
+                converted_obj, convert_error = _convert_step_to_obj(source_path, tmp_dir)
+                if not converted_obj:
+                    raise RuntimeError(f"STEP conversion failed: {convert_error}")
+                render_source = converted_obj
+
+            import trimesh
+
+            loaded = trimesh.load(str(render_source), force="mesh")
+            if loaded is None:
+                raise RuntimeError("Preview: unable to load mesh")
+            # Center model around origin for nicer framing in viewer
+            try:
+                bounds = loaded.bounds
+                center = (bounds[0] + bounds[1]) / 2.0
+                loaded.apply_translation(-center)
+            except Exception:
+                pass
+            # Export to GLB using trimesh (requires pygltflib)
+            glb_bytes = loaded.export(file_type="glb")
+            if isinstance(glb_bytes, (bytes, bytearray)):
+                with open(preview_path, "wb") as f:
+                    f.write(glb_bytes)
+            else:
+                # Some versions may return a file path
+                temp_glb = Path(str(glb_bytes))
+                if temp_glb.exists():
+                    temp_glb.replace(preview_path)
+                else:
+                    raise RuntimeError("Preview: glb export failed")
+
+    return preview_path if preview_path.exists() else None
+
+
 def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
     import numpy as np
     import matplotlib
@@ -9202,20 +9261,32 @@ def serialize_file_row(
     is_3d_openable = ext in THREE_D_VIEWER_EXTENSIONS
     can_slice = _supports_slicing_for_ext(ext)
     slice_status = str(row["slice_status"] or "none").strip().lower() or "none"
-    preview_3d_thumbnail = ext in THREE_D_THUMBNAIL_EXTENSIONS
+    # Allow 3D preview via model-viewer for GLB/GLTF natively and for STL/OBJ/STEP via GLB preview
+    preview_3d_thumbnail = ext in THUMBABLE_3D_EXTENSIONS
     thumb_supported = _supports_thumbnail_for_ext(ext)
     thumb_status = str(row["thumb_status"] or "none").strip().lower() or "none"
     thumb_rel = str(row["thumb_rel"] or "").strip()
     has_thumb = bool(thumb_rel)
 
+    preview_model_url = ""
     if share_token:
         content_url = url_for("api_share_file_content", token=share_token, file_id=int(row["id"]))
         download_url = url_for("api_share_file_download", token=share_token, file_id=int(row["id"]))
         thumb_url = url_for("api_share_file_thumb", token=share_token, file_id=int(row["id"])) if has_thumb else ""
+        if preview_3d_thumbnail:
+            if ext in {".glb", ".gltf"}:
+                preview_model_url = content_url
+            else:
+                preview_model_url = url_for("api_share_file_preview_model", token=share_token, file_id=int(row["id"]))
     else:
         content_url = url_for("api_file_content", file_id=int(row["id"]))
         download_url = url_for("api_file_download", file_id=int(row["id"]))
         thumb_url = url_for("api_file_thumb", file_id=int(row["id"])) if has_thumb else ""
+        if preview_3d_thumbnail:
+            if ext in {".glb", ".gltf"}:
+                preview_model_url = content_url
+            else:
+                preview_model_url = url_for("api_file_preview_model", file_id=int(row["id"]))
 
     return {
         "id": int(row["id"]),
@@ -9243,6 +9314,7 @@ def serialize_file_row(
         "is_3d": is_3d,
         "is_3d_openable": is_3d_openable,
         "preview_3d_thumbnail": preview_3d_thumbnail,
+        "preview_model_url": preview_model_url,
         "thumb_supported": bool(thumb_supported),
         "content_url": content_url,
         "download_url": download_url,
@@ -10173,6 +10245,39 @@ def _serve_apple_touch_icon() -> Any:
     if not path.exists():
         return ("", 404)
     return send_file(str(path), mimetype="image/png")
+
+
+@app.get("/api/file/<int:file_id>/preview_model")
+def api_file_preview_model(file_id: int):
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+    if row is None:
+        return jsonify({"ok": False, "error": "File not found"}), 404
+
+    try:
+        path = _ensure_preview_glb_for_row(row)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Preview error: {exc}"}), 500
+    if not path or not path.exists():
+        return jsonify({"ok": False, "error": "Preview not available"}), 404
+    return send_file(str(path), mimetype="model/gltf-binary")
+
+
+@app.get("/api/share/<token>/file/<int:file_id>/preview_model")
+def api_share_file_preview_model(token: str, file_id: int):
+    file_row, err, share_row, _ = _share_file_row(token, file_id, "view")
+    if err is not None:
+        status = 401 if err.get("requires_auth") else 403
+        return jsonify(err), status
+
+    try:
+        path = _ensure_preview_glb_for_row(file_row)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Preview error: {exc}"}), 500
+    if not path or not path.exists():
+        return jsonify({"ok": False, "error": "Preview not available"}), 404
+    touch_share_used(int(share_row["id"]))
+    return send_file(str(path), mimetype="model/gltf-binary")
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"

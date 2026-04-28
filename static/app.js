@@ -2139,7 +2139,8 @@
       return `<img src="${esc(file.thumb_url)}" alt="${esc(file.filename)}" loading="lazy">`;
     }
     if (file.preview_3d_thumbnail) {
-      return `<model-viewer src="${esc(file.content_url)}" camera-controls interaction-prompt="none" disable-pan></model-viewer>`;
+      const src = String(file.preview_model_url || file.content_url || "");
+      return `<model-viewer src="${esc(src)}" camera-controls interaction-prompt="none" disable-pan></model-viewer>`;
     }
     if (String(file.mime_type || "").startsWith("image/")) {
       return `<img src="${esc(file.content_url)}" alt="${esc(file.filename)}" loading="lazy">`;
