@@ -132,7 +132,7 @@ PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl"}
 PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl"
 THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
-THUMB_RENDER_STYLE_VERSION = "7"
+THUMB_RENDER_STYLE_VERSION = "8"
 SLICABLE_3D_EXTENSIONS = {".stl"}
 BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
 BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
@@ -7149,18 +7149,27 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
     ax.set_facecolor((0.06, 0.09, 0.13, 1.0))
     ax.set_axis_off()
 
+    # Single directional light to give a more "solid" look like the viewer.
     light = np.array([0.25, 0.45, 0.85], dtype=float)
     light = light / np.linalg.norm(light)
     safe_normals = np.asarray(normals, dtype=float)
     norm_len = np.linalg.norm(safe_normals, axis=1, keepdims=True)
     safe_normals = safe_normals / np.maximum(norm_len, 1e-9)
-    # Use absolute dot so inconsistent winding does not create random dark patches.
-    intensity = np.clip(np.abs(safe_normals.dot(light)), 0.18, 1.0)
+    # Directional Lambert shading (no abs) for proper light/shadow separation.
+    # Clamp a small ambient floor to avoid fully black faces.
+    intensity = np.clip(safe_normals.dot(light), 0.08, 1.0)
+    # Slight gamma to increase contrast for a more solid appearance.
+    intensity = np.power(intensity, 0.85)
     base_rgb = np.array([0.58, 0.70, 0.86], dtype=float)
-    face_rgb = np.clip((0.42 + 0.58 * intensity[:, None]) * base_rgb, 0.0, 1.0)
+    face_rgb = np.clip((0.35 + 0.65 * intensity[:, None]) * base_rgb, 0.0, 1.0)
     face_rgba = np.concatenate([face_rgb, np.ones((face_rgb.shape[0], 1), dtype=float)], axis=1)
 
     poly = Poly3DCollection(triangles, linewidths=0.0, antialiaseds=False)
+    # Prefer average z-sort for better solidity in mplot3d (best-effort).
+    try:
+        poly.set_zsort("average")
+    except Exception:
+        pass
     poly.set_facecolor(face_rgba)
     poly.set_edgecolor((0.0, 0.0, 0.0, 0.0))
     ax.add_collection3d(poly)
