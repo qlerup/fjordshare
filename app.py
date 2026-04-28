@@ -1842,6 +1842,147 @@ def _run_bambu_with_runtime_fallback(command: list[str], executable: str) -> tup
     return proc, details
 
 
+def _copy_gcode_from_outputdir(output_dir: Path, output_gcode: Path) -> bool:
+    if not output_dir.exists() or not output_dir.is_dir():
+        return False
+    try:
+        candidates = [
+            path
+            for path in output_dir.rglob("*.gcode")
+            if path.is_file() and path.stat().st_size > 0
+        ]
+    except Exception:
+        candidates = []
+    if not candidates:
+        return False
+
+    def _gcode_sort_key(path: Path) -> tuple[int, int, str]:
+        name = path.name.lower()
+        preferred = 0 if name == "plate_1.gcode" else 1
+        try:
+            size_rank = -int(path.stat().st_size)
+        except Exception:
+            size_rank = 0
+        return (preferred, size_rank, name)
+
+    selected = sorted(candidates, key=_gcode_sort_key)[0]
+    output_gcode.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(selected, output_gcode)
+    return output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0
+
+
+def _slice_stl_to_gcode_fast(
+    input_stl: Path,
+    output_gcode: Path,
+    debug_trace: Optional[list[dict[str, Any]]] = None,
+) -> None:
+    if not input_stl.exists() or not input_stl.is_file():
+        raise RuntimeError("STL filen findes ikke på disk")
+
+    executable = _resolve_bambustudio_executable()
+    base_cmd = [executable]
+    _trace: Callable[[str, Optional[dict[str, Any]]], None] = (
+        lambda event, data=None: _record_slice_debug_event(debug_trace, event, data)
+    )
+
+    if BAMBUSTUDIO_CONFIG_PATH:
+        config_path = Path(BAMBUSTUDIO_CONFIG_PATH)
+        if not config_path.exists() or not config_path.is_file():
+            raise RuntimeError(f"BAMBUSTUDIO_CONFIG_PATH findes ikke: {config_path}")
+        base_cmd.extend(["--load", str(config_path)])
+
+    output_dir = output_gcode.parent / f"{output_gcode.stem}.fast-slice-output"
+    attempts: list[tuple[str, list[str], str]] = [
+        (
+            "fast-export-gcode",
+            [*base_cmd, "--export-gcode", "--output", str(output_gcode), str(input_stl)],
+            "gcode",
+        ),
+        (
+            "fast-export-gcode-underscore",
+            [*base_cmd, "--export_gcode", "--output", str(output_gcode), str(input_stl)],
+            "gcode",
+        ),
+        (
+            "fast-slice-outputdir",
+            [*base_cmd, "--slice", "0", "--outputdir", str(output_dir), str(input_stl)],
+            "gcode-dir",
+        ),
+    ]
+    _trace(
+        "fast-slice-input",
+        {
+            "input_stl": str(input_stl),
+            "output_gcode": str(output_gcode),
+            "executable": executable,
+            "uses_config_path": bool(BAMBUSTUDIO_CONFIG_PATH),
+            "attempts": [{"label": label, "mode": mode, "cmd": cmd} for label, cmd, mode in attempts],
+        },
+    )
+
+    errors: list[str] = []
+    for label, cmd, mode in attempts:
+        try:
+            output_gcode.unlink(missing_ok=True)
+            shutil.rmtree(output_dir, ignore_errors=True)
+        except Exception:
+            pass
+        if mode == "gcode-dir":
+            try:
+                output_dir.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+
+        _trace("fast-attempt-start", {"attempt_label": label, "mode": mode, "cmd": cmd})
+        proc, details = _run_bambu_with_runtime_fallback(cmd, executable)
+        details = details.strip()
+        _trace(
+            "fast-attempt-result",
+            {
+                "attempt_label": label,
+                "mode": mode,
+                "returncode": int(proc.returncode),
+                "details": details,
+            },
+        )
+
+        if proc.returncode != 0:
+            errors.append(f"{label} (rc={int(proc.returncode)}): {details[:350]}")
+            continue
+
+        if mode == "gcode":
+            if output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0:
+                _trace(
+                    "fast-slice-success",
+                    {
+                        "source": label,
+                        "mode": mode,
+                        "output_gcode": str(output_gcode),
+                        "output_bytes": int(output_gcode.stat().st_size),
+                    },
+                )
+                return
+            errors.append(f"{label}: kommandoen kørte men lavede ingen G-code output")
+            continue
+
+        if mode == "gcode-dir":
+            if _copy_gcode_from_outputdir(output_dir, output_gcode):
+                _trace(
+                    "fast-slice-success",
+                    {
+                        "source": label,
+                        "mode": mode,
+                        "output_gcode": str(output_gcode),
+                        "output_bytes": int(output_gcode.stat().st_size),
+                        "outputdir": str(output_dir),
+                    },
+                )
+                return
+            errors.append(f"{label}: kommandoen kørte men lavede ingen G-code i outputdir")
+
+    raise RuntimeError("Fast slice fejlede: " + " | ".join(errors[-6:]))
+
+
 def _normalize_profile_token(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
 
@@ -6466,6 +6607,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             raise RuntimeError("Slice canceled by user")
     file_id = int(payload.get("file_id") or 0)
     requested_by = str(payload.get("requested_by") or "").strip()
+    fast_slice = bool(payload.get("fast_slice"))
     printer_profile = str(payload.get("printer_profile") or "").strip()
     print_profile = str(payload.get("print_profile") or "").strip()
     filament_profile = str(payload.get("filament_profile") or "").strip()
@@ -6497,6 +6639,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
         {
             "file_id": file_id,
             "requested_by": requested_by,
+            "fast_slice": bool(fast_slice),
             "printer_profile": printer_profile,
             "print_profile": print_profile,
             "filament_profile": filament_profile,
@@ -6570,28 +6713,35 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
             },
         )
 
-        _slice_stl_to_gcode(
-            source_path,
-            output_path,
-            printer_profile=printer_profile,
-            print_profile=print_profile,
-            filament_profile=filament_profile,
-            rotation_x_degrees=rotation_x_degrees,
-            rotation_y_degrees=rotation_y_degrees,
-            rotation_z_degrees=rotation_z_degrees,
-            lift_z_mm=lift_z_mm,
-            support_mode=support_mode,
-            support_type=support_type,
-            support_style=support_style,
-            nozzle_left_diameter=nozzle_left_diameter,
-            nozzle_right_diameter=nozzle_right_diameter,
-            nozzle_left_flow=nozzle_left_flow,
-            nozzle_right_flow=nozzle_right_flow,
-            bed_width_mm=bed_width_mm,
-            bed_depth_mm=bed_depth_mm,
-            process_overrides=process_overrides,
-            debug_trace=slice_debug_trace,
-        )
+        if fast_slice:
+            _slice_stl_to_gcode_fast(
+                source_path,
+                output_path,
+                debug_trace=slice_debug_trace,
+            )
+        else:
+            _slice_stl_to_gcode(
+                source_path,
+                output_path,
+                printer_profile=printer_profile,
+                print_profile=print_profile,
+                filament_profile=filament_profile,
+                rotation_x_degrees=rotation_x_degrees,
+                rotation_y_degrees=rotation_y_degrees,
+                rotation_z_degrees=rotation_z_degrees,
+                lift_z_mm=lift_z_mm,
+                support_mode=support_mode,
+                support_type=support_type,
+                support_style=support_style,
+                nozzle_left_diameter=nozzle_left_diameter,
+                nozzle_right_diameter=nozzle_right_diameter,
+                nozzle_left_flow=nozzle_left_flow,
+                nozzle_right_flow=nozzle_right_flow,
+                bed_width_mm=bed_width_mm,
+                bed_depth_mm=bed_depth_mm,
+                process_overrides=process_overrides,
+                debug_trace=slice_debug_trace,
+            )
         _record_slice_debug_event(
             slice_debug_trace,
             "worker-slice-complete",
@@ -6742,6 +6892,7 @@ def enqueue_slice_job(
     bed_width_mm: float = 0.0,
     bed_depth_mm: float = 0.0,
     process_overrides: Optional[dict[str, Any]] = None,
+    fast_slice: bool = False,
 ) -> bool:
     fid = int(file_id)
     with SLICE_QUEUE_LOCK:
@@ -6771,6 +6922,7 @@ def enqueue_slice_job(
         {
             "file_id": fid,
             "requested_by": str(requested_by or ""),
+            "fast_slice": bool(fast_slice),
             "printer_profile": str(printer_profile or "").strip(),
             "print_profile": str(print_profile or "").strip(),
             "filament_profile": str(filament_profile or "").strip(),
@@ -9981,6 +10133,7 @@ def api_file_slice(file_id: int):
         return jsonify({"ok": False, "error": "Kun admin kan starte slicing"}), 403
 
     body = request.get_json(silent=True) or {}
+    fast_slice = bool(parse_bool(body.get("fast_slice")))
     printer_profile = str(body.get("printer_profile") or "").strip()[:200]
     print_profile = str(body.get("print_profile") or "").strip()[:200]
     filament_profile = str(body.get("filament_profile") or "").strip()[:200]
@@ -10003,7 +10156,26 @@ def api_file_slice(file_id: int):
     bed_width_mm = _normalize_bed_size_mm(body.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(body.get("bed_depth_mm"))
     process_overrides = _normalize_slice_process_overrides(body.get("process_overrides"))
-    if not _slice_printer_uses_dual_nozzle(f"{printer_profile} {print_profile}"):
+
+    if fast_slice:
+        printer_profile = ""
+        print_profile = ""
+        filament_profile = ""
+        support_mode = "auto"
+        support_type = ""
+        support_style = ""
+        nozzle_left_diameter = ""
+        nozzle_right_diameter = ""
+        nozzle_left_flow = ""
+        nozzle_right_flow = ""
+        print_nozzle = ""
+        rotation_x_degrees = 0.0
+        rotation_y_degrees = 0.0
+        rotation_z_degrees = 0.0
+        bed_width_mm = 0.0
+        bed_depth_mm = 0.0
+        process_overrides = {}
+    elif not _slice_printer_uses_dual_nozzle(f"{printer_profile} {print_profile}"):
         nozzle_right_diameter = ""
         nozzle_right_flow = ""
         print_nozzle = ""
@@ -10030,20 +10202,24 @@ def api_file_slice(file_id: int):
         return jsonify({"ok": True, "queued": True, "already_running": True})
 
     validation_error = ""
-    try:
-        validation_error = _validate_selected_slice_profiles(
-            _resolve_bambustudio_executable(),
-            printer_profile,
-            print_profile,
-            filament_profile,
-        )
-    except Exception as exc:
-        validation_error = f"Kunne ikke validere slicer-profiler: {exc}"
+    if not fast_slice:
+        try:
+            validation_error = _validate_selected_slice_profiles(
+                _resolve_bambustudio_executable(),
+                printer_profile,
+                print_profile,
+                filament_profile,
+            )
+        except Exception as exc:
+            validation_error = f"Kunne ikke validere slicer-profiler: {exc}"
 
     if validation_error:
         return jsonify({"ok": False, "error": validation_error}), 400
 
     profile_details = []
+    if fast_slice:
+        profile_details.append("fast_slice=on")
+        profile_details.append("settings=none")
     if printer_profile:
         profile_details.append(f"printer={printer_profile}")
     if print_profile:
@@ -10107,6 +10283,7 @@ def api_file_slice(file_id: int):
         bed_width_mm=bed_width_mm,
         bed_depth_mm=bed_depth_mm,
         process_overrides=process_overrides,
+        fast_slice=fast_slice,
     )
     return jsonify(
         {
@@ -10131,6 +10308,7 @@ def api_file_slice(file_id: int):
                 "bed_width_mm": bed_width_mm,
                 "bed_depth_mm": bed_depth_mm,
                 "process_overrides": process_overrides,
+                "fast_slice": fast_slice,
             },
         }
     )

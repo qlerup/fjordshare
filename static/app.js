@@ -171,6 +171,7 @@
     fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
     fileInfoSliceDownloadLink: document.getElementById("fileInfoSliceDownloadLink"),
     fileInfoSliceBtn: document.getElementById("fileInfoSliceBtn"),
+    fileInfoFastSliceBtn: document.getElementById("fileInfoFastSliceBtn"),
     fileInfoOpen3DBtn: document.getElementById("fileInfoOpen3DBtn"),
     sliceModal: document.getElementById("sliceModal"),
     sliceModalCloseBtn: document.getElementById("sliceModalCloseBtn"),
@@ -6235,6 +6236,7 @@
       const canSlice = state.role === "admin" && !!file.can_slice;
       const sliceStatus = normalizedSliceStatus(file);
       const isQueued = sliceStatus === "queued";
+      const isBusy = sliceStatus === "queued" || sliceStatus === "processing";
       els.fileInfoSliceBtn.classList.toggle("hidden", !canSlice);
       els.fileInfoSliceBtn.disabled = !canSlice || isQueued;
       els.fileInfoSliceBtn.dataset.fileId = String(id);
@@ -6245,6 +6247,17 @@
         els.fileInfoSliceBtn.title = errorMessage;
       } else {
         els.fileInfoSliceBtn.removeAttribute("title");
+      }
+      if (els.fileInfoFastSliceBtn) {
+        els.fileInfoFastSliceBtn.classList.toggle("hidden", !canSlice);
+        els.fileInfoFastSliceBtn.disabled = !canSlice || isBusy;
+        els.fileInfoFastSliceBtn.dataset.fileId = String(id);
+        els.fileInfoFastSliceBtn.dataset.sliceStatus = sliceStatus;
+        if (canSlice && !isBusy) {
+          els.fileInfoFastSliceBtn.title = "Starter slicing uden dialog, profiler eller ekstra settings";
+        } else {
+          els.fileInfoFastSliceBtn.removeAttribute("title");
+        }
       }
     }
   }
@@ -6374,6 +6387,21 @@
       showStatus(els.uploadStatus, "Slicing kører allerede for filen.", "ok");
     } else {
       showStatus(els.uploadStatus, "Slicing sat i kø.", "ok");
+    }
+    await loadFiles();
+  }
+
+  async function fastSliceFileById(fileId) {
+    const id = Number(fileId || 0);
+    if (!id) return;
+    const data = await api(`/api/files/${id}/slice`, {
+      method: "POST",
+      body: { fast_slice: true },
+    });
+    if (data && data.already_running) {
+      showStatus(els.uploadStatus, "Slicing kører allerede for filen.", "ok");
+    } else {
+      showStatus(els.uploadStatus, "Fast slice sat i kø.", "ok");
     }
     await loadFiles();
   }
@@ -10357,6 +10385,19 @@
         openSliceModal(id).catch((err) => {
           showStatus(els.uploadStatus, err.message || "Kunne ikke åbne slice-dialog", "error");
         });
+      });
+    }
+    if (els.fileInfoFastSliceBtn) {
+      els.fileInfoFastSliceBtn.addEventListener("click", async () => {
+        const id = Number((els.fileInfoFastSliceBtn && els.fileInfoFastSliceBtn.dataset.fileId) || state.currentInfoFileId || 0);
+        if (!id || els.fileInfoFastSliceBtn.disabled) return;
+        try {
+          els.fileInfoFastSliceBtn.disabled = true;
+          await fastSliceFileById(id);
+        } catch (err) {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke starte fast slice", "error");
+          if (els.fileInfoFastSliceBtn) els.fileInfoFastSliceBtn.disabled = false;
+        }
       });
     }
 
