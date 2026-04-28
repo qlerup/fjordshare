@@ -576,6 +576,36 @@
     }
   }
 
+  async function changeMyPassword() {
+    const currentPwd = (els.profileCurrentPwdInput && els.profileCurrentPwdInput.value) || "";
+    const newPwd = (els.profileNewPwdInput && els.profileNewPwdInput.value) || "";
+    if (!currentPwd || !newPwd) {
+      showStatus(els.profilePwdStatus, "Udfyld nuværende og ny kode.", "error");
+      return;
+    }
+    showStatus(els.profilePwdStatus, "Skifter adgangskode...", "");
+    try {
+      await api("/api/me/change-password", { method: "POST", body: { current_password: currentPwd, new_password: newPwd } });
+      if (els.profileCurrentPwdInput) els.profileCurrentPwdInput.value = "";
+      if (els.profileNewPwdInput) els.profileNewPwdInput.value = "";
+      showStatus(els.profilePwdStatus, "Adgangskoden er opdateret.", "ok");
+    } catch (err) {
+      showStatus(els.profilePwdStatus, err.message || "Kunne ikke skifte adgangskode", "error");
+    }
+  }
+
+  async function maybeShowAppOnboarding() {
+    try {
+      const data = await api("/api/me");
+      const user = (data && data.user) || {};
+      if (!user.app_onboarding_seen_v1 && els.appOnboardingModal) {
+        els.appOnboardingModal.classList.remove("hidden");
+      }
+    } catch (err) {
+      // Ignore onboarding on error to not block UI
+    }
+  }
+
   async function saveMyProfile() {
     const smsEnabled = !!(els.profileSmsEnabledChk && els.profileSmsEnabledChk.checked);
     const countryCode = normalizeSmsCountryCodeClient(
@@ -10686,6 +10716,19 @@
       });
     }
 
+    // Change password bindings
+    if (!els.profileChangePwdBtn) els.profileChangePwdBtn = document.getElementById("profileChangePwdBtn");
+    if (!els.profileCurrentPwdInput) els.profileCurrentPwdInput = document.getElementById("profileCurrentPwdInput");
+    if (!els.profileNewPwdInput) els.profileNewPwdInput = document.getElementById("profileNewPwdInput");
+    if (!els.profilePwdStatus) els.profilePwdStatus = document.getElementById("profilePwdStatus");
+    if (els.profileChangePwdBtn) {
+      els.profileChangePwdBtn.addEventListener("click", () => {
+        changeMyPassword().catch((err) => {
+          showStatus(els.profilePwdStatus, err.message || "Kunne ikke skifte adgangskode", "error");
+        });
+      });
+    }
+
     if (els.folderList) {
       els.folderList.addEventListener("click", async (event) => {
         const openBtn = event.target.closest("[data-folder-open]");
@@ -11996,6 +12039,28 @@
         }
       });
     }
+    // App onboarding modal elements/bindings
+    if (!els.appOnboardingModal) els.appOnboardingModal = document.getElementById("appOnboardingModal");
+    if (!els.appOnboardingCloseBtn) els.appOnboardingCloseBtn = document.getElementById("appOnboardingCloseBtn");
+    if (!els.appOnboardingDontShowBtn) els.appOnboardingDontShowBtn = document.getElementById("appOnboardingDontShowBtn");
+    if (els.appOnboardingModal) {
+      els.appOnboardingModal.addEventListener("click", (event) => {
+        if (event.target === els.appOnboardingModal || event.target.classList.contains("modal-backdrop")) {
+          els.appOnboardingModal.classList.add("hidden");
+        }
+      });
+    }
+    if (els.appOnboardingCloseBtn) {
+      els.appOnboardingCloseBtn.addEventListener("click", () => {
+        if (els.appOnboardingModal) els.appOnboardingModal.classList.add("hidden");
+      });
+    }
+    if (els.appOnboardingDontShowBtn) {
+      els.appOnboardingDontShowBtn.addEventListener("click", async () => {
+        try { await api("/api/me/onboarding/seen", { method: "POST" }); } catch (_) {}
+        if (els.appOnboardingModal) els.appOnboardingModal.classList.add("hidden");
+      });
+    }
     bindSlicerUploadModalDropZone();
     bindSlicerProfileCardDropZones();
   }
@@ -12019,6 +12084,7 @@
       setSettingsTab("shares");
     }
     setTab("files");
+    await maybeShowAppOnboarding();
     await maybeShowSmsOnboarding();
   }
 

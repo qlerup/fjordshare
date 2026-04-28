@@ -653,8 +653,12 @@ def _ensure_storage_dirs() -> None:
     SLICER_PROFILE_PRINT_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_FILAMENT_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    _migrate_legacy_slicer_profile_files()
-    _normalize_existing_uploaded_profile_json_files()
+        # App onboarding prompt flag (generic, non-SMS)
+        if "app_onboarding_seen_v1" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0")
+        conn.execute("UPDATE users SET app_onboarding_seen_v1=COALESCE(app_onboarding_seen_v1, 0)")
+        _migrate_legacy_slicer_profile_files()
+        _normalize_existing_uploaded_profile_json_files()
 
 
 def _run_startup_preflight() -> None:
@@ -7926,6 +7930,11 @@ def init_db() -> None:
         )
         conn.execute("UPDATE users SET sms_phone_number='' WHERE sms_phone_number IS NULL")
 
+        # Generic app onboarding flag (first-login guide)
+        if "app_onboarding_seen_v1" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0")
+        conn.execute("UPDATE users SET app_onboarding_seen_v1=COALESCE(app_onboarding_seen_v1, 0)")
+
         project_cols = [r[1] for r in conn.execute("PRAGMA table_info(print_ready_projects)").fetchall()]
         if "owner_home_folder" not in project_cols:
             conn.execute("ALTER TABLE print_ready_projects ADD COLUMN owner_home_folder TEXT NOT NULL DEFAULT ''")
@@ -10459,6 +10468,50 @@ def index():
     )
 
 
+@app.post("/api/me/change-password")
+@login_required
+def api_me_change_password():
+    body = request.get_json(silent=True) or {}
+    current_pwd = str(body.get("current_password") or "")
+    new_pwd = str(body.get("new_password") or "")
+    if len(new_pwd) < 4:
+        return jsonify({"ok": False, "error": "Ny adgangskode skal være mindst 4 tegn"}), 400
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT password_hash FROM users WHERE id=?", (int(current_user.id),)).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Bruger findes ikke"}), 404
+        if not check_password_hash(str(row["password_hash"]), current_pwd):
+            return jsonify({"ok": False, "error": "Nuværende adgangskode er forkert"}), 400
+        conn.execute(
+            "UPDATE users SET password_hash=?, updated_at=? WHERE id=?",
+            (generate_password_hash(new_pwd), now_iso(), int(current_user.id)),
+        )
+        conn.commit()
+
+    log_activity(
+        kind="user",
+        action="change-password",
+        message="Adgangskode opdateret",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=str(current_user.username or ""),
+    )
+    return jsonify({"ok": True})
+
+
+@app.post("/api/me/onboarding/seen")
+@login_required
+def api_me_onboarding_seen():
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE users SET app_onboarding_seen_v1=1 WHERE id=?",
+            (int(current_user.id),),
+        )
+        conn.commit()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/me")
 @login_required
 def api_me():
@@ -10469,6 +10522,12 @@ def api_me():
         except Exception:
             daily_folder = ""
     sms_profile = _load_user_sms_profile(int(current_user.id))
+    with closing(get_conn()) as conn:
+        r = conn.execute(
+            "SELECT COALESCE(app_onboarding_seen_v1,0) AS seen FROM users WHERE id=?",
+            (int(current_user.id),),
+        ).fetchone()
+    app_onboarding_seen = bool(int(r["seen"]) if r else 0)
     return jsonify(
         {
             "ok": True,
@@ -10478,6 +10537,7 @@ def api_me():
                 "role": str(current_user.role),
                 "home_folder": normalize_folder_path(str(current_user.home_folder or "")),
                 "daily_folder": daily_folder,
+                "app_onboarding_seen_v1": app_onboarding_seen,
                 "sms_enabled": bool(sms_profile.get("sms_enabled")),
                 "sms_phone_country_code": str(sms_profile.get("sms_phone_country_code") or ""),
                 "sms_phone_number": str(sms_profile.get("sms_phone_number") or ""),
