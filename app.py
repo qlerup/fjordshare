@@ -125,6 +125,9 @@ BAMBUSTUDIO_FILAMENT_PROFILES = str(os.getenv("BAMBUSTUDIO_FILAMENT_PROFILES", "
 BAMBUSTUDIO_LOAD_SETTINGS = str(os.getenv("BAMBUSTUDIO_LOAD_SETTINGS", "")).strip()
 BAMBUSTUDIO_LOAD_FILAMENTS = str(os.getenv("BAMBUSTUDIO_LOAD_FILAMENTS", "")).strip()
 BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK = str(os.getenv("BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK", "0")).strip().lower() in {"1", "true", "yes", "on"}
+BAMBUSTUDIO_FAST_PRINTER_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_PRINTER_PROFILE", "Bambu Lab H2S 0.4 nozzle")).strip()
+BAMBUSTUDIO_FAST_PRINT_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_PRINT_PROFILE", "0.20mm Standard @BBL H2S")).strip()
+BAMBUSTUDIO_FAST_FILAMENT_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_FILAMENT_PROFILE", "Bambu ABS @BBL H2S")).strip()
 BAMBUSTUDIO_SLICE_DEBUG_ALWAYS = str(os.getenv("BAMBUSTUDIO_SLICE_DEBUG_ALWAYS", "0")).strip().lower() in {"1", "true", "yes", "on"}
 BAMBUSTUDIO_SLICE_DEBUG_MAX_EVENTS = 400
 try:
@@ -1898,24 +1901,47 @@ def _slice_stl_to_gcode_fast(
             raise RuntimeError(f"Slicer config-fil findes ikke: {config_path}")
         config_load_args = ["--load", str(config_path)]
 
-    auto_profile_args: list[str] = []
+    h2s_profile_args: list[str] = []
     try:
-        auto_profile_args = _build_modern_profile_args(
+        h2s_profile_args = _build_modern_profile_args(
             executable,
-            "",
-            "",
-            "",
+            BAMBUSTUDIO_FAST_PRINTER_PROFILE,
+            BAMBUSTUDIO_FAST_PRINT_PROFILE,
+            BAMBUSTUDIO_FAST_FILAMENT_PROFILE,
             prefer_uploaded=False,
-            auto_pick_when_blank=True,
+            auto_pick_when_blank=False,
             process_overrides={},
             preferred_extruder_id_hint=0,
         )
     except Exception as exc:
-        _trace("fast-auto-profile-error", {"error": str(exc)})
+        _trace(
+            "fast-h2s-profile-error",
+            {
+                "printer_profile": BAMBUSTUDIO_FAST_PRINTER_PROFILE,
+                "print_profile": BAMBUSTUDIO_FAST_PRINT_PROFILE,
+                "filament_profile": BAMBUSTUDIO_FAST_FILAMENT_PROFILE,
+                "error": str(exc),
+            },
+        )
 
     output_dir = output_gcode.parent / f"{output_gcode.stem}.fast-slice-output"
     temp_3mf = output_gcode.with_suffix(".fast-slice.gcode.3mf")
     attempts: list[tuple[str, list[str], str]] = []
+    if h2s_profile_args:
+        attempts.extend(
+            [
+                (
+                    "fast-h2s-outputdir",
+                    [*base_cmd, "--slice", "0", *h2s_profile_args, "--outputdir", str(output_dir), str(input_stl)],
+                    "gcode-dir",
+                ),
+                (
+                    "fast-h2s-3mf",
+                    [*base_cmd, "--slice", "0", *h2s_profile_args, "--export-3mf", str(temp_3mf), str(input_stl)],
+                    "3mf",
+                ),
+            ]
+        )
     if config_load_args:
         attempts.append(
             (
@@ -1923,21 +1949,6 @@ def _slice_stl_to_gcode_fast(
                 [*base_cmd, *config_load_args, "--slice", "0", "--outputdir", str(output_dir), str(input_stl)],
                 "gcode-dir",
             )
-        )
-    if auto_profile_args:
-        attempts.extend(
-            [
-                (
-                    "fast-auto-profile-outputdir",
-                    [*base_cmd, "--slice", "0", *auto_profile_args, "--outputdir", str(output_dir), str(input_stl)],
-                    "gcode-dir",
-                ),
-                (
-                    "fast-auto-profile-3mf",
-                    [*base_cmd, "--slice", "0", *auto_profile_args, "--export-3mf", str(temp_3mf), str(input_stl)],
-                    "3mf",
-                ),
-            ]
         )
     attempts.append(
         (
@@ -1953,7 +1964,10 @@ def _slice_stl_to_gcode_fast(
             "output_gcode": str(output_gcode),
             "executable": executable,
             "config_path": config_path_text,
-            "auto_profile_args": auto_profile_args,
+            "fast_printer_profile": BAMBUSTUDIO_FAST_PRINTER_PROFILE,
+            "fast_print_profile": BAMBUSTUDIO_FAST_PRINT_PROFILE,
+            "fast_filament_profile": BAMBUSTUDIO_FAST_FILAMENT_PROFILE,
+            "h2s_profile_args": h2s_profile_args,
             "attempts": [{"label": label, "mode": mode, "cmd": cmd} for label, cmd, mode in attempts],
         },
     )
@@ -10282,6 +10296,12 @@ def api_file_slice(file_id: int):
     if fast_slice:
         profile_details.append("fast_slice=on")
         profile_details.append("ui_settings=none")
+        if BAMBUSTUDIO_FAST_PRINTER_PROFILE:
+            profile_details.append(f"fast_printer={BAMBUSTUDIO_FAST_PRINTER_PROFILE}")
+        if BAMBUSTUDIO_FAST_PRINT_PROFILE:
+            profile_details.append(f"fast_print={BAMBUSTUDIO_FAST_PRINT_PROFILE}")
+        if BAMBUSTUDIO_FAST_FILAMENT_PROFILE:
+            profile_details.append(f"fast_filament={BAMBUSTUDIO_FAST_FILAMENT_PROFILE}")
     if printer_profile:
         profile_details.append(f"printer={printer_profile}")
     if print_profile:
