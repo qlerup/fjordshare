@@ -1926,7 +1926,19 @@ def _slice_stl_to_gcode_fast(
 
     output_dir = output_gcode.parent / f"{output_gcode.stem}.fast-slice-output"
     temp_3mf = output_gcode.with_suffix(".fast-slice.gcode.3mf")
-    attempts: list[tuple[str, list[str], str]] = []
+    legacy_cmd = [*base_cmd, *config_load_args]
+    attempts: list[tuple[str, list[str], str]] = [
+        (
+            "fast-legacy-export-gcode",
+            [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(input_stl)],
+            "gcode",
+        ),
+        (
+            "fast-legacy-export-gcode-underscore",
+            [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(input_stl)],
+            "gcode",
+        ),
+    ]
     if h2s_profile_args:
         attempts.extend(
             [

@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Europe/Copenhagen
 
 ARG TUS_JS_VERSION=4.2.3
-ARG BAMBUSTUDIO_APPIMAGE_URL=
+ARG BAMBUSTUDIO_APPIMAGE_URL=https://github.com/bambulab/BambuStudio/releases/download/v02.06.00.51/BambuStudio_ubuntu-22.04-v02.06.00.51-20260417160415.AppImage
 ARG BAMBUSTUDIO_RELEASES_API=https://api.github.com/repos/bambulab/BambuStudio/releases/latest
 ARG BAMBUSTUDIO_STRICT_LIB_CHECK=0
 
@@ -26,6 +26,7 @@ RUN set -eux; \
         libdbus-1-3 \
         libdrm2 \
         libegl1 \
+        libegl-mesa0 \
         libfontconfig1 \
         libfreetype6 \
         libgbm1 \
@@ -34,6 +35,7 @@ RUN set -eux; \
         libgstreamer1.0-0 \
         libglu1-mesa \
         libgtk-3-0 \
+        libgl1-mesa-dri \
         libosmesa6 \
         libpangoft2-1.0-0 \
         libgl1 \
@@ -72,7 +74,9 @@ RUN set -eux; \
         libxkbcommon0 \
         libxrandr2 \
         libxrender1 \
-        assimp-utils; \
+        assimp-utils \
+        xvfb \
+        xauth; \
     pick_first_available() { \
         for pkg in "$@"; do \
             candidate="$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"; \
@@ -242,12 +246,51 @@ RUN set -eux; \
             exit 1; \
         fi; \
     fi; \
-    ln -sf /opt/bambu-studio/appdir/AppRun /usr/local/bin/bambu-studio; \
-    ln -sf /usr/local/bin/bambu-studio /usr/local/bin/BambuStudio; \
+    ln -sf /opt/bambu-studio/appdir/AppRun /usr/local/bin/bambu-studio-apprun; \
     if [ -f /opt/bambu-studio/appdir/bin/bambu-studio-console ]; then \
-        ln -sf /opt/bambu-studio/appdir/bin/bambu-studio-console /usr/local/bin/bambu-studio-console; \
-        ln -sf /usr/local/bin/bambu-studio-console /usr/local/bin/BambuStudio-console; \
+        ln -sf /opt/bambu-studio/appdir/bin/bambu-studio-console /usr/local/bin/bambu-studio-console-raw; \
     fi; \
+    printf '%s\n' \
+        '#!/bin/sh' \
+        'set -eu' \
+        'export HOME="${HOME:-/tmp}"' \
+        'export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/runtime-bambu}"' \
+        'mkdir -p "$XDG_RUNTIME_DIR"' \
+        'chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true' \
+        'export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"' \
+        'export QT_X11_NO_MITSHM="${QT_X11_NO_MITSHM:-1}"' \
+        'export GDK_BACKEND="${GDK_BACKEND:-x11}"' \
+        'export NO_AT_BRIDGE="${NO_AT_BRIDGE:-1}"' \
+        'run_bambu() {' \
+        '    target="$1"' \
+        '    shift' \
+        '    if command -v xvfb-run >/dev/null 2>&1; then' \
+        '        xvfb-run -a -s "-screen 0 1280x1024x24 +extension GLX +render" "$target" "$@"' \
+        '    else' \
+        '        "$target" "$@"' \
+        '    fi' \
+        '}' \
+        'primary="/opt/bambu-studio/appdir/bin/bambu-studio-console"' \
+        'secondary="/opt/bambu-studio/appdir/AppRun"' \
+        'if [ ! -x "$primary" ]; then primary="$secondary"; secondary=""; fi' \
+        'set +e' \
+        'run_bambu "$primary" "$@"' \
+        'code="$?"' \
+        'set -e' \
+        'case "$code" in 134|136|139)' \
+        '    if [ -n "$secondary" ] && [ -x "$secondary" ]; then' \
+        '        run_bambu "$secondary" "$@"' \
+        '        exit "$?"' \
+        '    fi' \
+        '    ;;' \
+        'esac' \
+        'exit "$code"' \
+        > /usr/local/bin/bambu-studio-cli; \
+    chmod +x /usr/local/bin/bambu-studio-cli; \
+    ln -sf /usr/local/bin/bambu-studio-cli /usr/local/bin/bambu-studio; \
+    ln -sf /usr/local/bin/bambu-studio-cli /usr/local/bin/BambuStudio; \
+    ln -sf /usr/local/bin/bambu-studio-cli /usr/local/bin/bambu-studio-console; \
+    ln -sf /usr/local/bin/bambu-studio-cli /usr/local/bin/BambuStudio-console; \
     rm -f /opt/bambu-studio/BambuStudio.AppImage; \
     rm -rf /var/lib/apt/lists/*
 
