@@ -3037,6 +3037,11 @@ def _build_modern_profile_args(
 
     def _desired_filament_slots() -> int:
         if not explicit_filament_mapping_overrides:
+            # When the user has picked one H2D nozzle, keep the loaded filament
+            # list to the single active material. Duplicating the profile into
+            # both slots can make Bambu's multi-extruder mapper reject the job.
+            if preferred_extruder_id > 0 and override_extruders <= 1:
+                return 1
             return required_extruders
         if mapping_slot_count > 0:
             return max(1, mapping_slot_count)
@@ -5252,7 +5257,9 @@ def _slice_stl_to_gcode(
             )
             has_filament_mapping_error = any(
                 ("some filaments can not be mapped under auto mode for multi extruder printer" in err)
+                or ("some filaments can not be mapped under manual mode for multi extruder printer" in err)
                 or ("cannot be mapped to correct extruders for multi-extruder printer" in err)
+                or (("can not be printed on extruder" in err) and ("multi extruder printer" in err))
                 for err in errors_lower
             )
             has_process_compat_error = any(
@@ -5504,10 +5511,6 @@ def _slice_stl_to_gcode(
                         },
                     )
                     errors.append(f"manual-filament-map-fallback: {manual_map_text[:350]}")
-                    # Deterministic stop:
-                    # If explicit manual mapping still fails, downstream fallback
-                    # branches only add noise and do not resolve the root cause.
-                    raise RuntimeError(manual_map_text) from manual_map_exc
 
             should_retry_single_extruder_direct = (
                 allow_support_override_fallback
@@ -5680,7 +5683,12 @@ def _slice_stl_to_gcode(
                     )
                     retry_auto_has_filament_mapping_error = (
                         ("some filaments can not be mapped under auto mode for multi extruder printer" in retry_process_auto_text_lower)
+                        or ("some filaments can not be mapped under manual mode for multi extruder printer" in retry_process_auto_text_lower)
                         or ("cannot be mapped to correct extruders for multi-extruder printer" in retry_process_auto_text_lower)
+                        or (
+                            ("can not be printed on extruder" in retry_process_auto_text_lower)
+                            and ("multi extruder printer" in retry_process_auto_text_lower)
+                        )
                     )
                     retry_auto_has_process_compat_error = ("process not compatible with printer" in retry_process_auto_text_lower)
                     _trace(
