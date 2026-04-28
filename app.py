@@ -5043,7 +5043,36 @@ def _slice_stl_to_gcode(
         )
 
         temp_3mf = output_gcode.with_suffix(".gcode.3mf")
+        direct_gcode_dir = output_gcode.parent / f"{output_gcode.stem}.slice-output"
         enable_modern_underscore_variant = True
+
+        def _adopt_direct_gcode_output() -> bool:
+            if not direct_gcode_dir.exists() or not direct_gcode_dir.is_dir():
+                return False
+            try:
+                candidates = [
+                    path
+                    for path in direct_gcode_dir.rglob("*.gcode")
+                    if path.is_file() and path.stat().st_size > 0
+                ]
+            except Exception:
+                candidates = []
+            if not candidates:
+                return False
+
+            def _gcode_sort_key(path: Path) -> tuple[int, int, str]:
+                name = path.name.lower()
+                preferred = 0 if name == "plate_1.gcode" else 1
+                try:
+                    size_rank = -int(path.stat().st_size)
+                except Exception:
+                    size_rank = 0
+                return (preferred, size_rank, name)
+
+            selected = sorted(candidates, key=_gcode_sort_key)[0]
+            output_gcode.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(selected, output_gcode)
+            return output_gcode.exists() and output_gcode.is_file() and output_gcode.stat().st_size > 0
 
         def _build_attempts(slice_input_path: Path) -> list[tuple[str, list[str], str]]:
             attempts: list[tuple[str, list[str], str]] = []
@@ -5064,6 +5093,13 @@ def _slice_stl_to_gcode(
                     ]
                 )
 
+            attempts.append(
+                (
+                    "modern-gcode-outputdir",
+                    [*modern_base, "--outputdir", str(direct_gcode_dir), str(slice_input_path)],
+                    "gcode-dir",
+                )
+            )
             attempts.extend(
                 [
                     (
@@ -5144,8 +5180,14 @@ def _slice_stl_to_gcode(
                 try:
                     output_gcode.unlink(missing_ok=True)
                     temp_3mf.unlink(missing_ok=True)
+                    shutil.rmtree(direct_gcode_dir, ignore_errors=True)
                 except Exception:
                     pass
+                if mode == "gcode-dir":
+                    try:
+                        direct_gcode_dir.mkdir(parents=True, exist_ok=True)
+                    except Exception:
+                        pass
 
                 _trace(
                     "attempt-start",
@@ -5234,6 +5276,22 @@ def _slice_stl_to_gcode(
                         )
                         return
                     errors.append(f"{candidate_label}/{label}: kommandoen kørte men lavede ingen G-code output")
+                    continue
+
+                if mode == "gcode-dir":
+                    if _adopt_direct_gcode_output():
+                        _trace(
+                            "slice-success",
+                            {
+                                "source": f"{candidate_label}/{label}",
+                                "mode": mode,
+                                "output_gcode": str(output_gcode),
+                                "output_bytes": int(output_gcode.stat().st_size),
+                                "outputdir": str(direct_gcode_dir),
+                            },
+                        )
+                        return
+                    errors.append(f"{candidate_label}/{label}: kommandoen kørte men lavede ingen G-code i outputdir")
                     continue
 
                 if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
@@ -5740,7 +5798,7 @@ def _slice_stl_to_gcode(
                         or has_process_compat_error
                         or retry_auto_has_filament_mapping_error
                         or retry_auto_has_process_compat_error
-                    ) and not is_h2d_profile:
+                    ) and is_multi_extruder_profile and not is_h2d_profile:
                         forced_overrides = dict(normalized_process_overrides)
                         try:
                             # Preserve preferred print nozzle if present
