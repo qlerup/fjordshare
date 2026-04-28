@@ -3156,6 +3156,18 @@ def _normalize_slice_print_nozzle(value: Any) -> str:
     return ""
 
 
+def _slice_printer_uses_dual_nozzle(profile_name: Any) -> bool:
+    raw = str(profile_name or "").strip().lower()
+    if not raw:
+        return False
+    compact = re.sub(r"[^a-z0-9]+", "", raw)
+    if "h2d" in compact or "idex" in compact:
+        return True
+    if "dualnozzle" in compact or "dualextruder" in compact:
+        return True
+    return bool(re.search(r"\bdual\b", raw) and re.search(r"\b(nozzle|extruder)\b", raw))
+
+
 def _normalize_slice_process_overrides(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return {}
@@ -4649,6 +4661,11 @@ def _slice_stl_to_gcode(
     if normalized_nozzle_right_flow and not normalized_nozzle_left_flow:
         normalized_nozzle_left_flow = normalized_nozzle_right_flow
     normalized_process_overrides = _normalize_slice_process_overrides(process_overrides or {})
+    if not _slice_printer_uses_dual_nozzle(f"{printer_profile_value} {print_profile_value}"):
+        normalized_nozzle_right_diameter = ""
+        normalized_nozzle_right_flow = ""
+        normalized_process_overrides.pop("print_extruder_id", None)
+        normalized_process_overrides.pop("printer_extruder_id", None)
 
     def _build_cli_override_args(overrides: dict[str, Any]) -> list[str]:
         if not isinstance(overrides, dict) or not overrides:
@@ -9928,6 +9945,12 @@ def api_file_slice(file_id: int):
     bed_width_mm = _normalize_bed_size_mm(body.get("bed_width_mm"))
     bed_depth_mm = _normalize_bed_size_mm(body.get("bed_depth_mm"))
     process_overrides = _normalize_slice_process_overrides(body.get("process_overrides"))
+    if not _slice_printer_uses_dual_nozzle(f"{printer_profile} {print_profile}"):
+        nozzle_right_diameter = ""
+        nozzle_right_flow = ""
+        print_nozzle = ""
+        process_overrides.pop("print_extruder_id", None)
+        process_overrides.pop("printer_extruder_id", None)
     if print_nozzle:
         process_overrides = dict(process_overrides)
         process_overrides["print_extruder_id"] = 2 if print_nozzle == "right" else 1

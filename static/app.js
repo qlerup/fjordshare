@@ -1991,6 +1991,16 @@
     return "";
   }
 
+  function slicePrinterUsesDualNozzle(name = "") {
+    const raw = String(name || "").toLowerCase();
+    const compact = raw.replace(/[^a-z0-9]+/g, "");
+    if (!compact) return false;
+    if (compact.includes("h2d")) return true;
+    if (compact.includes("idex")) return true;
+    if (compact.includes("dualnozzle") || compact.includes("dualextruder")) return true;
+    return /\bdual\b/.test(raw) && /\b(nozzle|extruder)\b/.test(raw);
+  }
+
   function sliceProfileNozzleMmFromName(name = "") {
     const text = String(name || "");
     const match = text.match(/([0-9]+(?:[.,][0-9]+)?)\s*nozzle\b/i);
@@ -2069,6 +2079,37 @@
     renderSliceSelect(els.sliceFilamentProfileSelect, filteredFilaments, placeholder, !hasMatches);
     setSliceSelectValue(els.sliceFilamentProfileSelect, preferredValue || currentValue);
     ensureSliceSelectHasValue(els.sliceFilamentProfileSelect);
+  }
+
+  function updateSliceNozzleUiForSelectedPrinter() {
+    const printerName = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || "");
+    const usesDualNozzle = slicePrinterUsesDualNozzle(printerName);
+    const rightNozzleCol = els.sliceNozzleRightDiameterSelect
+      ? els.sliceNozzleRightDiameterSelect.closest(".slice-nozzle-col")
+      : null;
+    const leftNozzleCol = els.sliceNozzleLeftDiameterSelect
+      ? els.sliceNozzleLeftDiameterSelect.closest(".slice-nozzle-col")
+      : null;
+    const leftTitle = leftNozzleCol ? leftNozzleCol.querySelector(".slice-nozzle-col-title") : null;
+
+    if (leftTitle) leftTitle.textContent = usesDualNozzle ? "Left nozzle" : "Nozzle";
+    if (rightNozzleCol) rightNozzleCol.classList.toggle("hidden", !usesDualNozzle);
+
+    [els.sliceNozzleRightDiameterSelect, els.sliceNozzleRightFlowSelect].forEach((selectEl) => {
+      if (!selectEl) return;
+      selectEl.disabled = !usesDualNozzle;
+      if (!usesDualNozzle) selectEl.value = "";
+    });
+
+    if (!usesDualNozzle) {
+      state.lastSliceSelection.print_nozzle = "";
+      state.lastSliceSelection.nozzle_right_diameter = "";
+      state.lastSliceSelection.nozzle_right_flow = "";
+      if (state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object") {
+        delete state.sliceProcessSettingsOverrides.print_extruder_id;
+        delete state.sliceProcessSettingsOverrides.printer_extruder_id;
+      }
+    }
   }
 
   function normalizeSliceBedSize(candidate) {
@@ -5893,6 +5934,7 @@
       ensureSliceSelectHasValue(els.slicePrinterSelect);
       applySlicePrintProfileFilterForSelectedPrinter(state.lastSliceSelection.print_profile);
       applySliceFilamentFilterForSelectedPrinter(state.lastSliceSelection.filament_profile);
+      updateSliceNozzleUiForSelectedPrinter();
       syncSliceProcessProfileSelectFromMain();
       if (!String((els.sliceProcessProfileSelect && els.sliceProcessProfileSelect.value) || "").trim()) {
         const firstExplicitProcessProfile = firstNonEmptySliceSelectValue(els.sliceProcessProfileSelect)
@@ -5960,6 +6002,7 @@
       showStatus(els.sliceModalStatus, err.message || "Kunne ikke hente slice-profiler", "error");
       if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
       refreshSlicePreviewBedFromSelection();
+      updateSliceNozzleUiForSelectedPrinter();
       if (els.sliceProcessSettingsMeta) {
         els.sliceProcessSettingsMeta.textContent = "Kunne ikke indlæse process settings.";
       }
@@ -5981,11 +6024,18 @@
     const support_mode = normalizeSliceSupportMode((els.sliceSupportModeSelect && els.sliceSupportModeSelect.value) || "auto");
     const support_type = support_mode === "on" ? normalizeSliceSupportType((els.sliceSupportTypeSelect && els.sliceSupportTypeSelect.value) || "") : "";
     const support_style = support_mode === "on" ? normalizeSliceSupportStyle((els.sliceSupportStyleSelect && els.sliceSupportStyleSelect.value) || "") : "";
+    const usesDualNozzle = slicePrinterUsesDualNozzle(printer_profile);
     const nozzle_left_diameter = normalizeSliceNozzleDiameter((els.sliceNozzleLeftDiameterSelect && els.sliceNozzleLeftDiameterSelect.value) || "");
-    const nozzle_right_diameter = normalizeSliceNozzleDiameter((els.sliceNozzleRightDiameterSelect && els.sliceNozzleRightDiameterSelect.value) || "");
+    const nozzle_right_diameter = usesDualNozzle
+      ? normalizeSliceNozzleDiameter((els.sliceNozzleRightDiameterSelect && els.sliceNozzleRightDiameterSelect.value) || "")
+      : "";
     const nozzle_left_flow = normalizeSliceNozzleFlow((els.sliceNozzleLeftFlowSelect && els.sliceNozzleLeftFlowSelect.value) || "");
-    const nozzle_right_flow = normalizeSliceNozzleFlow((els.sliceNozzleRightFlowSelect && els.sliceNozzleRightFlowSelect.value) || "");
-    const print_nozzle = normalizeSlicePrintNozzle(state.lastSliceSelection && state.lastSliceSelection.print_nozzle);
+    const nozzle_right_flow = usesDualNozzle
+      ? normalizeSliceNozzleFlow((els.sliceNozzleRightFlowSelect && els.sliceNozzleRightFlowSelect.value) || "")
+      : "";
+    const print_nozzle = usesDualNozzle
+      ? normalizeSlicePrintNozzle(state.lastSliceSelection && state.lastSliceSelection.print_nozzle)
+      : "";
     const rotation = currentSliceRotation();
     const bed = resolveSelectedSliceBedSize();
     const settingsOverrides = state.sliceProcessSettingsOverrides && typeof state.sliceProcessSettingsOverrides === "object"
@@ -6019,6 +6069,10 @@
     const process_overrides = Object.keys(apiBaseSettings).length
       ? { ...filteredOverrides }
       : { ...normalizedOverrides };
+    if (!usesDualNozzle) {
+      delete process_overrides.print_extruder_id;
+      delete process_overrides.printer_extruder_id;
+    }
     return {
       printer_profile,
       print_profile,
@@ -10323,6 +10377,7 @@
         }
         applySlicePrintProfileFilterForSelectedPrinter();
         applySliceFilamentFilterForSelectedPrinter();
+        updateSliceNozzleUiForSelectedPrinter();
         refreshSlicePreviewBedFromSelection();
         loadSliceProcessSettings(true).catch((err) => {
           showStatus(els.sliceProcessSettingsStatus, err.message || "Kunne ikke hente process settings", "error");
@@ -10584,20 +10639,28 @@
         }
         els.sliceModalStartBtn.disabled = true;
         try {
-          const pickedNozzle = await promptSliceNozzlePick(
-            normalizeSlicePrintNozzle(state.lastSliceSelection && state.lastSliceSelection.print_nozzle)
-          );
-          if (!pickedNozzle) {
-            showStatus(els.sliceModalStatus, "Slicing annulleret: vælg venstre eller højre nozzle.", "error");
-            return;
-          }
-
+          const usesDualNozzle = slicePrinterUsesDualNozzle(profiles.printer_profile);
           const normalizedProcessOverrides = profiles.process_overrides && typeof profiles.process_overrides === "object"
             ? normalizeSliceProcessSettingsMap(profiles.process_overrides)
             : {};
-          normalizedProcessOverrides.print_extruder_id = pickedNozzle === "right" ? 2 : 1;
+          let pickedNozzle = "";
+          if (usesDualNozzle) {
+            pickedNozzle = await promptSliceNozzlePick(
+              normalizeSlicePrintNozzle(state.lastSliceSelection && state.lastSliceSelection.print_nozzle)
+            );
+            if (!pickedNozzle) {
+              showStatus(els.sliceModalStatus, "Slicing annulleret: vælg venstre eller højre nozzle.", "error");
+              return;
+            }
+            normalizedProcessOverrides.print_extruder_id = pickedNozzle === "right" ? 2 : 1;
+          } else {
+            delete normalizedProcessOverrides.print_extruder_id;
+            delete normalizedProcessOverrides.printer_extruder_id;
+          }
           profiles = {
             ...profiles,
+            nozzle_right_diameter: usesDualNozzle ? profiles.nozzle_right_diameter : "",
+            nozzle_right_flow: usesDualNozzle ? profiles.nozzle_right_flow : "",
             print_nozzle: pickedNozzle,
             process_overrides: normalizedProcessOverrides,
           };
@@ -10613,7 +10676,7 @@
             nozzle_right_diameter: normalizeSliceNozzleDiameter(profiles.nozzle_right_diameter || ""),
             nozzle_left_flow: normalizeSliceNozzleFlow(profiles.nozzle_left_flow || ""),
             nozzle_right_flow: normalizeSliceNozzleFlow(profiles.nozzle_right_flow || ""),
-            print_nozzle: pickedNozzle,
+            print_nozzle: usesDualNozzle ? pickedNozzle : "",
             rotation_x_degrees: clampSliceRotationDeg(profiles.rotation_x_degrees || 0),
             rotation_y_degrees: clampSliceRotationDeg(profiles.rotation_y_degrees || 0),
             rotation_z_degrees: clampSliceRotationDeg(profiles.rotation_z_degrees || 0),
