@@ -3,6 +3,7 @@
 {% block body %}
 <div class="center-screen">
   <form class="login-card" method="post">
+    <img class="auth-logo" src="{{ url_for('static', filename='logos/logos/fjord3D-logo-horizontal-transparent.png', v=app_build) }}" alt="Fjord3D">
     <h1>Log ind på Fjord3D</h1>
     {% if error %}<div class="status error">{{ error }}</div>{% endif %}
     {% if created %}<div class="status ok">Bruger oprettet. Log ind herunder.</div>{% endif %}
