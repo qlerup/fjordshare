@@ -529,7 +529,12 @@ def _latest_slicer_profile_file(paths: Iterable[Path]) -> Optional[Path]:
 
 def _effective_bambustudio_config_path() -> str:
     configured = str(BAMBUSTUDIO_CONFIG_PATH or "").strip()
-    return configured if configured else ""
+    if configured:
+        return configured
+    latest_config = _latest_slicer_profile_file(
+        _list_slicer_profile_files(SLICER_PROFILE_CONFIG_DIR, SLICER_PROFILE_ALLOWED_CONFIG_EXTS)
+    )
+    return str(latest_config) if latest_config else ""
 
 
 def _effective_bambustudio_load_settings() -> str:
@@ -1885,37 +1890,70 @@ def _slice_stl_to_gcode_fast(
         lambda event, data=None: _record_slice_debug_event(debug_trace, event, data)
     )
 
-    if BAMBUSTUDIO_CONFIG_PATH:
-        config_path = Path(BAMBUSTUDIO_CONFIG_PATH)
+    config_path_text = _effective_bambustudio_config_path()
+    config_load_args: list[str] = []
+    if config_path_text:
+        config_path = Path(config_path_text)
         if not config_path.exists() or not config_path.is_file():
-            raise RuntimeError(f"BAMBUSTUDIO_CONFIG_PATH findes ikke: {config_path}")
-        base_cmd.extend(["--load", str(config_path)])
+            raise RuntimeError(f"Slicer config-fil findes ikke: {config_path}")
+        config_load_args = ["--load", str(config_path)]
+
+    auto_profile_args: list[str] = []
+    try:
+        auto_profile_args = _build_modern_profile_args(
+            executable,
+            "",
+            "",
+            "",
+            prefer_uploaded=False,
+            auto_pick_when_blank=True,
+            process_overrides={},
+            preferred_extruder_id_hint=0,
+        )
+    except Exception as exc:
+        _trace("fast-auto-profile-error", {"error": str(exc)})
 
     output_dir = output_gcode.parent / f"{output_gcode.stem}.fast-slice-output"
-    attempts: list[tuple[str, list[str], str]] = [
+    temp_3mf = output_gcode.with_suffix(".fast-slice.gcode.3mf")
+    attempts: list[tuple[str, list[str], str]] = []
+    if config_load_args:
+        attempts.append(
+            (
+                "fast-config-outputdir",
+                [*base_cmd, *config_load_args, "--slice", "0", "--outputdir", str(output_dir), str(input_stl)],
+                "gcode-dir",
+            )
+        )
+    if auto_profile_args:
+        attempts.extend(
+            [
+                (
+                    "fast-auto-profile-outputdir",
+                    [*base_cmd, "--slice", "0", *auto_profile_args, "--outputdir", str(output_dir), str(input_stl)],
+                    "gcode-dir",
+                ),
+                (
+                    "fast-auto-profile-3mf",
+                    [*base_cmd, "--slice", "0", *auto_profile_args, "--export-3mf", str(temp_3mf), str(input_stl)],
+                    "3mf",
+                ),
+            ]
+        )
+    attempts.append(
         (
-            "fast-export-gcode",
-            [*base_cmd, "--export-gcode", "--output", str(output_gcode), str(input_stl)],
-            "gcode",
-        ),
-        (
-            "fast-export-gcode-underscore",
-            [*base_cmd, "--export_gcode", "--output", str(output_gcode), str(input_stl)],
-            "gcode",
-        ),
-        (
-            "fast-slice-outputdir",
+            "fast-raw-outputdir",
             [*base_cmd, "--slice", "0", "--outputdir", str(output_dir), str(input_stl)],
             "gcode-dir",
-        ),
-    ]
+        )
+    )
     _trace(
         "fast-slice-input",
         {
             "input_stl": str(input_stl),
             "output_gcode": str(output_gcode),
             "executable": executable,
-            "uses_config_path": bool(BAMBUSTUDIO_CONFIG_PATH),
+            "config_path": config_path_text,
+            "auto_profile_args": auto_profile_args,
             "attempts": [{"label": label, "mode": mode, "cmd": cmd} for label, cmd, mode in attempts],
         },
     )
@@ -1924,6 +1962,7 @@ def _slice_stl_to_gcode_fast(
     for label, cmd, mode in attempts:
         try:
             output_gcode.unlink(missing_ok=True)
+            temp_3mf.unlink(missing_ok=True)
             shutil.rmtree(output_dir, ignore_errors=True)
         except Exception:
             pass
@@ -1979,6 +2018,29 @@ def _slice_stl_to_gcode_fast(
                 )
                 return
             errors.append(f"{label}: kommandoen kørte men lavede ingen G-code i outputdir")
+            continue
+
+        if mode == "3mf":
+            if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
+                try:
+                    temp_3mf.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                _trace(
+                    "fast-slice-success",
+                    {
+                        "source": label,
+                        "mode": mode,
+                        "output_gcode": str(output_gcode),
+                        "output_bytes": int(output_gcode.stat().st_size) if output_gcode.exists() else 0,
+                        "source_3mf": str(temp_3mf),
+                    },
+                )
+                return
+            if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
+                errors.append(f"{label}: 3MF blev lavet men indeholdt ingen G-code")
+            else:
+                errors.append(f"{label}: kommandoen kørte men lavede ingen 3MF output")
 
     raise RuntimeError("Fast slice fejlede: " + " | ".join(errors[-6:]))
 
@@ -10219,7 +10281,7 @@ def api_file_slice(file_id: int):
     profile_details = []
     if fast_slice:
         profile_details.append("fast_slice=on")
-        profile_details.append("settings=none")
+        profile_details.append("ui_settings=none")
     if printer_profile:
         profile_details.append(f"printer={printer_profile}")
     if print_profile:
