@@ -20,6 +20,7 @@
 
     <nav id="sidebarNav" class="nav">
       <button class="nav-item active" data-tab="files">Mapper</button>
+      <button class="nav-item" data-tab="profile">Profil</button>
       <button class="nav-item admin-only" data-tab="print-ready">Projekter klar til print</button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
     </nav>
@@ -150,6 +151,34 @@
         <p class="hint">Brugerprojekter der er markeret klar til produktion.</p>
         <div id="printReadyStatus" class="status hidden"></div>
         <div id="printReadyAdminList" class="print-ready-admin-list"></div>
+      </div>
+    </section>
+
+    <section id="tab-profile" class="tab-section hidden">
+      <div class="panel">
+        <h3>Brugerprofil</h3>
+        <p class="hint">Vælg land, skriv telefonnummer, og slå SMS-funktionen til/fra for din egen bruger.</p>
+        <div class="form-grid">
+          <div>
+            <label><input id="profileSmsEnabledChk" type="checkbox"> Aktivér SMS</label>
+          </div>
+          <div>
+            <label for="profileSmsCountrySelect">Land</label>
+            <select id="profileSmsCountrySelect" class="select"></select>
+          </div>
+          <div>
+            <label for="profileSmsPhoneInput">Telefonnummer</label>
+            <input id="profileSmsPhoneInput" class="input" type="tel" placeholder="Fx 26283119" autocomplete="tel">
+          </div>
+          <div>
+            <label for="profileSmsE164Preview">Telefon med landekode</label>
+            <input id="profileSmsE164Preview" class="input" type="text" readonly placeholder="+45...">
+          </div>
+        </div>
+        <div class="toolbar end">
+          <button id="profileSmsSaveBtn" class="btn primary" type="button">Gem profil</button>
+        </div>
+        <div id="profileSmsStatus" class="status hidden"></div>
       </div>
     </section>
 

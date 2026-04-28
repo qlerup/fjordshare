@@ -96,8 +96,15 @@
     statShares: document.getElementById("statShares"),
     sidebarNav: document.getElementById("sidebarNav"),
     tabFiles: document.getElementById("tab-files"),
+    tabProfile: document.getElementById("tab-profile"),
     tabPrintReady: document.getElementById("tab-print-ready"),
     tabSettings: document.getElementById("tab-settings"),
+    profileSmsEnabledChk: document.getElementById("profileSmsEnabledChk"),
+    profileSmsCountrySelect: document.getElementById("profileSmsCountrySelect"),
+    profileSmsPhoneInput: document.getElementById("profileSmsPhoneInput"),
+    profileSmsE164Preview: document.getElementById("profileSmsE164Preview"),
+    profileSmsSaveBtn: document.getElementById("profileSmsSaveBtn"),
+    profileSmsStatus: document.getElementById("profileSmsStatus"),
     settingsTabs: document.getElementById("settingsTabs"),
     settingsTabSelect: document.getElementById("settingsTabSelect"),
     settingsPanelShares: document.getElementById("settings-panel-shares"),
@@ -345,6 +352,10 @@
       title: "Mapper",
       subtitle: "Mapper, upload og metadata",
     },
+    profile: {
+      title: "Profil",
+      subtitle: "Din brugerprofil og SMS-indstillinger",
+    },
     settings: {
       title: "Indstillinger",
       subtitle: "Delinger, DNS, brugere og slicer-profiler",
@@ -396,6 +407,155 @@
     const extra = list.length > 3 ? ` +${list.length - 3} flere` : "";
     const subject = list.length === 1 ? names : `${list.length} filer${names ? ` (${names}${extra})` : ""}`;
     return `${subject} understøttes ikke. Upload kun ${PRIMARY_UPLOAD_ALLOWED_LABEL} filer.`;
+  }
+
+  const SMS_COUNTRY_OPTIONS = [
+    { code: "+45", label: "Danmark (+45)" },
+    { code: "+47", label: "Norge (+47)" },
+    { code: "+46", label: "Sverige (+46)" },
+    { code: "+49", label: "Tyskland (+49)" },
+    { code: "+31", label: "Holland (+31)" },
+    { code: "+44", label: "Storbritannien (+44)" },
+    { code: "+33", label: "Frankrig (+33)" },
+    { code: "+34", label: "Spanien (+34)" },
+    { code: "+39", label: "Italien (+39)" },
+    { code: "+48", label: "Polen (+48)" },
+    { code: "+351", label: "Portugal (+351)" },
+    { code: "+43", label: "Østrig (+43)" },
+    { code: "+41", label: "Schweiz (+41)" },
+    { code: "+1", label: "USA/Canada (+1)" },
+  ];
+  const SMS_DEFAULT_COUNTRY_CODE = "+45";
+
+  function normalizeSmsCountryCodeClient(value, fallback = SMS_DEFAULT_COUNTRY_CODE) {
+    let raw = String(value || "").trim();
+    if (!raw) raw = String(fallback || SMS_DEFAULT_COUNTRY_CODE);
+    if (raw.startsWith("+")) raw = raw.slice(1);
+    const digits = raw.replace(/\D/g, "");
+    if (!digits) return SMS_DEFAULT_COUNTRY_CODE;
+    return `+${digits.slice(0, 4)}`;
+  }
+
+  function normalizeSmsPhoneNumberClient(value) {
+    return String(value || "").replace(/\D/g, "");
+  }
+
+  function smsE164Client(countryCode, phoneNumber) {
+    const cc = normalizeSmsCountryCodeClient(countryCode);
+    const number = normalizeSmsPhoneNumberClient(phoneNumber);
+    if (!cc || !number) return "";
+    const noLeadingZero = number.replace(/^0+/, "") || number;
+    return `${cc}${noLeadingZero}`;
+  }
+
+  function ensureProfileSmsCountryOption(code) {
+    if (!els.profileSmsCountrySelect) return;
+    const normalized = normalizeSmsCountryCodeClient(code);
+    const exists = Array.from(els.profileSmsCountrySelect.options || []).some(
+      (option) => String(option.value || "") === normalized,
+    );
+    if (exists) return;
+    const option = document.createElement("option");
+    option.value = normalized;
+    option.textContent = `${normalized}`;
+    els.profileSmsCountrySelect.appendChild(option);
+  }
+
+  function renderProfileSmsCountryOptions() {
+    if (!els.profileSmsCountrySelect) return;
+    const current = normalizeSmsCountryCodeClient(els.profileSmsCountrySelect.value || SMS_DEFAULT_COUNTRY_CODE);
+    els.profileSmsCountrySelect.innerHTML = SMS_COUNTRY_OPTIONS
+      .map((entry) => `<option value="${esc(entry.code)}">${esc(entry.label)}</option>`)
+      .join("");
+    ensureProfileSmsCountryOption(current);
+    els.profileSmsCountrySelect.value = current;
+  }
+
+  function updateProfileSmsPreview() {
+    if (!els.profileSmsE164Preview) return;
+    const countryCode = normalizeSmsCountryCodeClient(
+      (els.profileSmsCountrySelect && els.profileSmsCountrySelect.value) || SMS_DEFAULT_COUNTRY_CODE,
+    );
+    const phone = normalizeSmsPhoneNumberClient((els.profileSmsPhoneInput && els.profileSmsPhoneInput.value) || "");
+    const e164 = smsE164Client(countryCode, phone);
+    els.profileSmsE164Preview.value = e164 || "";
+  }
+
+  function setProfileSmsFormState(options = {}) {
+    const busy = !!(options && options.busy);
+    const enabled = !!(els.profileSmsEnabledChk && els.profileSmsEnabledChk.checked);
+
+    if (els.profileSmsEnabledChk) {
+      els.profileSmsEnabledChk.disabled = busy;
+    }
+    if (els.profileSmsCountrySelect) {
+      els.profileSmsCountrySelect.disabled = busy || !enabled;
+    }
+    if (els.profileSmsPhoneInput) {
+      els.profileSmsPhoneInput.disabled = busy || !enabled;
+    }
+    if (els.profileSmsSaveBtn) {
+      els.profileSmsSaveBtn.disabled = busy;
+      els.profileSmsSaveBtn.textContent = busy ? "Gemmer..." : "Gem profil";
+    }
+    updateProfileSmsPreview();
+  }
+
+  function applyMyProfile(profile) {
+    const smsEnabled = !!(profile && profile.sms_enabled);
+    const countryCode = normalizeSmsCountryCodeClient(
+      (profile && profile.sms_phone_country_code) || SMS_DEFAULT_COUNTRY_CODE,
+    );
+    const phone = normalizeSmsPhoneNumberClient((profile && profile.sms_phone_number) || "");
+
+    renderProfileSmsCountryOptions();
+    ensureProfileSmsCountryOption(countryCode);
+    if (els.profileSmsEnabledChk) els.profileSmsEnabledChk.checked = smsEnabled;
+    if (els.profileSmsCountrySelect) els.profileSmsCountrySelect.value = countryCode;
+    if (els.profileSmsPhoneInput) els.profileSmsPhoneInput.value = phone;
+    setProfileSmsFormState({ busy: false });
+  }
+
+  async function loadMyProfile() {
+    if (!els.tabProfile) return;
+    try {
+      setProfileSmsFormState({ busy: true });
+      const data = await api("/api/me/profile");
+      applyMyProfile(data.profile || {});
+      showStatus(els.profileSmsStatus, "");
+    } catch (err) {
+      setProfileSmsFormState({ busy: false });
+      showStatus(els.profileSmsStatus, err.message || "Kunne ikke hente profil", "error");
+    }
+  }
+
+  async function saveMyProfile() {
+    const smsEnabled = !!(els.profileSmsEnabledChk && els.profileSmsEnabledChk.checked);
+    const countryCode = normalizeSmsCountryCodeClient(
+      (els.profileSmsCountrySelect && els.profileSmsCountrySelect.value) || SMS_DEFAULT_COUNTRY_CODE,
+    );
+    const phoneNumber = normalizeSmsPhoneNumberClient((els.profileSmsPhoneInput && els.profileSmsPhoneInput.value) || "");
+
+    setProfileSmsFormState({ busy: true });
+    try {
+      const data = await api("/api/me/profile", {
+        method: "POST",
+        body: {
+          sms_enabled: smsEnabled,
+          sms_phone_country_code: countryCode,
+          sms_phone_number: phoneNumber,
+        },
+      });
+      applyMyProfile(data.profile || {});
+      if (!smsEnabled) {
+        showStatus(els.profileSmsStatus, "SMS er slået fra for din profil.", "ok");
+      } else {
+        showStatus(els.profileSmsStatus, "SMS-indstillinger gemt.", "ok");
+      }
+    } catch (err) {
+      setProfileSmsFormState({ busy: false });
+      showStatus(els.profileSmsStatus, err.message || "Kunne ikke gemme profil", "error");
+    }
   }
 
   const uploadUiState = {
@@ -1062,6 +1222,7 @@
     const target = String(tab || "files");
     const map = {
       files: els.tabFiles,
+      profile: els.tabProfile,
       "print-ready": els.tabPrintReady,
       settings: els.tabSettings,
     };
@@ -9955,6 +10116,9 @@
         if (!btn) return;
         const tab = btn.dataset.tab;
         setTab(tab);
+        if (tab === "profile") {
+          await loadMyProfile();
+        }
         if (tab === "print-ready" && state.role === "admin") {
           await loadPrintReadyProjects();
         }
@@ -9992,6 +10156,32 @@
         if (tab === "users") await loadUsers();
         if (tab === "logs") await loadAdminLogs();
         if (tab === "slicer") await loadSlicerSettings();
+      });
+    }
+
+    if (els.profileSmsEnabledChk) {
+      els.profileSmsEnabledChk.addEventListener("change", () => {
+        setProfileSmsFormState({ busy: false });
+        showStatus(els.profileSmsStatus, "");
+      });
+    }
+    if (els.profileSmsCountrySelect) {
+      els.profileSmsCountrySelect.addEventListener("change", () => {
+        updateProfileSmsPreview();
+        showStatus(els.profileSmsStatus, "");
+      });
+    }
+    if (els.profileSmsPhoneInput) {
+      els.profileSmsPhoneInput.addEventListener("input", () => {
+        updateProfileSmsPreview();
+        showStatus(els.profileSmsStatus, "");
+      });
+    }
+    if (els.profileSmsSaveBtn) {
+      els.profileSmsSaveBtn.addEventListener("click", () => {
+        saveMyProfile().catch((err) => {
+          showStatus(els.profileSmsStatus, err.message || "Kunne ikke gemme profil", "error");
+        });
       });
     }
 
@@ -11206,6 +11396,8 @@
     applyRoleVisibility();
     updateSelectModeUi();
     bindEvents();
+    renderProfileSmsCountryOptions();
+    setProfileSmsFormState({ busy: false });
     bindUploadMonitorDomEvents();
     renderUploadMonitor();
     await loadFolders();

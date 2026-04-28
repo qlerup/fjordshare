@@ -105,6 +105,7 @@ FOLDER_KIND_USER = "user"
 FOLDER_KIND_APP_DAILY = "app_daily"
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Copenhagen").strip() or "Europe/Copenhagen"
 DATE_FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+DEFAULT_SMS_COUNTRY_CODE = str(os.getenv("DEFAULT_SMS_COUNTRY_CODE", "+45")).strip() or "+45"
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
@@ -7588,6 +7589,9 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 home_folder TEXT UNIQUE NOT NULL,
+                sms_enabled INTEGER NOT NULL DEFAULT 0,
+                sms_phone_country_code TEXT,
+                sms_phone_number TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -7794,6 +7798,20 @@ def init_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_kind ON folders(folder_kind)")
 
+        user_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "sms_enabled" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_enabled INTEGER NOT NULL DEFAULT 0")
+        if "sms_phone_country_code" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_phone_country_code TEXT")
+        if "sms_phone_number" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_phone_number TEXT")
+        conn.execute("UPDATE users SET sms_enabled=0 WHERE sms_enabled IS NULL")
+        conn.execute(
+            "UPDATE users SET sms_phone_country_code=? WHERE sms_phone_country_code IS NULL OR TRIM(sms_phone_country_code)=''",
+            (_normalize_sms_country_code(DEFAULT_SMS_COUNTRY_CODE, default="+45", strict=False),),
+        )
+        conn.execute("UPDATE users SET sms_phone_number='' WHERE sms_phone_number IS NULL")
+
         project_cols = [r[1] for r in conn.execute("PRAGMA table_info(print_ready_projects)").fetchall()]
         if "owner_home_folder" not in project_cols:
             conn.execute("ALTER TABLE print_ready_projects ADD COLUMN owner_home_folder TEXT NOT NULL DEFAULT ''")
@@ -7855,6 +7873,63 @@ def set_setting(key: str, value: str) -> None:
             (str(key), str(value)),
         )
         conn.commit()
+
+
+def _normalize_sms_country_code(value: Any, default: str = "+45", strict: bool = False) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raw = str(default or "").strip()
+    if raw.startswith("+"):
+        raw = raw[1:]
+    digits = re.sub(r"\D", "", raw)
+    if not digits:
+        if strict:
+            raise ValueError("Vælg et gyldigt land")
+        return "+45"
+    if len(digits) > 4:
+        if strict:
+            raise ValueError("Landekode er ugyldig")
+        digits = digits[:4]
+    return f"+{digits}"
+
+
+def _normalize_sms_phone_number(value: Any) -> str:
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def _sms_e164(country_code: str, phone_number: str) -> str:
+    cc = _normalize_sms_country_code(country_code, default="", strict=False)
+    number = _normalize_sms_phone_number(phone_number)
+    if not cc or not number:
+        return ""
+    number_no_leading = number.lstrip("0") or number
+    return f"{cc}{number_no_leading}"
+
+
+def _load_user_sms_profile(user_id: int) -> dict[str, Any]:
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT sms_enabled, sms_phone_country_code, sms_phone_number
+            FROM users
+            WHERE id=?
+            """,
+            (int(user_id),),
+        ).fetchone()
+
+    sms_enabled = bool(int(row["sms_enabled"] or 0)) if row else False
+    country_code = _normalize_sms_country_code(
+        row["sms_phone_country_code"] if row else "",
+        default=DEFAULT_SMS_COUNTRY_CODE,
+        strict=False,
+    )
+    phone_number = _normalize_sms_phone_number(row["sms_phone_number"] if row else "")
+    return {
+        "sms_enabled": sms_enabled,
+        "sms_phone_country_code": country_code,
+        "sms_phone_number": phone_number,
+        "sms_phone_e164": _sms_e164(country_code, phone_number),
+    }
 
 
 def migrate_thumbnail_render_style_if_needed() -> None:
@@ -9781,6 +9856,7 @@ def api_me():
             daily_folder = ensure_user_daily_upload_folder(current_user)
         except Exception:
             daily_folder = ""
+    sms_profile = _load_user_sms_profile(int(current_user.id))
     return jsonify(
         {
             "ok": True,
@@ -9790,9 +9866,63 @@ def api_me():
                 "role": str(current_user.role),
                 "home_folder": normalize_folder_path(str(current_user.home_folder or "")),
                 "daily_folder": daily_folder,
+                "sms_enabled": bool(sms_profile.get("sms_enabled")),
+                "sms_phone_country_code": str(sms_profile.get("sms_phone_country_code") or ""),
+                "sms_phone_number": str(sms_profile.get("sms_phone_number") or ""),
+                "sms_phone_e164": str(sms_profile.get("sms_phone_e164") or ""),
             },
         }
     )
+
+
+@app.route("/api/me/profile", methods=["GET", "POST"])
+@login_required
+def api_me_profile():
+    if request.method == "GET":
+        return jsonify({"ok": True, "profile": _load_user_sms_profile(int(current_user.id))})
+
+    body = request.get_json(silent=True) or {}
+    sms_enabled = bool(parse_bool(body.get("sms_enabled")))
+    try:
+        country_code = _normalize_sms_country_code(
+            body.get("sms_phone_country_code"),
+            default=DEFAULT_SMS_COUNTRY_CODE,
+            strict=True,
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    phone_number = _normalize_sms_phone_number(body.get("sms_phone_number"))
+    if phone_number and (len(phone_number) < 4 or len(phone_number) > 15):
+        return jsonify({"ok": False, "error": "Telefonnummer skal være mellem 4 og 15 cifre"}), 400
+    if sms_enabled and not phone_number:
+        return jsonify({"ok": False, "error": "Angiv telefonnummer før SMS kan aktiveres"}), 400
+
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET sms_enabled=?, sms_phone_country_code=?, sms_phone_number=?
+            WHERE id=?
+            """,
+            (
+                1 if sms_enabled else 0,
+                country_code,
+                phone_number,
+                int(current_user.id),
+            ),
+        )
+        conn.commit()
+
+    log_activity(
+        kind="user",
+        action="profile-update",
+        message="SMS profil opdateret",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=str(current_user.username or ""),
+    )
+    return jsonify({"ok": True, "profile": _load_user_sms_profile(int(current_user.id))})
 
 
 @app.route("/api/folders", methods=["GET"])
