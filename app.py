@@ -120,6 +120,7 @@ SMS_SETTING_TOKEN_ENC_KEY = "sms_gateway_token_enc"
 SMS_SETTING_SENDER_KEY = "sms_gateway_sender"
 SMS_SENDER_MAX_LENGTH = 11
 SMS_VERIFICATION_TTL_SECONDS = 60
+SMS_ONBOARDING_ENABLED = False
 SMS_TOKEN_ENCRYPTION_KEY = str(os.getenv("SMS_TOKEN_ENCRYPTION_KEY", "") or "").strip()
 SMS_GATEWAY_URL = "https://gatewayapi.com/rest/mtsms"
 
@@ -10356,7 +10357,8 @@ def api_me_profile():
     if request.method == "GET":
         profile = _load_user_sms_profile(int(current_user.id))
         profile["sms_onboarding_required"] = (
-            str(current_user.role or "").lower() != "admin"
+            SMS_ONBOARDING_ENABLED
+            and str(current_user.role or "").lower() != "admin"
             and not bool(profile.get("sms_setup_prompted"))
         )
         return jsonify({"ok": True, "profile": profile})

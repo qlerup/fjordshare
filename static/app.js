@@ -8,6 +8,7 @@
   const DEFAULT_SLICE_NOZZLE_FLOW = "";
   const SLICE_ACTIONS_DISABLED = String((boot && boot.dataset.slicingDisabled) || "0").trim() === "1";
   const SLICE_DISABLED_TITLE = "Slicing er midlertidigt slået fra";
+  const SMS_ONBOARDING_LOGIN_PROMPT_ENABLED = false;
   const state = {
     username: (boot && boot.dataset.username) || "",
     role: ((boot && boot.dataset.role) || "user").toLowerCase(),
@@ -691,6 +692,7 @@
   }
 
   async function maybeShowSmsOnboarding() {
+    if (!SMS_ONBOARDING_LOGIN_PROMPT_ENABLED) return;
     if (state.role === "admin" || !els.smsOnboardingModal) return;
     try {
       const data = await api("/api/me/profile");
