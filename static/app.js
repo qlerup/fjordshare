@@ -87,6 +87,8 @@
     currentPrintReadyProjectId: 0,
     smsConfirmResolver: null,
     smsConfirmContext: "",
+    smsOnboardingCountdownTimer: null,
+    smsOnboardingExpiresAt: 0,
     smsGatewayTokenConfigured: false,
     smsGatewayTokenPreview: "",
     smsGatewayTokenPreviewActive: false,
@@ -301,7 +303,20 @@
     smsConfirmNoBtn: document.getElementById("smsConfirmNoBtn"),
     smsConfirmYesBtn: document.getElementById("smsConfirmYesBtn"),
     smsConfirmSummary: document.getElementById("smsConfirmSummary"),
+    smsConfirmDetails: document.getElementById("smsConfirmDetails"),
     smsConfirmStatus: document.getElementById("smsConfirmStatus"),
+    smsOnboardingModal: document.getElementById("smsOnboardingModal"),
+    smsOnboardingSkipTopBtn: document.getElementById("smsOnboardingSkipTopBtn"),
+    smsOnboardingCountrySelect: document.getElementById("smsOnboardingCountrySelect"),
+    smsOnboardingPhoneInput: document.getElementById("smsOnboardingPhoneInput"),
+    smsOnboardingPreview: document.getElementById("smsOnboardingPreview"),
+    smsOnboardingCodeWrap: document.getElementById("smsOnboardingCodeWrap"),
+    smsOnboardingCodeInput: document.getElementById("smsOnboardingCodeInput"),
+    smsOnboardingTimer: document.getElementById("smsOnboardingTimer"),
+    smsOnboardingStatus: document.getElementById("smsOnboardingStatus"),
+    smsOnboardingSkipBtn: document.getElementById("smsOnboardingSkipBtn"),
+    smsOnboardingSendCodeBtn: document.getElementById("smsOnboardingSendCodeBtn"),
+    smsOnboardingVerifyBtn: document.getElementById("smsOnboardingVerifyBtn"),
     printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
     printReadyStatus: document.getElementById("printReadyStatus"),
     printReadyAdminList: document.getElementById("printReadyAdminList"),
@@ -475,27 +490,31 @@
     return `${cc}${noLeadingZero}`;
   }
 
-  function ensureProfileSmsCountryOption(code) {
-    if (!els.profileSmsCountrySelect) return;
+  function ensureSmsCountryOption(selectEl, code) {
+    if (!selectEl) return;
     const normalized = normalizeSmsCountryCodeClient(code);
-    const exists = Array.from(els.profileSmsCountrySelect.options || []).some(
+    const exists = Array.from(selectEl.options || []).some(
       (option) => String(option.value || "") === normalized,
     );
     if (exists) return;
     const option = document.createElement("option");
     option.value = normalized;
     option.textContent = `${normalized}`;
-    els.profileSmsCountrySelect.appendChild(option);
+    selectEl.appendChild(option);
+  }
+
+  function renderSmsCountryOptions(selectEl) {
+    if (!selectEl) return;
+    const current = normalizeSmsCountryCodeClient(selectEl.value || SMS_DEFAULT_COUNTRY_CODE);
+    selectEl.innerHTML = SMS_COUNTRY_OPTIONS
+      .map((entry) => `<option value="${esc(entry.code)}">${esc(entry.label)}</option>`)
+      .join("");
+    ensureSmsCountryOption(selectEl, current);
+    selectEl.value = current;
   }
 
   function renderProfileSmsCountryOptions() {
-    if (!els.profileSmsCountrySelect) return;
-    const current = normalizeSmsCountryCodeClient(els.profileSmsCountrySelect.value || SMS_DEFAULT_COUNTRY_CODE);
-    els.profileSmsCountrySelect.innerHTML = SMS_COUNTRY_OPTIONS
-      .map((entry) => `<option value="${esc(entry.code)}">${esc(entry.label)}</option>`)
-      .join("");
-    ensureProfileSmsCountryOption(current);
-    els.profileSmsCountrySelect.value = current;
+    renderSmsCountryOptions(els.profileSmsCountrySelect);
   }
 
   function updateProfileSmsPreview() {
@@ -536,7 +555,7 @@
     const phone = normalizeSmsPhoneNumberClient((profile && profile.sms_phone_number) || "");
 
     renderProfileSmsCountryOptions();
-    ensureProfileSmsCountryOption(countryCode);
+    ensureSmsCountryOption(els.profileSmsCountrySelect, countryCode);
     if (els.profileSmsEnabledChk) els.profileSmsEnabledChk.checked = smsEnabled;
     if (els.profileSmsCountrySelect) els.profileSmsCountrySelect.value = countryCode;
     if (els.profileSmsPhoneInput) els.profileSmsPhoneInput.value = phone;
@@ -582,6 +601,173 @@
     } catch (err) {
       setProfileSmsFormState({ busy: false });
       showStatus(els.profileSmsStatus, err.message || "Kunne ikke gemme profil", "error");
+    }
+  }
+
+  function updateSmsOnboardingPreview() {
+    if (!els.smsOnboardingPreview) return;
+    const countryCode = normalizeSmsCountryCodeClient(
+      (els.smsOnboardingCountrySelect && els.smsOnboardingCountrySelect.value) || SMS_DEFAULT_COUNTRY_CODE,
+    );
+    const phone = normalizeSmsPhoneNumberClient((els.smsOnboardingPhoneInput && els.smsOnboardingPhoneInput.value) || "");
+    els.smsOnboardingPreview.value = smsE164Client(countryCode, phone) || "";
+  }
+
+  function stopSmsOnboardingTimer() {
+    if (state.smsOnboardingCountdownTimer) {
+      clearInterval(state.smsOnboardingCountdownTimer);
+      state.smsOnboardingCountdownTimer = null;
+    }
+    state.smsOnboardingExpiresAt = 0;
+  }
+
+  function setSmsOnboardingCodeMode(active) {
+    const on = !!active;
+    if (els.smsOnboardingCodeWrap) els.smsOnboardingCodeWrap.classList.toggle("hidden", !on);
+    if (els.smsOnboardingVerifyBtn) els.smsOnboardingVerifyBtn.classList.toggle("hidden", !on);
+    if (els.smsOnboardingSendCodeBtn) els.smsOnboardingSendCodeBtn.textContent = on ? "Send ny kode" : "Send kode";
+  }
+
+  function setSmsOnboardingBusy(busy, action = "") {
+    const isBusy = !!busy;
+    [
+      els.smsOnboardingCountrySelect,
+      els.smsOnboardingPhoneInput,
+      els.smsOnboardingCodeInput,
+      els.smsOnboardingSkipBtn,
+      els.smsOnboardingSkipTopBtn,
+      els.smsOnboardingSendCodeBtn,
+      els.smsOnboardingVerifyBtn,
+    ].forEach((el) => {
+      if (el) el.disabled = isBusy;
+    });
+    if (els.smsOnboardingSendCodeBtn) {
+      els.smsOnboardingSendCodeBtn.textContent = isBusy && action === "send" ? "Sender..." : (state.smsOnboardingExpiresAt ? "Send ny kode" : "Send kode");
+    }
+    if (els.smsOnboardingVerifyBtn) {
+      els.smsOnboardingVerifyBtn.textContent = isBusy && action === "verify" ? "Tjekker..." : "Aktivér SMS";
+    }
+  }
+
+  function updateSmsOnboardingTimer() {
+    if (!els.smsOnboardingTimer) return;
+    const remaining = Math.max(0, Math.ceil((state.smsOnboardingExpiresAt - Date.now()) / 1000));
+    els.smsOnboardingTimer.textContent = remaining > 0
+      ? `Koden udløber om ${remaining} sekunder.`
+      : "Koden er udløbet. Send en ny kode.";
+    if (remaining <= 0) {
+      if (els.smsOnboardingVerifyBtn) els.smsOnboardingVerifyBtn.disabled = true;
+      stopSmsOnboardingTimer();
+    }
+  }
+
+  function startSmsOnboardingTimer(seconds) {
+    stopSmsOnboardingTimer();
+    state.smsOnboardingExpiresAt = Date.now() + Math.max(1, Number(seconds || 60)) * 1000;
+    updateSmsOnboardingTimer();
+    state.smsOnboardingCountdownTimer = window.setInterval(updateSmsOnboardingTimer, 1000);
+  }
+
+  function openSmsOnboardingModal(profile = {}) {
+    if (!els.smsOnboardingModal) return;
+    renderSmsCountryOptions(els.smsOnboardingCountrySelect);
+    const countryCode = normalizeSmsCountryCodeClient(profile.sms_phone_country_code || SMS_DEFAULT_COUNTRY_CODE);
+    ensureSmsCountryOption(els.smsOnboardingCountrySelect, countryCode);
+    if (els.smsOnboardingCountrySelect) els.smsOnboardingCountrySelect.value = countryCode;
+    if (els.smsOnboardingPhoneInput) els.smsOnboardingPhoneInput.value = normalizeSmsPhoneNumberClient(profile.sms_phone_number || "");
+    if (els.smsOnboardingCodeInput) els.smsOnboardingCodeInput.value = "";
+    updateSmsOnboardingPreview();
+    setSmsOnboardingCodeMode(false);
+    stopSmsOnboardingTimer();
+    showStatus(els.smsOnboardingStatus, "");
+    setSmsOnboardingBusy(false);
+    els.smsOnboardingModal.classList.remove("hidden");
+  }
+
+  function closeSmsOnboardingModal() {
+    stopSmsOnboardingTimer();
+    if (els.smsOnboardingModal) els.smsOnboardingModal.classList.add("hidden");
+    showStatus(els.smsOnboardingStatus, "");
+  }
+
+  async function maybeShowSmsOnboarding() {
+    if (state.role === "admin" || !els.smsOnboardingModal) return;
+    try {
+      const data = await api("/api/me/profile");
+      const profile = data && data.profile ? data.profile : {};
+      if (profile.sms_onboarding_required) {
+        openSmsOnboardingModal(profile);
+      }
+    } catch (err) {
+      // Keep login flow quiet if profile fetch fails; the Profile tab can still surface the error.
+    }
+  }
+
+  async function skipSmsOnboarding() {
+    try {
+      setSmsOnboardingBusy(true, "skip");
+      await api("/api/me/sms-onboarding/skip", { method: "POST" });
+      closeSmsOnboardingModal();
+    } catch (err) {
+      showStatus(els.smsOnboardingStatus, err.message || "Kunne ikke gemme SMS-valg", "error");
+    } finally {
+      setSmsOnboardingBusy(false);
+    }
+  }
+
+  async function sendSmsOnboardingCode() {
+    const countryCode = normalizeSmsCountryCodeClient(
+      (els.smsOnboardingCountrySelect && els.smsOnboardingCountrySelect.value) || SMS_DEFAULT_COUNTRY_CODE,
+    );
+    const phoneNumber = normalizeSmsPhoneNumberClient((els.smsOnboardingPhoneInput && els.smsOnboardingPhoneInput.value) || "");
+    if (!phoneNumber) {
+      showStatus(els.smsOnboardingStatus, "Indtast telefonnummer først.", "error");
+      if (els.smsOnboardingPhoneInput) els.smsOnboardingPhoneInput.focus();
+      return;
+    }
+    try {
+      setSmsOnboardingBusy(true, "send");
+      const data = await api("/api/me/sms-onboarding/send-code", {
+        method: "POST",
+        body: {
+          sms_phone_country_code: countryCode,
+          sms_phone_number: phoneNumber,
+        },
+      });
+      setSmsOnboardingCodeMode(true);
+      if (els.smsOnboardingCodeInput) {
+        els.smsOnboardingCodeInput.value = "";
+        els.smsOnboardingCodeInput.focus();
+      }
+      startSmsOnboardingTimer(Number(data && data.expires_in ? data.expires_in : 60));
+      showStatus(els.smsOnboardingStatus, "Kode sendt. Indtast den inden den udløber.", "ok");
+    } catch (err) {
+      showStatus(els.smsOnboardingStatus, err.message || "Kunne ikke sende SMS-kode", "error");
+    } finally {
+      setSmsOnboardingBusy(false);
+    }
+  }
+
+  async function verifySmsOnboardingCode() {
+    const code = String((els.smsOnboardingCodeInput && els.smsOnboardingCodeInput.value) || "").replace(/\D/g, "");
+    if (code.length !== 6) {
+      showStatus(els.smsOnboardingStatus, "Indtast den 6-cifrede kode.", "error");
+      if (els.smsOnboardingCodeInput) els.smsOnboardingCodeInput.focus();
+      return;
+    }
+    try {
+      setSmsOnboardingBusy(true, "verify");
+      const data = await api("/api/me/sms-onboarding/verify", {
+        method: "POST",
+        body: { code },
+      });
+      applyMyProfile((data && data.profile) || {});
+      showStatus(els.smsOnboardingStatus, "SMS opdateringer er aktiveret.", "ok");
+      window.setTimeout(closeSmsOnboardingModal, 700);
+    } catch (err) {
+      showStatus(els.smsOnboardingStatus, err.message || "Kunne ikke verificere koden", "error");
+    } finally {
+      setSmsOnboardingBusy(false);
     }
   }
 
@@ -1475,17 +1661,26 @@
     state.smsConfirmResolver = null;
     state.smsConfirmContext = "";
     if (els.smsConfirmModal) els.smsConfirmModal.classList.add("hidden");
+    if (els.smsConfirmDetails) els.smsConfirmDetails.innerHTML = "";
     showStatus(els.smsConfirmStatus, "");
     if (typeof resolver === "function") resolver(!!sendSms);
   }
 
-  function askSmsConfirmation(contextText = "") {
+  function askSmsConfirmation(contextText = "", project = null) {
     if (!els.smsConfirmModal) return Promise.resolve(false);
     return new Promise((resolve) => {
       state.smsConfirmResolver = resolve;
       state.smsConfirmContext = String(contextText || "").trim();
       if (els.smsConfirmSummary) {
         els.smsConfirmSummary.textContent = state.smsConfirmContext || "Projekt-opdatering";
+      }
+      if (els.smsConfirmDetails) {
+        const owner = String((project && project.owner_username) || "-");
+        const phone = String((project && project.sms_recipient_e164) || "-");
+        els.smsConfirmDetails.innerHTML = `
+          <div>Bruger: <strong>${esc(owner)}</strong></div>
+          <div>Registreret nummer: <strong>${esc(phone)}</strong></div>
+        `;
       }
       showStatus(els.smsConfirmStatus, "");
       els.smsConfirmModal.classList.remove("hidden");
@@ -7872,7 +8067,7 @@
       const fileId = Number(btn.dataset.fileId || 0);
       if (!fileId) return;
       const sendSms = project && project.sms_available
-        ? await askSmsConfirmation(`Projekt: ${project.title || id} · fil markeres som printet`)
+        ? await askSmsConfirmation(`Projekt: ${project.title || id} · fil markeres som printet`, project)
         : false;
       const data = await api(`/api/admin/print-ready/${id}/file/${fileId}/complete`, {
         method: "POST",
@@ -7901,7 +8096,7 @@
 
     if (action === "complete-project") {
       const sendSms = project && project.sms_available
-        ? await askSmsConfirmation(`Projekt: ${project.title || id} · markeres som færdigprintet`)
+        ? await askSmsConfirmation(`Projekt: ${project.title || id} · markeres som færdigprintet`, project)
         : false;
       const data = await api(`/api/admin/print-ready/${id}/complete`, {
         method: "POST",
@@ -11313,6 +11508,11 @@
         settleSmsConfirmModal(false);
         return;
       }
+      const smsOnboardingModalOpen = !!(els.smsOnboardingModal && !els.smsOnboardingModal.classList.contains("hidden"));
+      if (smsOnboardingModalOpen) {
+        closeSmsOnboardingModal();
+        return;
+      }
       const printReadyModalOpen = !!(els.printReadyModal && !els.printReadyModal.classList.contains("hidden"));
       if (printReadyModalOpen) {
         closePrintReadyModal();
@@ -11515,6 +11715,46 @@
         if (event.target === els.smsConfirmModal || event.target.classList.contains("modal-backdrop")) {
           settleSmsConfirmModal(false);
         }
+      });
+    }
+    if (els.smsOnboardingCountrySelect) {
+      els.smsOnboardingCountrySelect.addEventListener("change", () => {
+        updateSmsOnboardingPreview();
+        showStatus(els.smsOnboardingStatus, "");
+      });
+    }
+    if (els.smsOnboardingPhoneInput) {
+      els.smsOnboardingPhoneInput.addEventListener("input", () => {
+        updateSmsOnboardingPreview();
+        showStatus(els.smsOnboardingStatus, "");
+      });
+    }
+    if (els.smsOnboardingCodeInput) {
+      els.smsOnboardingCodeInput.addEventListener("input", () => {
+        els.smsOnboardingCodeInput.value = String(els.smsOnboardingCodeInput.value || "").replace(/\D/g, "").slice(0, 6);
+        showStatus(els.smsOnboardingStatus, "");
+      });
+    }
+    [els.smsOnboardingSkipBtn, els.smsOnboardingSkipTopBtn].forEach((btn) => {
+      if (!btn) return;
+      btn.addEventListener("click", () => {
+        skipSmsOnboarding().catch((err) => {
+          showStatus(els.smsOnboardingStatus, err.message || "Kunne ikke gemme SMS-valg", "error");
+        });
+      });
+    });
+    if (els.smsOnboardingSendCodeBtn) {
+      els.smsOnboardingSendCodeBtn.addEventListener("click", () => {
+        sendSmsOnboardingCode().catch((err) => {
+          showStatus(els.smsOnboardingStatus, err.message || "Kunne ikke sende SMS-kode", "error");
+        });
+      });
+    }
+    if (els.smsOnboardingVerifyBtn) {
+      els.smsOnboardingVerifyBtn.addEventListener("click", () => {
+        verifySmsOnboardingCode().catch((err) => {
+          showStatus(els.smsOnboardingStatus, err.message || "Kunne ikke verificere SMS-kode", "error");
+        });
       });
     }
 
@@ -11762,6 +12002,7 @@
     updateSelectModeUi();
     bindEvents();
     renderProfileSmsCountryOptions();
+    renderSmsCountryOptions(els.smsOnboardingCountrySelect);
     setProfileSmsFormState({ busy: false });
     bindUploadMonitorDomEvents();
     renderUploadMonitor();
@@ -11775,6 +12016,7 @@
       setSettingsTab("shares");
     }
     setTab("files");
+    await maybeShowSmsOnboarding();
   }
 
   init().catch((err) => {

@@ -496,17 +496,54 @@
 
 <div id="smsConfirmModal" class="modal hidden">
   <div class="modal-backdrop"></div>
-  <div class="modal-card">
+  <div class="modal-card sms-confirm-card">
     <div class="toolbar">
       <h3>Send SMS opdatering</h3>
       <button id="smsConfirmCloseBtn" class="btn" type="button">Luk</button>
     </div>
     <p class="hint">Ønsker du at sende opdateringen på sms?</p>
     <div id="smsConfirmSummary" class="metadata-current-file">-</div>
+    <div id="smsConfirmDetails" class="sms-confirm-details"></div>
     <div id="smsConfirmStatus" class="status hidden"></div>
     <div class="toolbar end">
       <button id="smsConfirmNoBtn" class="btn" type="button">Nej</button>
       <button id="smsConfirmYesBtn" class="btn primary" type="button">Ja, send SMS</button>
+    </div>
+  </div>
+</div>
+
+<div id="smsOnboardingModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card sms-onboarding-card">
+    <div class="toolbar">
+      <h3>SMS opdateringer</h3>
+      <button id="smsOnboardingSkipTopBtn" class="btn" type="button">Ikke nu</button>
+    </div>
+    <p class="hint">Vil du modtage SMS når dine projekter opdateres?</p>
+    <div class="form-grid">
+      <div>
+        <label for="smsOnboardingCountrySelect">Land</label>
+        <select id="smsOnboardingCountrySelect" class="select"></select>
+      </div>
+      <div>
+        <label for="smsOnboardingPhoneInput">Telefonnummer</label>
+        <input id="smsOnboardingPhoneInput" class="input" type="tel" placeholder="Fx 26283119" autocomplete="tel">
+      </div>
+      <div>
+        <label for="smsOnboardingPreview">Telefon med landekode</label>
+        <input id="smsOnboardingPreview" class="input" type="text" readonly placeholder="+45...">
+      </div>
+    </div>
+    <div id="smsOnboardingCodeWrap" class="hidden">
+      <label for="smsOnboardingCodeInput">6-cifret kode</label>
+      <input id="smsOnboardingCodeInput" class="input" type="text" inputmode="numeric" maxlength="6" placeholder="123456">
+      <p id="smsOnboardingTimer" class="hint"></p>
+    </div>
+    <div id="smsOnboardingStatus" class="status hidden"></div>
+    <div class="toolbar end">
+      <button id="smsOnboardingSkipBtn" class="btn" type="button">Nej tak</button>
+      <button id="smsOnboardingSendCodeBtn" class="btn primary" type="button">Send kode</button>
+      <button id="smsOnboardingVerifyBtn" class="btn primary hidden" type="button">Aktivér SMS</button>
     </div>
   </div>
 </div>

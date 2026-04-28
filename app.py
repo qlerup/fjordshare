@@ -119,6 +119,7 @@ SMS_SETTING_TOKEN_KEY = "sms_gateway_token"  # legacy plaintext key
 SMS_SETTING_TOKEN_ENC_KEY = "sms_gateway_token_enc"
 SMS_SETTING_SENDER_KEY = "sms_gateway_sender"
 SMS_SENDER_MAX_LENGTH = 11
+SMS_VERIFICATION_TTL_SECONDS = 60
 SMS_TOKEN_ENCRYPTION_KEY = str(os.getenv("SMS_TOKEN_ENCRYPTION_KEY", "") or "").strip()
 SMS_GATEWAY_URL = "https://gatewayapi.com/rest/mtsms"
 
@@ -7608,6 +7609,12 @@ def init_db() -> None:
                 sms_enabled INTEGER NOT NULL DEFAULT 0,
                 sms_phone_country_code TEXT,
                 sms_phone_number TEXT,
+                sms_setup_prompted INTEGER NOT NULL DEFAULT 0,
+                sms_phone_verified INTEGER NOT NULL DEFAULT 0,
+                sms_verification_code_hash TEXT,
+                sms_verification_expires_at TEXT,
+                sms_verification_country_code TEXT,
+                sms_verification_phone_number TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -7824,7 +7831,22 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN sms_phone_country_code TEXT")
         if "sms_phone_number" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN sms_phone_number TEXT")
+        if "sms_setup_prompted" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_setup_prompted INTEGER NOT NULL DEFAULT 0")
+            conn.execute("UPDATE users SET sms_setup_prompted=1")
+        if "sms_phone_verified" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_phone_verified INTEGER NOT NULL DEFAULT 0")
+        if "sms_verification_code_hash" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_verification_code_hash TEXT")
+        if "sms_verification_expires_at" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_verification_expires_at TEXT")
+        if "sms_verification_country_code" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_verification_country_code TEXT")
+        if "sms_verification_phone_number" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN sms_verification_phone_number TEXT")
         conn.execute("UPDATE users SET sms_enabled=0 WHERE sms_enabled IS NULL")
+        conn.execute("UPDATE users SET sms_setup_prompted=0 WHERE sms_setup_prompted IS NULL")
+        conn.execute("UPDATE users SET sms_phone_verified=0 WHERE sms_phone_verified IS NULL")
         conn.execute(
             "UPDATE users SET sms_phone_country_code=? WHERE sms_phone_country_code IS NULL OR TRIM(sms_phone_country_code)=''",
             (_normalize_sms_country_code(DEFAULT_SMS_COUNTRY_CODE, default="+45", strict=False),),
@@ -7938,11 +7960,33 @@ def _sms_e164(country_code: str, phone_number: str) -> str:
     return f"{cc}{number_no_leading}"
 
 
+def _sms_verification_hash(user_id: int, code: str) -> str:
+    secret = str(getattr(app, "secret_key", "") or "")
+    raw = f"{int(user_id)}:{str(code or '').strip()}:{secret}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _clear_sms_verification_conn(conn: sqlite3.Connection, user_id: int) -> None:
+    conn.execute(
+        """
+        UPDATE users
+        SET sms_verification_code_hash='',
+            sms_verification_expires_at='',
+            sms_verification_country_code='',
+            sms_verification_phone_number=''
+        WHERE id=?
+        """,
+        (int(user_id),),
+    )
+
+
 def _load_user_sms_profile(user_id: int) -> dict[str, Any]:
     with closing(get_conn()) as conn:
         row = conn.execute(
             """
-            SELECT sms_enabled, sms_phone_country_code, sms_phone_number
+            SELECT
+                sms_enabled, sms_phone_country_code, sms_phone_number,
+                sms_setup_prompted, sms_phone_verified
             FROM users
             WHERE id=?
             """,
@@ -7961,6 +8005,8 @@ def _load_user_sms_profile(user_id: int) -> dict[str, Any]:
         "sms_phone_country_code": country_code,
         "sms_phone_number": phone_number,
         "sms_phone_e164": _sms_e164(country_code, phone_number),
+        "sms_setup_prompted": bool(int(row["sms_setup_prompted"] or 0)) if row else False,
+        "sms_phone_verified": bool(int(row["sms_phone_verified"] or 0)) if row else False,
     }
 
 
@@ -8187,6 +8233,7 @@ def _project_sms_state(project_row: sqlite3.Row) -> dict[str, Any]:
         "owner_user_id": owner_user_id,
         "owner_username": owner_username or str((row["username"] if row is not None else "") or ""),
         "recipient_e164": recipient_e164,
+        "sms_phone_verified": bool(profile.get("sms_phone_verified")),
     }
 
 
@@ -9513,6 +9560,8 @@ def serialize_print_ready_project(
         "total_quantity": total_quantity,
         "files": files,
         "sms_available": bool(sms_state.get("available")),
+        "sms_recipient_e164": str(sms_state.get("recipient_e164") or ""),
+        "sms_phone_verified": bool(sms_state.get("sms_phone_verified")),
         "zip_url": url_for("api_print_ready_zip", project_id=project_id),
         "pdf_url": url_for("api_print_ready_pdf", project_id=project_id),
     }
@@ -10294,6 +10343,8 @@ def api_me():
                 "sms_phone_country_code": str(sms_profile.get("sms_phone_country_code") or ""),
                 "sms_phone_number": str(sms_profile.get("sms_phone_number") or ""),
                 "sms_phone_e164": str(sms_profile.get("sms_phone_e164") or ""),
+                "sms_setup_prompted": bool(sms_profile.get("sms_setup_prompted")),
+                "sms_phone_verified": bool(sms_profile.get("sms_phone_verified")),
             },
         }
     )
@@ -10303,7 +10354,12 @@ def api_me():
 @login_required
 def api_me_profile():
     if request.method == "GET":
-        return jsonify({"ok": True, "profile": _load_user_sms_profile(int(current_user.id))})
+        profile = _load_user_sms_profile(int(current_user.id))
+        profile["sms_onboarding_required"] = (
+            str(current_user.role or "").lower() != "admin"
+            and not bool(profile.get("sms_setup_prompted"))
+        )
+        return jsonify({"ok": True, "profile": profile})
 
     body = request.get_json(silent=True) or {}
     sms_enabled = bool(parse_bool(body.get("sms_enabled")))
@@ -10326,11 +10382,95 @@ def api_me_profile():
         conn.execute(
             """
             UPDATE users
-            SET sms_enabled=?, sms_phone_country_code=?, sms_phone_number=?
+            SET sms_enabled=?,
+                sms_phone_country_code=?,
+                sms_phone_number=?,
+                sms_setup_prompted=1,
+                sms_phone_verified=?
             WHERE id=?
             """,
             (
                 1 if sms_enabled else 0,
+                country_code,
+                phone_number,
+                1 if sms_enabled else 0,
+                int(current_user.id),
+            ),
+        )
+        _clear_sms_verification_conn(conn, int(current_user.id))
+        conn.commit()
+
+    log_activity(
+        kind="user",
+        action="profile-update",
+        message="SMS profil opdateret",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=str(current_user.username or ""),
+    )
+    return jsonify({"ok": True, "profile": _load_user_sms_profile(int(current_user.id))})
+
+
+@app.route("/api/me/sms-onboarding/skip", methods=["POST"])
+@login_required
+def api_me_sms_onboarding_skip():
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET sms_setup_prompted=1,
+                sms_enabled=0,
+                sms_phone_verified=0
+            WHERE id=?
+            """,
+            (int(current_user.id),),
+        )
+        _clear_sms_verification_conn(conn, int(current_user.id))
+        conn.commit()
+
+    return jsonify({"ok": True, "profile": _load_user_sms_profile(int(current_user.id))})
+
+
+@app.route("/api/me/sms-onboarding/send-code", methods=["POST"])
+@login_required
+def api_me_sms_onboarding_send_code():
+    body = request.get_json(silent=True) or {}
+    try:
+        country_code = _normalize_sms_country_code(
+            body.get("sms_phone_country_code"),
+            default=DEFAULT_SMS_COUNTRY_CODE,
+            strict=True,
+        )
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    phone_number = _normalize_sms_phone_number(body.get("sms_phone_number"))
+    if len(phone_number) < 4 or len(phone_number) > 15:
+        return jsonify({"ok": False, "error": "Telefonnummer skal være mellem 4 og 15 cifre"}), 400
+
+    recipient_e164 = _sms_e164(country_code, phone_number)
+    if not recipient_e164:
+        return jsonify({"ok": False, "error": "Telefonnummer er ugyldigt"}), 400
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(seconds=SMS_VERIFICATION_TTL_SECONDS)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET sms_verification_code_hash=?,
+                sms_verification_expires_at=?,
+                sms_verification_country_code=?,
+                sms_verification_phone_number=?,
+                sms_phone_verified=0
+            WHERE id=?
+            """,
+            (
+                _sms_verification_hash(int(current_user.id), code),
+                expires_at,
                 country_code,
                 phone_number,
                 int(current_user.id),
@@ -10338,10 +10478,93 @@ def api_me_profile():
         )
         conn.commit()
 
+    ok, error_text = _send_gateway_sms(
+        message=f"Din FjordShare SMS-kode er {code}. Koden udløber om 60 sekunder.",
+        recipient_e164=recipient_e164,
+    )
+    if not ok:
+        with closing(get_conn()) as conn:
+            _clear_sms_verification_conn(conn, int(current_user.id))
+            conn.commit()
+        return jsonify({"ok": False, "error": error_text or "Kunne ikke sende SMS-kode"}), 400
+
+    log_activity(
+        kind="sms",
+        action="verify-code-send",
+        message="SMS verificeringskode sendt",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=_sms_gateway_msisdn(recipient_e164),
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "expires_in": SMS_VERIFICATION_TTL_SECONDS,
+            "sms_phone_e164": recipient_e164,
+        }
+    )
+
+
+@app.route("/api/me/sms-onboarding/verify", methods=["POST"])
+@login_required
+def api_me_sms_onboarding_verify():
+    body = request.get_json(silent=True) or {}
+    code = re.sub(r"\D", "", str(body.get("code") or ""))
+    if len(code) != 6:
+        return jsonify({"ok": False, "error": "Indtast den 6-cifrede kode"}), 400
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                sms_verification_code_hash,
+                sms_verification_expires_at,
+                sms_verification_country_code,
+                sms_verification_phone_number
+            FROM users
+            WHERE id=?
+            """,
+            (int(current_user.id),),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Brugeren findes ikke"}), 404
+
+        expected_hash = str(row["sms_verification_code_hash"] or "").strip()
+        expires_at = parse_iso_or_none(row["sms_verification_expires_at"])
+        if not expected_hash or expires_at is None:
+            return jsonify({"ok": False, "error": "Der er ingen aktiv SMS-kode"}), 400
+        if expires_at < datetime.now(timezone.utc):
+            _clear_sms_verification_conn(conn, int(current_user.id))
+            conn.commit()
+            return jsonify({"ok": False, "error": "SMS-koden er udløbet. Send en ny kode."}), 400
+        if not secrets.compare_digest(expected_hash, _sms_verification_hash(int(current_user.id), code)):
+            return jsonify({"ok": False, "error": "SMS-koden er forkert"}), 400
+
+        country_code = _normalize_sms_country_code(
+            row["sms_verification_country_code"],
+            default=DEFAULT_SMS_COUNTRY_CODE,
+            strict=False,
+        )
+        phone_number = _normalize_sms_phone_number(row["sms_verification_phone_number"])
+        conn.execute(
+            """
+            UPDATE users
+            SET sms_enabled=1,
+                sms_phone_country_code=?,
+                sms_phone_number=?,
+                sms_setup_prompted=1,
+                sms_phone_verified=1
+            WHERE id=?
+            """,
+            (country_code, phone_number, int(current_user.id)),
+        )
+        _clear_sms_verification_conn(conn, int(current_user.id))
+        conn.commit()
+
     log_activity(
         kind="user",
-        action="profile-update",
-        message="SMS profil opdateret",
+        action="sms-verified",
+        message="SMS profil verificeret og aktiveret",
         level="info",
         actor=str(current_user.username or ""),
         target=str(current_user.username or ""),
