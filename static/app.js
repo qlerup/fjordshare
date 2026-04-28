@@ -87,6 +87,9 @@
     currentPrintReadyProjectId: 0,
     smsConfirmResolver: null,
     smsConfirmContext: "",
+    smsGatewayTokenConfigured: false,
+    smsGatewayTokenPreview: "",
+    smsGatewayTokenPreviewActive: false,
   };
 
   const els = {
@@ -7920,18 +7923,47 @@
     }
   }
 
+  function showSmsTokenPreview() {
+    if (!els.smsGatewayTokenInput) return;
+    if (!state.smsGatewayTokenConfigured || !state.smsGatewayTokenPreview) {
+      state.smsGatewayTokenPreviewActive = false;
+      els.smsGatewayTokenInput.type = "password";
+      els.smsGatewayTokenInput.value = "";
+      els.smsGatewayTokenInput.placeholder = "Indsæt token";
+      return;
+    }
+    state.smsGatewayTokenPreviewActive = true;
+    els.smsGatewayTokenInput.type = "text";
+    els.smsGatewayTokenInput.value = state.smsGatewayTokenPreview;
+    els.smsGatewayTokenInput.placeholder = "Skriv nyt token ved ændring";
+  }
+
+  function beginSmsTokenEdit() {
+    if (!els.smsGatewayTokenInput || !state.smsGatewayTokenPreviewActive) return;
+    state.smsGatewayTokenPreviewActive = false;
+    els.smsGatewayTokenInput.type = "password";
+    els.smsGatewayTokenInput.value = "";
+    els.smsGatewayTokenInput.placeholder = "Skriv nyt token";
+  }
+
+  function restoreSmsTokenPreviewIfEmpty() {
+    if (!els.smsGatewayTokenInput) return;
+    const tokenValue = String(els.smsGatewayTokenInput.value || "").trim();
+    if (!tokenValue && state.smsGatewayTokenConfigured) {
+      showSmsTokenPreview();
+    }
+  }
+
   function applySmsSettings(data) {
     const enabled = !!(data && data.enabled);
     const sender = String((data && data.sender) || "");
     const tokenConfigured = !!(data && data.token_configured);
+    const tokenPreview = String((data && data.token_preview) || "");
+    state.smsGatewayTokenConfigured = tokenConfigured;
+    state.smsGatewayTokenPreview = tokenPreview;
     if (els.smsGatewayEnabledChk) els.smsGatewayEnabledChk.checked = enabled;
     if (els.smsGatewaySenderInput) els.smsGatewaySenderInput.value = sender;
-    if (els.smsGatewayTokenInput) {
-      els.smsGatewayTokenInput.value = "";
-      els.smsGatewayTokenInput.placeholder = tokenConfigured
-        ? "Token er gemt (skriv kun ved ændring)"
-        : "Indsæt token";
-    }
+    showSmsTokenPreview();
   }
 
   async function loadSmsSettings() {
@@ -7956,7 +7988,8 @@
     if (state.role !== "admin") return;
     const enabled = !!(els.smsGatewayEnabledChk && els.smsGatewayEnabledChk.checked);
     const sender = String((els.smsGatewaySenderInput && els.smsGatewaySenderInput.value) || "").trim();
-    const token = String((els.smsGatewayTokenInput && els.smsGatewayTokenInput.value) || "").trim();
+    const rawToken = String((els.smsGatewayTokenInput && els.smsGatewayTokenInput.value) || "").trim();
+    const token = state.smsGatewayTokenPreviewActive && rawToken === state.smsGatewayTokenPreview ? "" : rawToken;
 
     try {
       setSmsSettingsFormState({ busy: true });
@@ -7969,7 +8002,7 @@
       showStatus(
         els.smsStatus,
         secure
-          ? "SMS indstillinger gemt. Token vises ikke af sikkerhedshensyn."
+          ? "SMS indstillinger gemt. Token vises maskeret."
           : "SMS indstillinger gemt, men token er ikke krypteret uden SMS_TOKEN_ENCRYPTION_KEY.",
         secure ? "ok" : "error",
       );
@@ -11464,7 +11497,12 @@
       els.smsGatewaySenderInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
     }
     if (els.smsGatewayTokenInput) {
-      els.smsGatewayTokenInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
+      els.smsGatewayTokenInput.addEventListener("focus", beginSmsTokenEdit);
+      els.smsGatewayTokenInput.addEventListener("input", () => {
+        state.smsGatewayTokenPreviewActive = false;
+        showStatus(els.smsStatus, "");
+      });
+      els.smsGatewayTokenInput.addEventListener("blur", restoreSmsTokenPreviewIfEmpty);
     }
 
     if (els.createUserBtn) {

@@ -8025,6 +8025,13 @@ def _store_sms_gateway_token(token: str) -> None:
     set_setting(SMS_SETTING_TOKEN_KEY, "")
 
 
+def _sms_token_preview(token: str) -> str:
+    value = str(token or "").strip()
+    if not value:
+        return ""
+    return f"{value[:5]}............"
+
+
 def _load_sms_gateway_settings() -> dict[str, Any]:
     enabled = bool(parse_bool(get_setting(SMS_SETTING_ENABLED_KEY, "0")))
     sender = str(get_setting(SMS_SETTING_SENDER_KEY, "") or "").strip()
@@ -8035,6 +8042,7 @@ def _load_sms_gateway_settings() -> dict[str, Any]:
         "sender": sender,
         "token": token,
         "token_configured": bool(token),
+        "token_preview": _sms_token_preview(token),
         "encryption_active": encryption_active,
     }
 
@@ -11708,6 +11716,7 @@ def api_settings_sms():
                 "enabled": bool(settings_data.get("enabled")),
                 "sender": str(settings_data.get("sender") or ""),
                 "token_configured": bool(settings_data.get("token_configured")),
+                "token_preview": str(settings_data.get("token_preview") or ""),
                 "encryption_active": bool(settings_data.get("encryption_active")),
             }
         )
@@ -11717,6 +11726,9 @@ def api_settings_sms():
     sender = str(body.get("sender") or "").strip()
     incoming_token = str(body.get("token") or "").strip()
     current_settings = _load_sms_gateway_settings()
+    current_token_preview = str(current_settings.get("token_preview") or "").strip()
+    if incoming_token and incoming_token == current_token_preview:
+        incoming_token = ""
     current_token = str(current_settings.get("token") or "").strip()
     effective_token = incoming_token if incoming_token else current_token
 
@@ -11748,6 +11760,7 @@ def api_settings_sms():
             "enabled": bool(settings_data.get("enabled")),
             "sender": str(settings_data.get("sender") or ""),
             "token_configured": bool(settings_data.get("token_configured")),
+            "token_preview": str(settings_data.get("token_preview") or ""),
             "encryption_active": bool(settings_data.get("encryption_active")),
         }
     )
