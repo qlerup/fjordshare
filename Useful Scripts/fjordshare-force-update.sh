@@ -60,6 +60,72 @@ docker_cmd() {
 	fi
 }
 
+read_env_value() {
+	key="$1"
+	file="$APP_DIR/.env"
+	[ -f "$file" ] || return 1
+	line="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" "$file" | tail -n 1 || true)"
+	[ -n "$line" ] || return 1
+	value="${line#*=}"
+	printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//'
+}
+
+generate_sms_token_encryption_key() {
+	if command -v openssl >/dev/null 2>&1; then
+		openssl rand -base64 32 | tr '+/' '-_'
+		return 0
+	fi
+	if command -v python3 >/dev/null 2>&1; then
+		python3 - <<'PY'
+import base64
+import os
+
+print(base64.urlsafe_b64encode(os.urandom(32)).decode("ascii"))
+PY
+		return 0
+	fi
+	if command -v python >/dev/null 2>&1; then
+		python - <<'PY'
+import base64
+import os
+
+print(base64.urlsafe_b64encode(os.urandom(32)).decode("ascii"))
+PY
+		return 0
+	fi
+	return 1
+}
+
+ensure_sms_token_encryption_key() {
+	file="$APP_DIR/.env"
+	[ -f "$file" ] || return 0
+	current="$(read_env_value SMS_TOKEN_ENCRYPTION_KEY || true)"
+	if [ -n "$current" ]; then
+		return 0
+	fi
+	key="$(generate_sms_token_encryption_key)" || {
+		echo "Advarsel: kunne ikke generere SMS_TOKEN_ENCRYPTION_KEY. Installer openssl eller python3 for krypteret SMS-token."
+		return 0
+	}
+	tmp="${file}.tmp.$$"
+	awk -v key="$key" '
+		BEGIN { done = 0 }
+		/^[[:space:]]*SMS_TOKEN_ENCRYPTION_KEY[[:space:]]*=/ && done == 0 {
+			print "SMS_TOKEN_ENCRYPTION_KEY=" key
+			done = 1
+			next
+		}
+		{ print }
+		END {
+			if (done == 0) {
+				print "SMS_TOKEN_ENCRYPTION_KEY=" key
+			}
+		}
+	' "$file" > "$tmp"
+	mv "$tmp" "$file"
+	echo "==> Tilfojede SMS_TOKEN_ENCRYPTION_KEY til .env"
+}
+
 validate_wait_settings() {
 	case "$WAIT_TIMEOUT_SEC" in
 		*[!0-9]*|"")
@@ -336,6 +402,7 @@ NEW_REV="$(git rev-parse "origin/$REPO_BRANCH")"
 
 if [ -n "$OLD_REV" ] && [ "$OLD_REV" = "$NEW_REV" ] && [ "$FORCE_IMAGE_BUILD" != "1" ]; then
 	cp "$ENV_BACKUP" .env 2>/dev/null || true
+	ensure_sms_token_encryption_key
 	docker_compose up -d
 	wait_for_fjordshare
 	install_missing_dockerfile_packages_fast || true
@@ -346,6 +413,7 @@ fi
 git reset --hard "$NEW_REV"
 git clean -fd
 cp "$ENV_BACKUP" .env 2>/dev/null || true
+ensure_sms_token_encryption_key
 
 CHANGED=""
 if [ -n "$OLD_REV" ]; then

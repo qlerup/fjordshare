@@ -178,6 +178,7 @@ Then open:
 - `BAMBUSTUDIO_LOAD_SETTINGS` (optional direct load)
 - `BAMBUSTUDIO_LOAD_FILAMENTS` (optional direct load)
 - `BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK` (`1`/`0`)
+- `SMS_TOKEN_ENCRYPTION_KEY` (Fernet key for encrypted GatewayAPI token storage; setup/update scripts generate it when missing)
 - `SLICER_PROFILE_MAX_BYTES`
 - `EXPECT_UPLOADS_FSTYPES` (optional mount validation)
 - `EXPECT_THUMBS_FSTYPES` (optional mount validation)

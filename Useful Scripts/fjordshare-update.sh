@@ -139,6 +139,62 @@ read_env_value() {
 	printf '%s' "$value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;s/^"//;s/"$//'
 }
 
+generate_sms_token_encryption_key() {
+	if command -v openssl >/dev/null 2>&1; then
+		openssl rand -base64 32 | tr '+/' '-_'
+		return 0
+	fi
+	if command -v python3 >/dev/null 2>&1; then
+		python3 - <<'PY'
+import base64
+import os
+
+print(base64.urlsafe_b64encode(os.urandom(32)).decode("ascii"))
+PY
+		return 0
+	fi
+	if command -v python >/dev/null 2>&1; then
+		python - <<'PY'
+import base64
+import os
+
+print(base64.urlsafe_b64encode(os.urandom(32)).decode("ascii"))
+PY
+		return 0
+	fi
+	return 1
+}
+
+ensure_sms_token_encryption_key() {
+	file="$APP_DIR/.env"
+	[ -f "$file" ] || return 0
+	current="$(read_env_value SMS_TOKEN_ENCRYPTION_KEY || true)"
+	if [ -n "$current" ]; then
+		return 0
+	fi
+	key="$(generate_sms_token_encryption_key)" || {
+		echo "Advarsel: kunne ikke generere SMS_TOKEN_ENCRYPTION_KEY. Installér openssl eller python3 for krypteret SMS-token."
+		return 0
+	}
+	tmp="${file}.tmp.$$"
+	awk -v key="$key" '
+		BEGIN { done = 0 }
+		/^[[:space:]]*SMS_TOKEN_ENCRYPTION_KEY[[:space:]]*=/ && done == 0 {
+			print "SMS_TOKEN_ENCRYPTION_KEY=" key
+			done = 1
+			next
+		}
+		{ print }
+		END {
+			if (done == 0) {
+				print "SMS_TOKEN_ENCRYPTION_KEY=" key
+			}
+		}
+	' "$file" > "$tmp"
+	mv "$tmp" "$file"
+	echo "==> Tilføjede SMS_TOKEN_ENCRYPTION_KEY til .env"
+}
+
 backup_env_file() {
 	data_dir="${DATA_DIR:-$(read_env_value DATA_DIR || printf '%s' '/opt/fjordshare-data/appdata')}"
 	backup_dir="$data_dir/backups"
@@ -296,6 +352,7 @@ fi
 OLD_REV="$(git rev-parse HEAD 2>/dev/null || true)"
 
 backup_env_file
+ensure_sms_token_encryption_key
 backup_database
 
 echo "==> Henter seneste kode fra origin/$REPO_BRANCH"

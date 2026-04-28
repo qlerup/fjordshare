@@ -196,6 +196,42 @@ detect_host_ip() {
   printf "%s" "$ip_candidate"
 }
 
+generate_sms_token_encryption_key() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 32 | tr '+/' '-_'
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY'
+import base64
+import os
+
+print(base64.urlsafe_b64encode(os.urandom(32)).decode("ascii"))
+PY
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    python - <<'PY'
+import base64
+import os
+
+print(base64.urlsafe_b64encode(os.urandom(32)).decode("ascii"))
+PY
+    return 0
+  fi
+  return 1
+}
+
+ensure_sms_token_encryption_key() {
+  if [ -n "${SMS_TOKEN_ENCRYPTION_KEY:-}" ]; then
+    return 0
+  fi
+  SMS_TOKEN_ENCRYPTION_KEY="$(generate_sms_token_encryption_key)" || {
+    echo "ERROR: Could not generate SMS_TOKEN_ENCRYPTION_KEY. Install openssl or python3 and rerun setup."
+    exit 1
+  }
+}
+
 require_runtime_tools() {
   need_cmd docker
   need_cmd findmnt
@@ -237,7 +273,9 @@ load_env_with_defaults() {
   : "${BAMBUSTUDIO_LOAD_FILAMENTS:=}"
   : "${BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK:=0}"
   : "${BAMBUSTUDIO_SLICE_DEBUG_ALWAYS:=0}"
+  : "${SMS_TOKEN_ENCRYPTION_KEY:=}"
   : "${UI_VERSION_MARKER:=TMP-2026-04-12-07}"
+  ensure_sms_token_encryption_key
 
   : "${EXPECT_DATA_FSTYPES:=}"
   : "${EXPECT_UPLOADS_FSTYPES:=}"
@@ -271,6 +309,7 @@ BAMBUSTUDIO_LOAD_SETTINGS=${BAMBUSTUDIO_LOAD_SETTINGS}
 BAMBUSTUDIO_LOAD_FILAMENTS=${BAMBUSTUDIO_LOAD_FILAMENTS}
 BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK=${BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK}
 BAMBUSTUDIO_SLICE_DEBUG_ALWAYS=${BAMBUSTUDIO_SLICE_DEBUG_ALWAYS}
+SMS_TOKEN_ENCRYPTION_KEY=${SMS_TOKEN_ENCRYPTION_KEY}
 UI_VERSION_MARKER=${UI_VERSION_MARKER}
 EXPECT_DATA_FSTYPES=${EXPECT_DATA_FSTYPES}
 EXPECT_UPLOADS_FSTYPES=${EXPECT_UPLOADS_FSTYPES}
@@ -430,6 +469,7 @@ print_summary() {
   echo "  BAMBUSTUDIO_BIN=${BAMBUSTUDIO_BIN}"
   echo "  BAMBUSTUDIO_TIMEOUT_SEC=${BAMBUSTUDIO_TIMEOUT_SEC}"
   echo "  BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK=${BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK}"
+  echo "  SMS_TOKEN_ENCRYPTION_KEY=set"
   echo "  SETUP_NFS_UPLOADS_ENABLED=${SETUP_NFS_UPLOADS_ENABLED}"
   if is_truthy "$SETUP_NFS_UPLOADS_ENABLED"; then
     echo "  SETUP_NFS_EXPORT=${SETUP_NFS_EXPORT}"
