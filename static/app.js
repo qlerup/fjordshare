@@ -463,6 +463,10 @@
     const number = normalizeSmsPhoneNumberClient(phoneNumber);
     if (!cc || !number) return "";
     const noLeadingZero = number.replace(/^0+/, "") || number;
+    const ccDigits = cc.replace(/\D/g, "");
+    if (ccDigits && noLeadingZero.startsWith(ccDigits) && noLeadingZero.length > ccDigits.length) {
+      return `+${noLeadingZero}`;
+    }
     return `${cc}${noLeadingZero}`;
   }
 

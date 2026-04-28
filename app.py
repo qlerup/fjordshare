@@ -7931,6 +7931,9 @@ def _sms_e164(country_code: str, phone_number: str) -> str:
     if not cc or not number:
         return ""
     number_no_leading = number.lstrip("0") or number
+    cc_digits = re.sub(r"\D", "", cc)
+    if cc_digits and number_no_leading.startswith(cc_digits) and len(number_no_leading) > len(cc_digits):
+        return f"+{number_no_leading}"
     return f"{cc}{number_no_leading}"
 
 
@@ -7997,12 +8000,34 @@ def _decrypt_sms_token(token_value: str) -> str:
         return ""
 
 
+def _looks_like_fernet_token(token_value: str) -> bool:
+    value = str(token_value or "").strip()
+    if not value:
+        return False
+    try:
+        padded = value + ("=" * (-len(value) % 4))
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
+    except Exception:
+        return False
+    return bool(decoded) and decoded[0] == 0x80
+
+
 def _load_sms_gateway_token() -> str:
     enc = str(get_setting(SMS_SETTING_TOKEN_ENC_KEY, "") or "").strip()
     if enc:
         plain = _decrypt_sms_token(enc)
         if plain:
             return plain
+        # Older installs could store plaintext in the encrypted setting when
+        # SMS_TOKEN_ENCRYPTION_KEY was not configured yet. Migrate that forward
+        # once a valid key becomes available, but do not treat real Fernet
+        # ciphertext as plaintext if the key was changed.
+        if _sms_token_fernet() is not None and not _looks_like_fernet_token(enc):
+            encrypted = _encrypt_sms_token(enc)
+            if encrypted and encrypted != enc:
+                set_setting(SMS_SETTING_TOKEN_ENC_KEY, encrypted)
+                set_setting(SMS_SETTING_TOKEN_KEY, "")
+            return enc
 
     legacy_plain = str(get_setting(SMS_SETTING_TOKEN_KEY, "") or "").strip()
     if not legacy_plain:
@@ -8073,7 +8098,10 @@ def _send_gateway_sms(*, message: str, recipient_e164: str) -> tuple[bool, str]:
         "recipients": [{"msisdn": int(msisdn)}],
     }
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    auth_raw = f"{token}:".encode("utf-8")
+    try:
+        auth_raw = f"{token}:".encode("ascii")
+    except UnicodeEncodeError:
+        return False, "SMS token indeholder ugyldige tegn"
     auth = base64.b64encode(auth_raw).decode("ascii")
 
     req = urllib_request.Request(
@@ -8106,13 +8134,11 @@ def _send_gateway_sms(*, message: str, recipient_e164: str) -> tuple[bool, str]:
         return False, str(exc)[:240] or "Uventet SMS fejl"
 
 
-def _sms_text_project_ready(owner_name: str, share_link: str) -> str:
+def _sms_text_project_ready(owner_name: str) -> str:
     name = str(owner_name or "").strip() or "kunde"
-    link = str(share_link or "").strip()
     return (
         f"Hej {name}\n\n"
         "Dit projekt er nu færdigprintet. Pakken med dine ting, vil nu blive pakket, og sendes snarest.\n\n"
-        f"{link}\n\n"
         "Med venlig hilsen\n"
         "Christian Glerup"
     )
@@ -8265,12 +8291,7 @@ def _send_project_printed_sms(
     if not bool(sms_state.get("available")):
         return False, "SMS er ikke aktiveret for denne bruger/profil"
 
-    share_link = _create_project_printed_share(
-        project_row=project_row,
-        file_ids=printed_file_ids,
-        actor_user_id=actor_user_id,
-    )
-    sms_text = _sms_text_project_ready(str(sms_state.get("owner_username") or ""), share_link)
+    sms_text = _sms_text_project_ready(str(sms_state.get("owner_username") or ""))
     ok, error_text = _send_gateway_sms(
         message=sms_text,
         recipient_e164=str(sms_state.get("recipient_e164") or ""),
