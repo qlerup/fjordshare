@@ -653,12 +653,8 @@ def _ensure_storage_dirs() -> None:
     SLICER_PROFILE_PRINT_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_FILAMENT_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        # App onboarding prompt flag (generic, non-SMS)
-        if "app_onboarding_seen_v1" not in user_cols:
-            conn.execute("ALTER TABLE users ADD COLUMN app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0")
-        conn.execute("UPDATE users SET app_onboarding_seen_v1=COALESCE(app_onboarding_seen_v1, 0)")
-        _migrate_legacy_slicer_profile_files()
-        _normalize_existing_uploaded_profile_json_files()
+    _migrate_legacy_slicer_profile_files()
+    _normalize_existing_uploaded_profile_json_files()
 
 
 def _run_startup_preflight() -> None:
