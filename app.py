@@ -10141,6 +10141,26 @@ _run_startup_preflight()
 app = Flask(__name__)
 app.secret_key = _load_or_create_secret()
 
+# Serve common browser icon endpoints explicitly to ensure favicon shows
+@app.route("/favicon.ico")
+def _serve_favicon() -> Any:
+    path = ROOT_DIR / "static" / "logos" / "web" / "favicon.ico"
+    if not path.exists():
+        # Fallback to PNG if ICO is missing
+        png_path = ROOT_DIR / "static" / "logos" / "web" / "favicon-32x32.png"
+        if png_path.exists():
+            return send_file(str(png_path), mimetype="image/png")
+        return ("", 404)
+    return send_file(str(path), mimetype="image/x-icon")
+
+
+@app.route("/apple-touch-icon.png")
+def _serve_apple_touch_icon() -> Any:
+    path = ROOT_DIR / "static" / "logos" / "web" / "apple-touch-icon.png"
+    if not path.exists():
+        return ("", 404)
+    return send_file(str(path), mimetype="image/png")
+
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 
