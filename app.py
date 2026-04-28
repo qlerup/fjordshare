@@ -10481,7 +10481,7 @@ def api_me_sms_onboarding_send_code():
         conn.commit()
 
     ok, error_text = _send_gateway_sms(
-        message=f"Din FjordShare SMS-kode er {code}. Koden udløber om 60 sekunder.",
+        message=f"Din Fjord3D SMS-kode er {code}. Koden udløber om 60 sekunder.",
         recipient_e164=recipient_e164,
     )
     if not ok:
@@ -12139,7 +12139,7 @@ def api_settings_sms_test():
         return jsonify({"ok": False, "error": f"Afsender navn må maks være {SMS_SENDER_MAX_LENGTH} tegn"}), 400
 
     recipient_e164 = recipient_raw if recipient_raw.startswith("+") else _sms_e164(DEFAULT_SMS_COUNTRY_CODE, recipient_raw)
-    sms_text = "FjordShare test-SMS. Hvis du modtager denne besked, virker GatewayAPI opsætningen."
+    sms_text = "Fjord3D test-SMS. Hvis du modtager denne besked, virker GatewayAPI opsætningen."
     ok, error_text = _send_gateway_sms(
         message=sms_text,
         recipient_e164=recipient_e164,

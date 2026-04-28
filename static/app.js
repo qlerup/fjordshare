@@ -1453,8 +1453,8 @@
     if (els.contentHeader) {
       els.contentHeader.classList.toggle("hidden", target === "files");
     }
-    const tabMeta = TABS[target] || { title: "FjordShare", subtitle: "" };
-    if (els.pageTitle) els.pageTitle.textContent = tabMeta.title || "FjordShare";
+    const tabMeta = TABS[target] || { title: "Fjord3D", subtitle: "" };
+    if (els.pageTitle) els.pageTitle.textContent = tabMeta.title || "Fjord3D";
     if (els.pageSubtitle) els.pageSubtitle.textContent = tabMeta.subtitle || "";
 
     if (target === "settings" && state.role === "admin") {

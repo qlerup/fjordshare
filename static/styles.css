@@ -221,7 +221,9 @@ input[type="checkbox"] {
   border-radius: 8px;
   background: linear-gradient(170deg, #20c8ff, #2dd4bf);
   color: #03111f;
+  font-size: 0.78rem;
   font-weight: 700;
+  line-height: 1;
 }
 
 .logo-title {
