@@ -47,6 +47,12 @@ from flask_login import (
 from werkzeug.security import check_password_hash, generate_password_hash
 
 try:
+    from cryptography.fernet import Fernet, InvalidToken as FernetInvalidToken
+except Exception:
+    Fernet = None
+    FernetInvalidToken = Exception
+
+try:
     from PIL import Image, ImageDraw, ImageFont, ImageOps
 except Exception:
     Image = None
@@ -107,8 +113,10 @@ APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Copenhagen").strip() or "Europe
 DATE_FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DEFAULT_SMS_COUNTRY_CODE = str(os.getenv("DEFAULT_SMS_COUNTRY_CODE", "+45")).strip() or "+45"
 SMS_SETTING_ENABLED_KEY = "sms_gateway_enabled"
-SMS_SETTING_TOKEN_KEY = "sms_gateway_token"
+SMS_SETTING_TOKEN_KEY = "sms_gateway_token"  # legacy plaintext key
+SMS_SETTING_TOKEN_ENC_KEY = "sms_gateway_token_enc"
 SMS_SETTING_SENDER_KEY = "sms_gateway_sender"
+SMS_TOKEN_ENCRYPTION_KEY = str(os.getenv("SMS_TOKEN_ENCRYPTION_KEY", "") or "").strip()
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
@@ -7935,15 +7943,82 @@ def _load_user_sms_profile(user_id: int) -> dict[str, Any]:
     }
 
 
+def _sms_token_fernet() -> Optional[Any]:
+    if not SMS_TOKEN_ENCRYPTION_KEY or Fernet is None:
+        return None
+    try:
+        return Fernet(SMS_TOKEN_ENCRYPTION_KEY.encode("utf-8"))
+    except Exception:
+        return None
+
+
+def _encrypt_sms_token(token: str) -> str:
+    value = str(token or "").strip()
+    if not value:
+        return ""
+    fernet = _sms_token_fernet()
+    if fernet is None:
+        return value
+    try:
+        return str(fernet.encrypt(value.encode("utf-8")), "utf-8")
+    except Exception:
+        return value
+
+
+def _decrypt_sms_token(token_value: str) -> str:
+    value = str(token_value or "").strip()
+    if not value:
+        return ""
+    fernet = _sms_token_fernet()
+    if fernet is None:
+        return value
+    try:
+        return str(fernet.decrypt(value.encode("utf-8")), "utf-8")
+    except FernetInvalidToken:
+        return ""
+    except Exception:
+        return ""
+
+
+def _load_sms_gateway_token() -> str:
+    enc = str(get_setting(SMS_SETTING_TOKEN_ENC_KEY, "") or "").strip()
+    if enc:
+        plain = _decrypt_sms_token(enc)
+        if plain:
+            return plain
+
+    legacy_plain = str(get_setting(SMS_SETTING_TOKEN_KEY, "") or "").strip()
+    if not legacy_plain:
+        return ""
+
+    # Auto-migrate gammel plaintext token til krypteret felt, hvis krypteringsnøgle er sat.
+    if _sms_token_fernet() is not None:
+        encrypted = _encrypt_sms_token(legacy_plain)
+        if encrypted and encrypted != legacy_plain:
+            set_setting(SMS_SETTING_TOKEN_ENC_KEY, encrypted)
+            set_setting(SMS_SETTING_TOKEN_KEY, "")
+    return legacy_plain
+
+
+def _store_sms_gateway_token(token: str) -> None:
+    plain = str(token or "").strip()
+    encrypted = _encrypt_sms_token(plain)
+    set_setting(SMS_SETTING_TOKEN_ENC_KEY, encrypted)
+    # Nulstil legacy plaintext-felt.
+    set_setting(SMS_SETTING_TOKEN_KEY, "")
+
+
 def _load_sms_gateway_settings() -> dict[str, Any]:
     enabled = bool(parse_bool(get_setting(SMS_SETTING_ENABLED_KEY, "0")))
-    token = str(get_setting(SMS_SETTING_TOKEN_KEY, "") or "").strip()
     sender = str(get_setting(SMS_SETTING_SENDER_KEY, "") or "").strip()
+    token = _load_sms_gateway_token()
+    encryption_active = _sms_token_fernet() is not None
     return {
         "enabled": enabled,
         "sender": sender,
         "token": token,
         "token_configured": bool(token),
+        "encryption_active": encryption_active,
     }
 
 
@@ -11163,22 +11238,34 @@ def api_settings_sms():
 
     if request.method == "GET":
         settings_data = _load_sms_gateway_settings()
-        return jsonify({"ok": True, **settings_data})
+        return jsonify(
+            {
+                "ok": True,
+                "enabled": bool(settings_data.get("enabled")),
+                "sender": str(settings_data.get("sender") or ""),
+                "token_configured": bool(settings_data.get("token_configured")),
+                "encryption_active": bool(settings_data.get("encryption_active")),
+            }
+        )
 
     body = request.get_json(silent=True) or {}
     enabled = bool(parse_bool(body.get("enabled")))
     sender = str(body.get("sender") or "").strip()
-    token = str(body.get("token") or "").strip()
+    incoming_token = str(body.get("token") or "").strip()
+    current_settings = _load_sms_gateway_settings()
+    current_token = str(current_settings.get("token") or "").strip()
+    effective_token = incoming_token if incoming_token else current_token
 
     if sender and len(sender) > 32:
         return jsonify({"ok": False, "error": "Afsender navn må maks være 32 tegn"}), 400
-    if enabled and not token:
+    if enabled and not effective_token:
         return jsonify({"ok": False, "error": "Indsæt token før SMS kan aktiveres"}), 400
     if enabled and not sender:
         return jsonify({"ok": False, "error": "Indsæt afsender navn før SMS kan aktiveres"}), 400
 
     set_setting(SMS_SETTING_ENABLED_KEY, "1" if enabled else "0")
-    set_setting(SMS_SETTING_TOKEN_KEY, token)
+    if incoming_token:
+        _store_sms_gateway_token(incoming_token)
     set_setting(SMS_SETTING_SENDER_KEY, sender)
 
     log_activity(
@@ -11191,7 +11278,15 @@ def api_settings_sms():
     )
 
     settings_data = _load_sms_gateway_settings()
-    return jsonify({"ok": True, **settings_data})
+    return jsonify(
+        {
+            "ok": True,
+            "enabled": bool(settings_data.get("enabled")),
+            "sender": str(settings_data.get("sender") or ""),
+            "token_configured": bool(settings_data.get("token_configured")),
+            "encryption_active": bool(settings_data.get("encryption_active")),
+        }
+    )
 
 
 @app.route("/api/settings/dns/effective", methods=["GET"])

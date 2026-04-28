@@ -288,6 +288,7 @@
         <div class="panel">
           <h3>SMS Gateway (GatewayAPI)</h3>
           <p class="hint">Aktivér/deaktivér SMS globalt, og gem token + afsendernavn.</p>
+          <p class="hint">Sæt <code>SMS_TOKEN_ENCRYPTION_KEY</code> i miljøet for krypteret lagring af token.</p>
           <div class="form-grid">
             <div>
               <label><input id="smsGatewayEnabledChk" type="checkbox"> Aktivér SMS gateway</label>
@@ -299,6 +300,7 @@
             <div>
               <label for="smsGatewayTokenInput">Gateway token</label>
               <input id="smsGatewayTokenInput" class="input" type="password" placeholder="Indsæt token">
+              <p class="hint">Token vises aldrig igen. Efter første gem skal feltet kun udfyldes ved ændring.</p>
             </div>
           </div>
           <div class="toolbar end">

@@ -7833,10 +7833,15 @@
   function applySmsSettings(data) {
     const enabled = !!(data && data.enabled);
     const sender = String((data && data.sender) || "");
-    const token = String((data && data.token) || "");
+    const tokenConfigured = !!(data && data.token_configured);
     if (els.smsGatewayEnabledChk) els.smsGatewayEnabledChk.checked = enabled;
     if (els.smsGatewaySenderInput) els.smsGatewaySenderInput.value = sender;
-    if (els.smsGatewayTokenInput) els.smsGatewayTokenInput.value = token;
+    if (els.smsGatewayTokenInput) {
+      els.smsGatewayTokenInput.value = "";
+      els.smsGatewayTokenInput.placeholder = tokenConfigured
+        ? "Token er gemt (skriv kun ved ændring)"
+        : "Indsæt token";
+    }
   }
 
   async function loadSmsSettings() {
@@ -7845,7 +7850,11 @@
       setSmsSettingsFormState({ busy: true });
       const data = await api("/api/settings/sms");
       applySmsSettings(data || {});
-      showStatus(els.smsStatus, "");
+      if (!(data && data.encryption_active)) {
+        showStatus(els.smsStatus, "OBS: Sæt SMS_TOKEN_ENCRYPTION_KEY for krypteret token-lagring.", "error");
+      } else {
+        showStatus(els.smsStatus, "");
+      }
     } catch (err) {
       showStatus(els.smsStatus, err.message || "Kunne ikke hente SMS indstillinger", "error");
     } finally {
@@ -7866,7 +7875,14 @@
         body: { enabled, sender, token },
       });
       applySmsSettings(data || {});
-      showStatus(els.smsStatus, "SMS indstillinger gemt.", "ok");
+      const secure = !!(data && data.encryption_active);
+      showStatus(
+        els.smsStatus,
+        secure
+          ? "SMS indstillinger gemt. Token vises ikke af sikkerhedshensyn."
+          : "SMS indstillinger gemt, men token er ikke krypteret uden SMS_TOKEN_ENCRYPTION_KEY.",
+        secure ? "ok" : "error",
+      );
     } catch (err) {
       showStatus(els.smsStatus, err.message || "Kunne ikke gemme SMS indstillinger", "error");
     } finally {
