@@ -482,6 +482,28 @@
   </main>
 </div>
 
+<!-- Mobile bottom navigation and sidebar backdrop -->
+<nav id="mobileBottomNav" class="mobile-bottom-nav" aria-label="Mobil menu">
+  <button class="mobile-nav-item" data-mobile-action="navigate" type="button" aria-label="Åbn navigation">
+    <span class="mobile-nav-icon" aria-hidden="true">☰</span>
+    <span class="mobile-nav-label">Menu</span>
+  </button>
+  <button class="mobile-nav-item" data-mobile-action="files" type="button" aria-label="Gå til mapper">
+    <span class="mobile-nav-icon" aria-hidden="true">📂</span>
+    <span class="mobile-nav-label">Filer</span>
+  </button>
+  <button class="mobile-nav-item" data-mobile-action="profile" type="button" aria-label="Åbn profil">
+    <span class="mobile-nav-icon" aria-hidden="true">👤</span>
+    <span class="mobile-nav-label">Profil</span>
+  </button>
+  <button class="mobile-nav-item admin-only" data-mobile-action="settings" type="button" aria-label="Indstillinger">
+    <span class="mobile-nav-icon" aria-hidden="true">⚙️</span>
+    <span class="mobile-nav-label">Indstillinger</span>
+  </button>
+  
+</nav>
+<div id="mobileSidebarBackdrop" class="mobile-sidebar-backdrop hidden" aria-hidden="true"></div>
+
 <div id="printReadyModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card print-ready-modal-card">

@@ -359,6 +359,45 @@ input[type="checkbox"] {
   font-size: 0.92rem;
 }
 
+/* --- Mobile bottom navigation (inspired by FjordLens) --- */
+.mobile-bottom-nav {
+  display: none; /* shown via media query */
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9997;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  gap: 8px;
+}
+.mobile-nav-item {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 12px;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px;
+  cursor: pointer;
+  flex: 1 1 0;
+}
+.mobile-nav-icon { font-size: 1rem; line-height: 1; }
+.mobile-nav-label { font-size: 0.7rem; line-height: 1; }
+
+.mobile-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 9996;
+}
+.mobile-sidebar-backdrop.hidden { display: none; }
+
 .stats {
   display: flex;
   gap: 0;
@@ -2760,6 +2799,30 @@ input[type="checkbox"] {
   .main {
     padding-bottom: 80px;
   }
+
+  /* Hide inline user/footer strip; exposed via bottom nav -> Profil */
+  .sidebar-footer { display: none; }
+
+  /* Convert sidebar to drawer: hidden by default, shown when body has mobile-drawer-open */
+  .sidebar { display: none; }
+  body.mobile-drawer-open .sidebar {
+    display: block;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(84vw, 340px);
+    max-width: 95vw;
+    z-index: 9998;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    overflow: auto;
+  }
+  #mobileSidebarBackdrop { display: none; }
+  body.mobile-drawer-open #mobileSidebarBackdrop { display: block; }
+
+  /* Show mobile bottom nav */
+  .mobile-bottom-nav { display: flex; }
 }
 
 @media (max-width: 760px) {

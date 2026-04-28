@@ -10661,6 +10661,17 @@
       });
     }
 
+    // Close drawer on sidebar navigation (mobile)
+    if (els.sidebarNav) {
+      els.sidebarNav.addEventListener("click", () => {
+        if (window.innerWidth <= 1000) {
+          document.body.classList.remove("mobile-drawer-open");
+          const backdrop = document.getElementById("mobileSidebarBackdrop");
+          if (backdrop) backdrop.classList.add("hidden");
+        }
+      });
+    }
+
     if (els.settingsTabs) {
       els.settingsTabs.addEventListener("click", async (event) => {
         const btn = event.target.closest(".tab-btn[data-settings-tab]");
@@ -12065,10 +12076,56 @@
     bindSlicerProfileCardDropZones();
   }
 
+  function bindMobileNav() {
+    const bottom = document.getElementById("mobileBottomNav");
+    const backdrop = document.getElementById("mobileSidebarBackdrop");
+    if (!bottom) return;
+
+    bottom.addEventListener("click", async (event) => {
+      const btn = event.target.closest(".mobile-nav-item");
+      if (!btn) return;
+      const action = String(btn.dataset.mobileAction || "");
+      if (action === "navigate") {
+        document.body.classList.toggle("mobile-drawer-open");
+        if (backdrop) backdrop.classList.toggle("hidden", !document.body.classList.contains("mobile-drawer-open"));
+        return;
+      }
+      if (action === "files") {
+        try {
+          setTab("files");
+          if (els.folderSelect) {
+            els.folderSelect.value = String(state.homeFolder || "");
+            state.currentFolder = els.folderSelect.value;
+          }
+          await loadFiles();
+        } catch (_) {}
+      } else if (action === "profile") {
+        setTab("profile");
+        loadMyProfile().catch(() => {});
+      } else if (action === "settings") {
+        if (state.role === "admin") {
+          setTab("settings");
+        }
+      }
+      // Close drawer when a non-navigate action is taken
+      document.body.classList.remove("mobile-drawer-open");
+      if (backdrop) backdrop.classList.add("hidden");
+    });
+
+    if (backdrop) {
+      backdrop.addEventListener("click", () => {
+        document.body.classList.remove("mobile-drawer-open");
+        backdrop.classList.add("hidden");
+      });
+    }
+  }
+
   async function init() {
     applyRoleVisibility();
     updateSelectModeUi();
     bindEvents();
+    // Ensure bottom nav + drawer work on mobile
+    bindMobileNav();
     renderProfileSmsCountryOptions();
     renderSmsCountryOptions(els.smsOnboardingCountrySelect);
     setProfileSmsFormState({ busy: false });
