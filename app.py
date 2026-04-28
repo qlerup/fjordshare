@@ -132,7 +132,7 @@ PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl"}
 PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl"
 THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
-THUMB_RENDER_STYLE_VERSION = "8"
+THUMB_RENDER_STYLE_VERSION = "9"
 SLICABLE_3D_EXTENSIONS = {".stl"}
 BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
 BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
@@ -7133,7 +7133,11 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
 
     verts = mesh.vertices
     faces = mesh.faces
-    normals = mesh.face_normals
+    # Prefer smooth shading using vertex normals averaged per face
+    try:
+        vnormals = mesh.vertex_normals
+    except Exception:
+        vnormals = mesh.face_normals
 
     if len(faces) > THUMB_RENDER_FACE_LIMIT:
         # Keep contiguous surface appearance instead of random sparse sampling.
@@ -7149,19 +7153,19 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
     ax.set_facecolor((0.06, 0.09, 0.13, 1.0))
     ax.set_axis_off()
 
-    # Single directional light to give a more "solid" look like the viewer.
+    # Directional light similar to viewer; use smoothed per-face normals.
     light = np.array([0.25, 0.45, 0.85], dtype=float)
     light = light / np.linalg.norm(light)
-    safe_normals = np.asarray(normals, dtype=float)
-    norm_len = np.linalg.norm(safe_normals, axis=1, keepdims=True)
-    safe_normals = safe_normals / np.maximum(norm_len, 1e-9)
-    # Directional Lambert shading (no abs) for proper light/shadow separation.
-    # Clamp a small ambient floor to avoid fully black faces.
-    intensity = np.clip(safe_normals.dot(light), 0.08, 1.0)
-    # Slight gamma to increase contrast for a more solid appearance.
-    intensity = np.power(intensity, 0.85)
+    # Average vertex normals for each face and normalize
+    face_normals_smooth = vnormals[faces].mean(axis=1)
+    norm_len = np.linalg.norm(face_normals_smooth, axis=1, keepdims=True)
+    safe_normals = face_normals_smooth / np.maximum(norm_len, 1e-9)
+    # Use abs(dot) to avoid random black patches from inconsistent winding,
+    # add a soft ambient floor and slight gamma for "solid" look.
+    intensity = np.clip(np.abs(safe_normals.dot(light)), 0.22, 1.0)
+    intensity = np.power(intensity, 0.9)
     base_rgb = np.array([0.58, 0.70, 0.86], dtype=float)
-    face_rgb = np.clip((0.35 + 0.65 * intensity[:, None]) * base_rgb, 0.0, 1.0)
+    face_rgb = np.clip((0.38 + 0.62 * intensity[:, None]) * base_rgb, 0.0, 1.0)
     face_rgba = np.concatenate([face_rgb, np.ones((face_rgb.shape[0], 1), dtype=float)], axis=1)
 
     poly = Poly3DCollection(triangles, linewidths=0.0, antialiaseds=False)
