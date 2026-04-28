@@ -294,8 +294,21 @@ input[type="checkbox"] {
   text-decoration: none;
 }
 
+.mini-link-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
 .mini-link:hover {
   color: var(--text);
+}
+
+.mini-link.active {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .main {

@@ -20,7 +20,6 @@
 
     <nav id="sidebarNav" class="nav">
       <button class="nav-item active" data-tab="files">Mapper</button>
-      <button class="nav-item" data-tab="profile">Profil</button>
       <button class="nav-item admin-only" data-tab="print-ready">Projekter klar til print</button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
     </nav>
@@ -28,6 +27,7 @@
     <div class="sidebar-footer">
       <div class="sidebar-user">Bruger: <strong>{{ username }}</strong></div>
       <div class="sidebar-links">
+        <button id="profileFooterBtn" class="mini-link mini-link-btn" type="button">Profil</button>
         <a class="mini-link" href="/logout">Log ud</a>
       </div>
     </div>

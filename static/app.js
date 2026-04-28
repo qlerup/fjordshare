@@ -95,6 +95,7 @@
     statFolders: document.getElementById("statFolders"),
     statShares: document.getElementById("statShares"),
     sidebarNav: document.getElementById("sidebarNav"),
+    profileFooterBtn: document.getElementById("profileFooterBtn"),
     tabFiles: document.getElementById("tab-files"),
     tabProfile: document.getElementById("tab-profile"),
     tabPrintReady: document.getElementById("tab-print-ready"),
@@ -1232,6 +1233,9 @@
     });
     const navButtons = Array.from((els.sidebarNav && els.sidebarNav.querySelectorAll(".nav-item")) || []);
     navButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === target));
+    if (els.profileFooterBtn) {
+      els.profileFooterBtn.classList.toggle("active", target === "profile");
+    }
     if (els.contentHeader) {
       els.contentHeader.classList.toggle("hidden", target === "files");
     }
@@ -10129,6 +10133,14 @@
           if (state.currentSettingsTab === "logs") await loadAdminLogs();
           if (state.currentSettingsTab === "slicer") await loadSlicerSettings();
         }
+      });
+    }
+    if (els.profileFooterBtn) {
+      els.profileFooterBtn.addEventListener("click", () => {
+        setTab("profile");
+        loadMyProfile().catch((err) => {
+          showStatus(els.profileSmsStatus, err.message || "Kunne ikke hente profil", "error");
+        });
       });
     }
 
