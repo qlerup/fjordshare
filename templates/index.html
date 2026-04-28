@@ -186,12 +186,13 @@
       <div class="panel">
         <div class="settings-header">
           <h3>Indstillinger</h3>
-          <p class="hint">Delinger, DNS, brugere og slicer-profiler</p>
+          <p class="hint">Delinger, DNS, brugere, SMS og slicer-profiler</p>
         </div>
         <nav id="settingsTabs" class="tabs">
           <button class="tab-btn active" data-settings-tab="shares">Delinger</button>
           <button class="tab-btn" data-settings-tab="dns">DNS</button>
           <button class="tab-btn" data-settings-tab="users">Brugere</button>
+          <button class="tab-btn" data-settings-tab="sms">SMS</button>
           <button class="tab-btn" data-settings-tab="logs">Logs</button>
           <button class="tab-btn" data-settings-tab="slicer">Slicer</button>
         </nav>
@@ -200,6 +201,7 @@
             <option value="shares" selected>Delinger</option>
             <option value="dns">DNS</option>
             <option value="users">Brugere</option>
+            <option value="sms">SMS</option>
             <option value="logs">Logs</option>
             <option value="slicer">Slicer</option>
           </select>
@@ -279,6 +281,30 @@
             </thead>
             <tbody id="usersTableBody"></tbody>
           </table>
+        </div>
+      </div>
+
+      <div id="settings-panel-sms" class="settings-subpanel hidden">
+        <div class="panel">
+          <h3>SMS Gateway (GatewayAPI)</h3>
+          <p class="hint">Aktivér/deaktivér SMS globalt, og gem token + afsendernavn.</p>
+          <div class="form-grid">
+            <div>
+              <label><input id="smsGatewayEnabledChk" type="checkbox"> Aktivér SMS gateway</label>
+            </div>
+            <div>
+              <label for="smsGatewaySenderInput">Afsender navn</label>
+              <input id="smsGatewaySenderInput" class="input" type="text" placeholder="FjordShare">
+            </div>
+            <div>
+              <label for="smsGatewayTokenInput">Gateway token</label>
+              <input id="smsGatewayTokenInput" class="input" type="password" placeholder="Indsæt token">
+            </div>
+          </div>
+          <div class="toolbar end">
+            <button id="smsSaveBtn" class="btn primary" type="button">Gem SMS</button>
+          </div>
+          <div id="smsStatus" class="status hidden"></div>
         </div>
       </div>
 

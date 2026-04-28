@@ -111,6 +111,7 @@
     settingsPanelShares: document.getElementById("settings-panel-shares"),
     settingsPanelDns: document.getElementById("settings-panel-dns"),
     settingsPanelUsers: document.getElementById("settings-panel-users"),
+    settingsPanelSms: document.getElementById("settings-panel-sms"),
     settingsPanelLogs: document.getElementById("settings-panel-logs"),
     settingsPanelSlicer: document.getElementById("settings-panel-slicer"),
     adminOnly: Array.from(document.querySelectorAll(".admin-only")),
@@ -298,6 +299,11 @@
     dnsExternalBaseUrlInput: document.getElementById("dnsExternalBaseUrlInput"),
     dnsSaveBtn: document.getElementById("dnsSaveBtn"),
     dnsStatus: document.getElementById("dnsStatus"),
+    smsGatewayEnabledChk: document.getElementById("smsGatewayEnabledChk"),
+    smsGatewaySenderInput: document.getElementById("smsGatewaySenderInput"),
+    smsGatewayTokenInput: document.getElementById("smsGatewayTokenInput"),
+    smsSaveBtn: document.getElementById("smsSaveBtn"),
+    smsStatus: document.getElementById("smsStatus"),
     createUserUsername: document.getElementById("createUserUsername"),
     createUserPassword: document.getElementById("createUserPassword"),
     createUserRole: document.getElementById("createUserRole"),
@@ -359,7 +365,7 @@
     },
     settings: {
       title: "Indstillinger",
-      subtitle: "Delinger, DNS, brugere og slicer-profiler",
+      subtitle: "Delinger, DNS, brugere, SMS og slicer-profiler",
     },
     "print-ready": {
       title: "Projekter klar til print",
@@ -1275,6 +1281,7 @@
       shares: els.settingsPanelShares,
       dns: els.settingsPanelDns,
       users: els.settingsPanelUsers,
+      sms: els.settingsPanelSms,
       logs: els.settingsPanelLogs,
       slicer: els.settingsPanelSlicer,
     };
@@ -7812,6 +7819,61 @@
     showStatus(els.dnsStatus, "DNS indstilling gemt.", "ok");
   }
 
+  function setSmsSettingsFormState(options = {}) {
+    const busy = !!(options && options.busy);
+    if (els.smsGatewayEnabledChk) els.smsGatewayEnabledChk.disabled = busy;
+    if (els.smsGatewaySenderInput) els.smsGatewaySenderInput.disabled = busy;
+    if (els.smsGatewayTokenInput) els.smsGatewayTokenInput.disabled = busy;
+    if (els.smsSaveBtn) {
+      els.smsSaveBtn.disabled = busy;
+      els.smsSaveBtn.textContent = busy ? "Gemmer..." : "Gem SMS";
+    }
+  }
+
+  function applySmsSettings(data) {
+    const enabled = !!(data && data.enabled);
+    const sender = String((data && data.sender) || "");
+    const token = String((data && data.token) || "");
+    if (els.smsGatewayEnabledChk) els.smsGatewayEnabledChk.checked = enabled;
+    if (els.smsGatewaySenderInput) els.smsGatewaySenderInput.value = sender;
+    if (els.smsGatewayTokenInput) els.smsGatewayTokenInput.value = token;
+  }
+
+  async function loadSmsSettings() {
+    if (state.role !== "admin") return;
+    try {
+      setSmsSettingsFormState({ busy: true });
+      const data = await api("/api/settings/sms");
+      applySmsSettings(data || {});
+      showStatus(els.smsStatus, "");
+    } catch (err) {
+      showStatus(els.smsStatus, err.message || "Kunne ikke hente SMS indstillinger", "error");
+    } finally {
+      setSmsSettingsFormState({ busy: false });
+    }
+  }
+
+  async function saveSmsSettings() {
+    if (state.role !== "admin") return;
+    const enabled = !!(els.smsGatewayEnabledChk && els.smsGatewayEnabledChk.checked);
+    const sender = String((els.smsGatewaySenderInput && els.smsGatewaySenderInput.value) || "").trim();
+    const token = String((els.smsGatewayTokenInput && els.smsGatewayTokenInput.value) || "").trim();
+
+    try {
+      setSmsSettingsFormState({ busy: true });
+      const data = await api("/api/settings/sms", {
+        method: "POST",
+        body: { enabled, sender, token },
+      });
+      applySmsSettings(data || {});
+      showStatus(els.smsStatus, "SMS indstillinger gemt.", "ok");
+    } catch (err) {
+      showStatus(els.smsStatus, err.message || "Kunne ikke gemme SMS indstillinger", "error");
+    } finally {
+      setSmsSettingsFormState({ busy: false });
+    }
+  }
+
   async function loadUsers() {
     if (state.role !== "admin" || !els.usersTableBody) return;
     const data = await api("/api/admin/users");
@@ -10130,6 +10192,7 @@
           if (state.currentSettingsTab === "shares") await loadShares();
           if (state.currentSettingsTab === "dns") await loadDns();
           if (state.currentSettingsTab === "users") await loadUsers();
+          if (state.currentSettingsTab === "sms") await loadSmsSettings();
           if (state.currentSettingsTab === "logs") await loadAdminLogs();
           if (state.currentSettingsTab === "slicer") await loadSlicerSettings();
         }
@@ -10153,6 +10216,7 @@
         if (tab === "shares") await loadShares();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
+        if (tab === "sms") await loadSmsSettings();
         if (tab === "logs") await loadAdminLogs();
         if (tab === "slicer") await loadSlicerSettings();
       });
@@ -10166,6 +10230,7 @@
         if (tab === "shares") await loadShares();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
+        if (tab === "sms") await loadSmsSettings();
         if (tab === "logs") await loadAdminLogs();
         if (tab === "slicer") await loadSlicerSettings();
       });
@@ -11257,6 +11322,22 @@
           showStatus(els.dnsStatus, err.message || "Kunne ikke gemme DNS", "error");
         });
       });
+    }
+    if (els.smsSaveBtn) {
+      els.smsSaveBtn.addEventListener("click", () => {
+        saveSmsSettings().catch((err) => {
+          showStatus(els.smsStatus, err.message || "Kunne ikke gemme SMS indstillinger", "error");
+        });
+      });
+    }
+    if (els.smsGatewayEnabledChk) {
+      els.smsGatewayEnabledChk.addEventListener("change", () => showStatus(els.smsStatus, ""));
+    }
+    if (els.smsGatewaySenderInput) {
+      els.smsGatewaySenderInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
+    }
+    if (els.smsGatewayTokenInput) {
+      els.smsGatewayTokenInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
     }
 
     if (els.createUserBtn) {

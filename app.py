@@ -106,6 +106,9 @@ FOLDER_KIND_APP_DAILY = "app_daily"
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Copenhagen").strip() or "Europe/Copenhagen"
 DATE_FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 DEFAULT_SMS_COUNTRY_CODE = str(os.getenv("DEFAULT_SMS_COUNTRY_CODE", "+45")).strip() or "+45"
+SMS_SETTING_ENABLED_KEY = "sms_gateway_enabled"
+SMS_SETTING_TOKEN_KEY = "sms_gateway_token"
+SMS_SETTING_SENDER_KEY = "sms_gateway_sender"
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
@@ -7932,6 +7935,18 @@ def _load_user_sms_profile(user_id: int) -> dict[str, Any]:
     }
 
 
+def _load_sms_gateway_settings() -> dict[str, Any]:
+    enabled = bool(parse_bool(get_setting(SMS_SETTING_ENABLED_KEY, "0")))
+    token = str(get_setting(SMS_SETTING_TOKEN_KEY, "") or "").strip()
+    sender = str(get_setting(SMS_SETTING_SENDER_KEY, "") or "").strip()
+    return {
+        "enabled": enabled,
+        "sender": sender,
+        "token": token,
+        "token_configured": bool(token),
+    }
+
+
 def migrate_thumbnail_render_style_if_needed() -> None:
     current = str(get_setting("thumb_render_style_version", "") or "").strip()
     if current == THUMB_RENDER_STYLE_VERSION:
@@ -11138,6 +11153,45 @@ def api_settings_dns():
     value = raw_value.rstrip("/")
     set_setting("external_base_url", value)
     return jsonify({"ok": True, "external_base_url": value})
+
+
+@app.route("/api/settings/sms", methods=["GET", "POST"])
+@login_required
+def api_settings_sms():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan se eller ændre SMS indstillinger"}), 403
+
+    if request.method == "GET":
+        settings_data = _load_sms_gateway_settings()
+        return jsonify({"ok": True, **settings_data})
+
+    body = request.get_json(silent=True) or {}
+    enabled = bool(parse_bool(body.get("enabled")))
+    sender = str(body.get("sender") or "").strip()
+    token = str(body.get("token") or "").strip()
+
+    if sender and len(sender) > 32:
+        return jsonify({"ok": False, "error": "Afsender navn må maks være 32 tegn"}), 400
+    if enabled and not token:
+        return jsonify({"ok": False, "error": "Indsæt token før SMS kan aktiveres"}), 400
+    if enabled and not sender:
+        return jsonify({"ok": False, "error": "Indsæt afsender navn før SMS kan aktiveres"}), 400
+
+    set_setting(SMS_SETTING_ENABLED_KEY, "1" if enabled else "0")
+    set_setting(SMS_SETTING_TOKEN_KEY, token)
+    set_setting(SMS_SETTING_SENDER_KEY, sender)
+
+    log_activity(
+        kind="settings",
+        action="sms-update",
+        message=f"SMS gateway {'aktiveret' if enabled else 'deaktiveret'}",
+        level="info",
+        actor=str(current_user.username or ""),
+        target="sms-gateway",
+    )
+
+    settings_data = _load_sms_gateway_settings()
+    return jsonify({"ok": True, **settings_data})
 
 
 @app.route("/api/settings/dns/effective", methods=["GET"])
