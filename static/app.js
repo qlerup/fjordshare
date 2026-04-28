@@ -312,6 +312,7 @@
     dnsStatus: document.getElementById("dnsStatus"),
     smsGatewayEnabledChk: document.getElementById("smsGatewayEnabledChk"),
     smsGatewaySenderInput: document.getElementById("smsGatewaySenderInput"),
+    smsGatewaySenderCount: document.getElementById("smsGatewaySenderCount"),
     smsGatewayTokenInput: document.getElementById("smsGatewayTokenInput"),
     smsTestRecipientInput: document.getElementById("smsTestRecipientInput"),
     smsTestBtn: document.getElementById("smsTestBtn"),
@@ -447,6 +448,7 @@
     { code: "+1", label: "USA/Canada (+1)" },
   ];
   const SMS_DEFAULT_COUNTRY_CODE = "+45";
+  const SMS_SENDER_MAX_LENGTH = 11;
 
   function normalizeSmsCountryCodeClient(value, fallback = SMS_DEFAULT_COUNTRY_CODE) {
     let raw = String(value || "").trim();
@@ -7800,7 +7802,7 @@
           <div class="print-ready-row-actions">
             ${
               file.printed
-                ? `<span class="hint">Færdig</span>`
+                ? `<button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Fjern printet</button>`
                 : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
             }
           </div>
@@ -7850,8 +7852,15 @@
     if (action === "cancel") {
       const ok = window.confirm("Vil du annullere dette projekt? Brugeren skal derefter sende et nyt.");
       if (!ok) return;
-      await api(`/api/admin/print-ready/${id}/cancel`, { method: "POST" });
-      showStatus(els.printReadyStatus, "Projekt annulleret.", "ok");
+      const data = await api(`/api/admin/print-ready/${id}/cancel`, { method: "POST" });
+      const resetCount = Number(data && data.reset_printed_count ? data.reset_printed_count : 0);
+      showStatus(
+        els.printReadyStatus,
+        resetCount > 0
+          ? `Projekt annulleret. Printet-status nulstillet for ${resetCount} fil(er).`
+          : "Projekt annulleret.",
+        "ok",
+      );
       await loadPrintReadyProjects();
       return;
     }
@@ -7875,6 +7884,16 @@
         ? (smsSent ? " SMS sendt." : (smsError ? ` SMS fejl: ${smsError}` : " SMS blev ikke sendt."))
         : "";
       showStatus(els.printReadyStatus, `Fil markeret som printet.${smsTail}`, sendSms && !smsSent ? "error" : "ok");
+      await loadPrintReadyProjects();
+      await loadFiles();
+      return;
+    }
+
+    if (action === "uncomplete-file") {
+      const fileId = Number(btn.dataset.fileId || 0);
+      if (!fileId) return;
+      await api(`/api/admin/print-ready/${id}/file/${fileId}/uncomplete`, { method: "POST" });
+      showStatus(els.printReadyStatus, "Printet-status fjernet for filen.", "ok");
       await loadPrintReadyProjects();
       await loadFiles();
       return;
@@ -7917,6 +7936,12 @@
     });
     if (els.dnsExternalBaseUrlInput) els.dnsExternalBaseUrlInput.value = data.external_base_url || "";
     showStatus(els.dnsStatus, "DNS indstilling gemt.", "ok");
+  }
+
+  function updateSmsSenderCounter() {
+    if (!els.smsGatewaySenderCount) return;
+    const sender = String((els.smsGatewaySenderInput && els.smsGatewaySenderInput.value) || "");
+    els.smsGatewaySenderCount.textContent = `${sender.length}/${SMS_SENDER_MAX_LENGTH}`;
   }
 
   function setSmsSettingsFormState(options = {}) {
@@ -7980,6 +8005,7 @@
     state.smsGatewayTokenPreview = tokenPreview;
     if (els.smsGatewayEnabledChk) els.smsGatewayEnabledChk.checked = enabled;
     if (els.smsGatewaySenderInput) els.smsGatewaySenderInput.value = sender;
+    updateSmsSenderCounter();
     showSmsTokenPreview();
   }
 
@@ -11569,7 +11595,10 @@
       els.smsGatewayEnabledChk.addEventListener("change", () => showStatus(els.smsStatus, ""));
     }
     if (els.smsGatewaySenderInput) {
-      els.smsGatewaySenderInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
+      els.smsGatewaySenderInput.addEventListener("input", () => {
+        updateSmsSenderCounter();
+        showStatus(els.smsStatus, "");
+      });
     }
     if (els.smsGatewayTokenInput) {
       els.smsGatewayTokenInput.addEventListener("focus", beginSmsTokenEdit);

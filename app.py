@@ -118,6 +118,7 @@ SMS_SETTING_ENABLED_KEY = "sms_gateway_enabled"
 SMS_SETTING_TOKEN_KEY = "sms_gateway_token"  # legacy plaintext key
 SMS_SETTING_TOKEN_ENC_KEY = "sms_gateway_token_enc"
 SMS_SETTING_SENDER_KEY = "sms_gateway_sender"
+SMS_SENDER_MAX_LENGTH = 11
 SMS_TOKEN_ENCRYPTION_KEY = str(os.getenv("SMS_TOKEN_ENCRYPTION_KEY", "") or "").strip()
 SMS_GATEWAY_URL = "https://gatewayapi.com/rest/mtsms"
 
@@ -11146,6 +11147,14 @@ def api_admin_print_ready_cancel(project_id: int):
         return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
 
     with closing(get_conn()) as conn:
+        file_ids = [
+            int(r["file_id"])
+            for r in conn.execute(
+                "SELECT file_id FROM print_ready_project_files WHERE project_id=? ORDER BY sort_order, id",
+                (int(project_id),),
+            ).fetchall()
+        ]
+        _set_files_printed_state(conn, file_ids, False, str(current_user.username or ""))
         conn.execute(
             "UPDATE print_ready_projects SET status=? WHERE id=?",
             ("cancelled", int(project_id)),
@@ -11155,14 +11164,14 @@ def api_admin_print_ready_cancel(project_id: int):
     log_activity(
         kind="print-ready",
         action="cancel",
-        message=f"Projekt annulleret: {int(project_id)}",
+        message=f"Projekt annulleret: {int(project_id)} ({len(file_ids)} filer nulstillet fra printet)",
         level="info",
         folder_path=str(project["owner_home_folder"] or ""),
         target=str(project["title"] or f"Projekt #{int(project_id)}"),
         actor=str(current_user.username or ""),
     )
 
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "reset_printed_count": len(file_ids)})
 
 
 def _set_files_printed_state(conn: sqlite3.Connection, file_ids: list[int], printed: bool, actor: str) -> None:
@@ -11266,6 +11275,60 @@ def api_admin_print_ready_complete_file(project_id: int, file_id: int):
             "updated_file_id": int(file_id),
             "sms_sent": bool(sms_sent),
             "sms_error": str(sms_error or ""),
+        }
+    )
+
+
+@app.route("/api/admin/print-ready/<int:project_id>/file/<int:file_id>/uncomplete", methods=["POST"])
+@login_required
+def api_admin_print_ready_uncomplete_file(project_id: int, file_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT pf.file_id, f.id
+            FROM print_ready_project_files pf
+            LEFT JOIN files f ON f.id = pf.file_id
+            WHERE pf.project_id=? AND pf.file_id=?
+            LIMIT 1
+            """,
+            (int(project_id), int(file_id)),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Filen findes ikke i projektet"}), 404
+        if row["id"] is None:
+            return jsonify({"ok": False, "error": "Filen findes ikke længere"}), 404
+
+        _set_files_printed_state(conn, [int(file_id)], False, str(current_user.username or ""))
+        files = _print_ready_file_rows(conn, int(project_id))
+        attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+        conn.commit()
+
+    payload = serialize_print_ready_project(project, files, attachment_map)
+
+    log_activity(
+        kind="print-ready",
+        action="uncomplete-file",
+        message=f"Printet-status fjernet i projekt {int(project_id)}: file_id={int(file_id)}",
+        level="info",
+        folder_path=str(project["owner_home_folder"] or ""),
+        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        actor=str(current_user.username or ""),
+        file_id=int(file_id),
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "project": payload,
+            "updated_file_id": int(file_id),
+            "printed": False,
         }
     )
 
@@ -11764,8 +11827,8 @@ def api_settings_sms():
     current_token = str(current_settings.get("token") or "").strip()
     effective_token = incoming_token if incoming_token else current_token
 
-    if sender and len(sender) > 32:
-        return jsonify({"ok": False, "error": "Afsender navn må maks være 32 tegn"}), 400
+    if sender and len(sender) > SMS_SENDER_MAX_LENGTH:
+        return jsonify({"ok": False, "error": f"Afsender navn må maks være {SMS_SENDER_MAX_LENGTH} tegn"}), 400
     if enabled and not effective_token:
         return jsonify({"ok": False, "error": "Indsæt token før SMS kan aktiveres"}), 400
     if enabled and not sender:
@@ -11847,8 +11910,8 @@ def api_settings_sms_test():
     if incoming_token and incoming_token == current_token_preview:
         incoming_token = ""
 
-    if sender and len(sender) > 32:
-        return jsonify({"ok": False, "error": "Afsender navn må maks være 32 tegn"}), 400
+    if sender and len(sender) > SMS_SENDER_MAX_LENGTH:
+        return jsonify({"ok": False, "error": f"Afsender navn må maks være {SMS_SENDER_MAX_LENGTH} tegn"}), 400
 
     recipient_e164 = recipient_raw if recipient_raw.startswith("+") else _sms_e164(DEFAULT_SMS_COUNTRY_CODE, recipient_raw)
     sms_text = "FjordShare test-SMS. Hvis du modtager denne besked, virker GatewayAPI opsætningen."
