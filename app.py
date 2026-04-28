@@ -5273,6 +5273,7 @@ def _slice_stl_to_gcode(
                 for err in errors_lower
             )
             profile_text_for_mapping = f"{printer_profile_value} {print_profile_value}".lower()
+            is_h2d_profile = "h2d" in profile_text_for_mapping
             is_multi_extruder_profile = any(token in profile_text_for_mapping for token in ("h2d", "dual", "idex"))
 
             # Some Bambu multi-extruder builds reject explicit nozzle overrides
@@ -5441,8 +5442,9 @@ def _slice_stl_to_gcode(
                     errors.append(f"explicit-process-plain-fallback: {explicit_plain_text[:350]}")
 
             # Explicit manual-map retry for multi-extruder filament mapping errors.
-            # Keep dual extruder slots and pass explicit dual-value filament/nozzle
-            # maps so H2D-style profiles can resolve mapping deterministically.
+            # Keep one active filament slot and map it to a specific H2D/IDEX
+            # extruder. If the preferred side is outside Bambu's per-extruder
+            # printable area, try the opposite side before falling back further.
             should_retry_manual_filament_map = (
                 allow_support_override_fallback
                 and has_filament_mapping_error
@@ -5453,64 +5455,76 @@ def _slice_stl_to_gcode(
             )
             if should_retry_manual_filament_map:
                 preferred_index = max(1, int(resolved_preferred_extruder_id))
-                preferred_nozzle_index = max(0, preferred_index - 1)
-                manual_map_overrides = dict(normalized_process_overrides)
-                manual_map_overrides["extruder_count"] = 2
-                manual_map_overrides["print_extruder_id"] = preferred_index
-                manual_map_overrides["printer_extruder_id"] = preferred_index
-                # Force manual mapping path in Bambu CLI (avoids auto-map rejection).
-                manual_map_overrides["filament_map_mode"] = "Manual"
-                manual_map_overrides["filament_map"] = f"{preferred_index},{preferred_index}"
-                manual_map_overrides["filament_nozzle_map"] = f"{preferred_nozzle_index},{preferred_nozzle_index}"
-                manual_map_overrides["filament_volume_map"] = "0,0"
-                _trace(
-                    "retry-start",
-                    {
-                        "strategy": "manual-filament-map",
-                        "reason": "auto mode mapping failed for multi-extruder profile",
-                        "preferred_extruder_id": preferred_index,
-                    },
-                )
-                try:
-                    _slice_stl_to_gcode(
-                        input_stl,
-                        output_gcode,
-                        printer_profile=printer_profile_value,
-                        print_profile=print_profile_value,
-                        filament_profile=filament_profile_value,
-                        rotation_x_degrees=rotation_x_degrees,
-                        rotation_y_degrees=rotation_y_degrees,
-                        rotation_z_degrees=rotation_z_degrees,
-                        lift_z_mm=normalized_lift_z,
-                        support_mode=normalized_support_mode,
-                        support_type=normalized_support_type,
-                        support_style=normalized_support_style,
-                        nozzle_left_diameter=normalized_nozzle_left_diameter,
-                        nozzle_right_diameter=normalized_nozzle_right_diameter,
-                        nozzle_left_flow=normalized_nozzle_left_flow,
-                        nozzle_right_flow=normalized_nozzle_right_flow,
-                        bed_width_mm=normalized_bed_width,
-                        bed_depth_mm=normalized_bed_depth,
-                        process_overrides=manual_map_overrides,
-                        allow_support_override_fallback=False,
-                        force_profile_runtime_compat=True,
-                        auto_pick_blank_profiles=auto_pick_blank_profiles,
-                        debug_trace=debug_trace,
-                        preferred_extruder_id_hint=preferred_index,
-                        z_contact_mode=z_contact_mode,
-                    )
-                    _trace("retry-success", {"strategy": "manual-filament-map"})
-                    return
-                except Exception as manual_map_exc:
-                    manual_map_text = str(manual_map_exc)
+                manual_extruder_plans: list[tuple[str, int]] = []
+                for strategy, extruder_id in (
+                    ("manual-filament-map", preferred_index),
+                    ("manual-filament-map-alt", 2 if preferred_index == 1 else 1),
+                ):
+                    if extruder_id < 1 or extruder_id > 2:
+                        continue
+                    if any(existing_id == extruder_id for _existing_strategy, existing_id in manual_extruder_plans):
+                        continue
+                    manual_extruder_plans.append((strategy, extruder_id))
+
+                for strategy, map_extruder_id in manual_extruder_plans:
+                    manual_map_overrides = dict(normalized_process_overrides)
+                    manual_map_overrides.pop("extruder_count", None)
+                    manual_map_overrides["print_extruder_id"] = map_extruder_id
+                    manual_map_overrides["printer_extruder_id"] = map_extruder_id
+                    # Force manual mapping path in Bambu CLI (avoids auto-map rejection).
+                    manual_map_overrides["filament_map_mode"] = "Manual"
+                    manual_map_overrides["filament_map"] = str(map_extruder_id)
+                    manual_map_overrides["filament_nozzle_map"] = str(max(0, map_extruder_id - 1))
+                    manual_map_overrides["filament_volume_map"] = "0"
                     _trace(
-                        "retry-failed",
+                        "retry-start",
                         {
-                            "strategy": "manual-filament-map",
-                            "error": manual_map_text,
+                            "strategy": strategy,
+                            "reason": "auto mode mapping failed for multi-extruder profile",
+                            "preferred_extruder_id": preferred_index,
+                            "mapped_extruder_id": map_extruder_id,
                         },
                     )
-                    errors.append(f"manual-filament-map-fallback: {manual_map_text[:350]}")
+                    try:
+                        _slice_stl_to_gcode(
+                            input_stl,
+                            output_gcode,
+                            printer_profile=printer_profile_value,
+                            print_profile=print_profile_value,
+                            filament_profile=filament_profile_value,
+                            rotation_x_degrees=rotation_x_degrees,
+                            rotation_y_degrees=rotation_y_degrees,
+                            rotation_z_degrees=rotation_z_degrees,
+                            lift_z_mm=normalized_lift_z,
+                            support_mode=normalized_support_mode,
+                            support_type=normalized_support_type,
+                            support_style=normalized_support_style,
+                            nozzle_left_diameter=normalized_nozzle_left_diameter,
+                            nozzle_right_diameter=normalized_nozzle_right_diameter,
+                            nozzle_left_flow=normalized_nozzle_left_flow,
+                            nozzle_right_flow=normalized_nozzle_right_flow,
+                            bed_width_mm=normalized_bed_width,
+                            bed_depth_mm=normalized_bed_depth,
+                            process_overrides=manual_map_overrides,
+                            allow_support_override_fallback=False,
+                            force_profile_runtime_compat=True,
+                            auto_pick_blank_profiles=auto_pick_blank_profiles,
+                            debug_trace=debug_trace,
+                            preferred_extruder_id_hint=map_extruder_id,
+                            z_contact_mode=z_contact_mode,
+                        )
+                        _trace("retry-success", {"strategy": strategy})
+                        return
+                    except Exception as manual_map_exc:
+                        manual_map_text = str(manual_map_exc)
+                        _trace(
+                            "retry-failed",
+                            {
+                                "strategy": strategy,
+                                "error": manual_map_text,
+                            },
+                        )
+                        errors.append(f"{strategy}-fallback: {manual_map_text[:350]}")
 
             should_retry_single_extruder_direct = (
                 allow_support_override_fallback
@@ -5518,6 +5532,7 @@ def _slice_stl_to_gcode(
                 has_filament_mapping_error
                 and bool(filament_profile_value)
                 and bool(print_profile_value)
+                and not is_h2d_profile
             )
             if should_retry_single_extruder_direct:
                 forced_single_overrides = dict(normalized_process_overrides)
@@ -5708,7 +5723,7 @@ def _slice_stl_to_gcode(
                         or has_process_compat_error
                         or retry_auto_has_filament_mapping_error
                         or retry_auto_has_process_compat_error
-                    ):
+                    ) and not is_h2d_profile:
                         forced_overrides = dict(normalized_process_overrides)
                         try:
                             # Preserve preferred print nozzle if present
