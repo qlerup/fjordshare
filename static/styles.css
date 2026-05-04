@@ -1693,22 +1693,25 @@ input[type="checkbox"] {
   border-radius: 999px;
   background: var(--panel-2);
   color: var(--text);
-  padding: 2px 8px;
-  font-size: 0.78rem;
-  font-weight: 700;
-  line-height: 1.25;
+  padding: 2px 9px;
+  min-height: 22px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0;
+  text-shadow: none;
 }
 
 .tracking-status.ok {
-  border-color: rgba(52, 211, 153, 0.65);
-  background: rgba(20, 114, 78, 0.82);
-  color: #e8fff5;
+  border-color: #2fc489;
+  background: #147a57;
+  color: #f4fff9;
 }
 
 .tracking-status.error {
-  border-color: rgba(248, 113, 113, 0.55);
-  background: rgba(127, 29, 29, 0.56);
-  color: #ffe8e8;
+  border-color: #ef6b6b;
+  background: #7f1d1d;
+  color: #fff2f2;
 }
 
 .tracking-event {
