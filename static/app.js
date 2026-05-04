@@ -8268,7 +8268,7 @@
               isAdmin
                 ? `
                   <button class="btn small ${isFinalProject ? "" : "primary"}" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${isFinalProject ? " disabled" : ""}>${isCancelledProject ? "Annulleret" : (isCompletedProject ? "Færdigt" : "Projekt færdig")}</button>
-                  <button class="btn danger" type="button" data-print-ready-action="cancel" data-id="${Number(project.id || 0)}"${isCancelledProject ? " disabled" : ""}>${isCancelledProject ? "Annulleret" : "Annuller"}</button>
+                  <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${Number(project.id || 0)}">${isCancelledProject ? "Slet" : "Annuller"}</button>
                 `
                 : ""
             }
@@ -8314,6 +8314,15 @@
           : "Projekt annulleret.",
         "ok",
       );
+      await loadPrintReadyProjects();
+      return;
+    }
+
+    if (action === "delete-project") {
+      const ok = window.confirm("Vil du slette dette annullerede projekt permanent?");
+      if (!ok) return;
+      await api(`/api/admin/print-ready/${id}/delete`, { method: "POST" });
+      showStatus(els.printReadyStatus, "Projekt slettet permanent.", "ok");
       await loadPrintReadyProjects();
       return;
     }

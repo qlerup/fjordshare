@@ -12008,6 +12008,42 @@ def api_admin_print_ready_cancel(project_id: int):
     return jsonify({"ok": True, "reset_printed_count": len(file_ids)})
 
 
+@app.route("/api/admin/print-ready/<int:project_id>/delete", methods=["POST"])
+@login_required
+def api_admin_print_ready_delete(project_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+
+    status_value = str(project["status"] or "ready").strip().lower()
+    if status_value != "cancelled":
+        return jsonify({"ok": False, "error": "Kun annullerede projekter kan slettes"}), 400
+
+    with closing(get_conn()) as conn:
+        count_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM print_ready_project_files WHERE project_id=?",
+            (int(project_id),),
+        ).fetchone()
+        file_count = int((count_row["c"] if count_row is not None else 0) or 0)
+        conn.execute("DELETE FROM print_ready_projects WHERE id=?", (int(project_id),))
+        conn.commit()
+
+    log_activity(
+        kind="print-ready",
+        action="delete",
+        message=f"Annulleret projekt slettet: {int(project_id)} ({file_count} filer)",
+        level="info",
+        folder_path=str(project["owner_home_folder"] or ""),
+        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        actor=str(current_user.username or ""),
+    )
+
+    return jsonify({"ok": True, "deleted_project_id": int(project_id)})
+
+
 def _set_files_printed_state(conn: sqlite3.Connection, file_ids: list[int], printed: bool, actor: str) -> None:
     ids = _normalize_positive_ids(file_ids)
     if not ids:
