@@ -86,6 +86,7 @@
     folderPreviewCache: Object.create(null),
     folderPreviewLoading: new Set(),
     folderPreviewRequestToken: 0,
+    modelPreviewLoadToken: 0,
     modelModalCloseGuardUntil: 0,
     currentPrintReadyProjectId: 0,
     smsConfirmResolver: null,
@@ -1490,6 +1491,22 @@
     const text = String(message || "").trim();
     els.modelHint.textContent = text;
     els.modelHint.classList.toggle("hidden", !text);
+  }
+
+  function setModelPreviewLoading(loading = false, pane = "") {
+    const isLoading = !!loading;
+    const targetPane = String(pane || "").toLowerCase();
+    const viewerLoading = isLoading && targetPane === "viewer";
+    const threeLoading = isLoading && targetPane === "three";
+
+    if (els.modelViewerPane) {
+      els.modelViewerPane.classList.toggle("loading", viewerLoading);
+      els.modelViewerPane.setAttribute("aria-busy", viewerLoading ? "true" : "false");
+    }
+    if (els.threePane) {
+      els.threePane.classList.toggle("loading", threeLoading);
+      els.threePane.setAttribute("aria-busy", threeLoading ? "true" : "false");
+    }
   }
 
   function updateModelInfoBar({ controls = "", height = "", scale = "" } = {}) {
@@ -10126,7 +10143,15 @@
 
   async function open3DModal(file) {
     if (!file || !els.modelModal) return;
+    const loadToken = Number(state.modelPreviewLoadToken || 0) + 1;
+    state.modelPreviewLoadToken = loadToken;
+    const isActiveLoad = () => Number(state.modelPreviewLoadToken || 0) === loadToken;
+
     state.modelModalCloseGuardUntil = 0;
+    cleanupThree();
+    if (els.modelViewer) els.modelViewer.removeAttribute("src");
+    setModelPreviewLoading(false);
+
     if (els.modelTitle) els.modelTitle.textContent = `3D: ${file.filename || ""}`;
     setModelHintMessage("");
     updateModelInfoBar({
@@ -10138,17 +10163,21 @@
 
     const ext = String(file.ext || "").toLowerCase();
     if (ext === ".glb" || ext === ".gltf") {
-      cleanupThree();
       if (els.modelViewerPane) els.modelViewerPane.classList.remove("hidden");
       if (els.threePane) els.threePane.classList.add("hidden");
+      setModelPreviewLoading(true, "viewer");
       if (els.modelViewer) {
         const viewer = els.modelViewer;
         viewer.setAttribute("environment-image", "neutral");
         viewer.setAttribute("shadow-intensity", "1.25");
         viewer.setAttribute("shadow-softness", "0.95");
         viewer.style.background = "transparent";
-        viewer.setAttribute("src", file.content_url || "");
-        viewer.addEventListener("load", () => {
+
+        const onLoad = () => {
+          viewer.removeEventListener("error", onError);
+          if (!isActiveLoad()) return;
+          setModelPreviewLoading(false);
+
           let height = 0;
           try {
             if (typeof viewer.getDimensions === "function") {
@@ -10169,7 +10198,25 @@
           });
           const extraHints = [buildUnitHintText(unitContext)];
           if (els.modelHint) els.modelHint.textContent = buildModelHint(height, extraHints, modelControlsText(), unitContext);
-        }, { once: true });
+        };
+
+        const onError = () => {
+          viewer.removeEventListener("load", onLoad);
+          if (!isActiveLoad()) return;
+          setModelPreviewLoading(false);
+          updateModelInfoBar({
+            controls: "Kunne ikke åbne model",
+            height: "-",
+            scale: "-",
+          });
+          setModelHintMessage("Kunne ikke åbne 3D filen i preview.");
+        };
+
+        viewer.addEventListener("load", onLoad, { once: true });
+        viewer.addEventListener("error", onError, { once: true });
+        viewer.setAttribute("src", file.content_url || "");
+      } else {
+        setModelPreviewLoading(false);
       }
       updateModelInfoBar({
         controls: modelControlsText(),
@@ -10181,6 +10228,7 @@
     }
 
     if (!(ext === ".stl" || ext === ".obj")) {
+      setModelPreviewLoading(false);
       if (els.modelViewerPane) els.modelViewerPane.classList.add("hidden");
       if (els.threePane) els.threePane.classList.add("hidden");
       updateModelInfoBar({
@@ -10194,12 +10242,15 @@
 
     if (els.modelViewerPane) els.modelViewerPane.classList.add("hidden");
     if (els.threePane) els.threePane.classList.remove("hidden");
+    setModelPreviewLoading(true, "three");
     if (els.modelViewer) els.modelViewer.removeAttribute("src");
 
     let modules;
     try {
       modules = await ensureThreeModules();
     } catch (err) {
+      if (!isActiveLoad()) return;
+      setModelPreviewLoading(false);
       updateModelInfoBar({
         controls: "Kunne ikke indlæse viewer",
         height: "-",
@@ -10208,11 +10259,15 @@
       setModelHintMessage(`Kunne ikke indlæse 3D viewer: ${err.message || err}`);
       return;
     }
+    if (!isActiveLoad()) return;
     const { THREE, OrbitControls, STLLoader, OBJLoader } = modules;
 
     cleanupThree();
 
-    if (!els.threeCanvas || !els.threePane) return;
+    if (!els.threeCanvas || !els.threePane) {
+      setModelPreviewLoading(false);
+      return;
+    }
     const canvas = els.threeCanvas;
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -11144,6 +11199,10 @@
     let unitContext = null;
     try {
       const obj = await loadObjPromise;
+      if (!isActiveLoad()) {
+        renderer.dispose();
+        return;
+      }
       applyBestStandingOrientation(obj);
       obj.traverse((node) => {
         if (node && node.isMesh) {
@@ -11162,6 +11221,11 @@
       if (canInfo && canInfo.group) orbitPickObjects.push(canInfo.group);
       fittedSize = fit(obj, [canInfo && canInfo.group ? canInfo.group : null]);
     } catch (err) {
+      if (!isActiveLoad()) {
+        renderer.dispose();
+        return;
+      }
+      setModelPreviewLoading(false);
       updateModelInfoBar({
         controls: "Kunne ikke åbne model",
         height: "-",
@@ -11236,6 +11300,11 @@
       canvas,
     };
     animate();
+    if (!isActiveLoad()) {
+      cleanupThree();
+      return;
+    }
+    setModelPreviewLoading(false);
 
     const heightValue = modelOnlySize && Number.isFinite(Number(modelOnlySize.y))
       ? Number(modelOnlySize.y)
@@ -11273,9 +11342,11 @@
   }
 
   function close3DModal() {
+    state.modelPreviewLoadToken = Number(state.modelPreviewLoadToken || 0) + 1;
     state.modelModalCloseGuardUntil = 0;
     cleanupThree();
     if (els.modelViewer) els.modelViewer.removeAttribute("src");
+    setModelPreviewLoading(false);
     setModelHintMessage("");
     updateModelInfoBar({
       controls: modelControlsText(),
