@@ -8357,7 +8357,6 @@
       <article class="print-ready-project-card ${projectCardStatusClass}">
         <div class="print-ready-project-head">
           <div>
-            <div class="print-ready-project-title">${esc(project.title || "Klar til print")}</div>
             <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))}</div>
             <div class="hint">Filer i alt: ${fileCount}</div>
             <div class="hint">Printet: ${printedCount}</div>
