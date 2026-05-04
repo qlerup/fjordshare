@@ -9268,6 +9268,53 @@ def resolve_user_upload_folder(user: User, requested_folder: str, base_folder: s
     return requested
 
 
+def _home_folder_is_in_use(conn: sqlite3.Connection, home_folder: str) -> bool:
+    folder = normalize_folder_path(home_folder)
+    if not folder:
+        return True
+
+    in_users = conn.execute(
+        "SELECT 1 FROM users WHERE home_folder=? LIMIT 1",
+        (folder,),
+    ).fetchone()
+    if in_users is not None:
+        return True
+
+    in_folders = conn.execute(
+        """
+        SELECT 1
+        FROM folders
+        WHERE folder_path=? OR folder_path LIKE ?
+        LIMIT 1
+        """,
+        (folder, f"{folder}/%"),
+    ).fetchone()
+    if in_folders is not None:
+        return True
+
+    in_files = conn.execute(
+        """
+        SELECT 1
+        FROM files
+        WHERE folder_path=? OR folder_path LIKE ?
+        LIMIT 1
+        """,
+        (folder, f"{folder}/%"),
+    ).fetchone()
+    if in_files is not None:
+        return True
+
+    try:
+        _, abs_folder = folder_abs_path(folder)
+        if abs_folder.exists():
+            return True
+    except Exception:
+        # Keep safe on path resolution errors and avoid assigning this folder.
+        return True
+
+    return False
+
+
 def create_user(username: str, password: str, role: str = "user") -> int:
     clean_username = normalize_username(username)
     if len(str(password or "")) < 4:
@@ -9278,14 +9325,11 @@ def create_user(username: str, password: str, role: str = "user") -> int:
 
     with closing(get_conn()) as conn:
         base_slug = username_to_folder_slug(clean_username)
-        home_folder = f"users/{base_slug}"
+        home_folder = normalize_folder_path(f"users/{base_slug}")
         suffix = 1
-        while (
-            conn.execute("SELECT 1 FROM users WHERE home_folder=?", (home_folder,)).fetchone()
-            is not None
-        ):
+        while _home_folder_is_in_use(conn, home_folder):
             suffix += 1
-            home_folder = f"users/{base_slug}-{suffix}"
+            home_folder = normalize_folder_path(f"users/{base_slug}-{suffix}")
 
         cur = conn.execute(
             "INSERT INTO users(username, password_hash, role, home_folder, created_at) VALUES(?,?,?,?,?)",
@@ -13832,15 +13876,35 @@ def api_admin_users_delete(user_id: int):
         return jsonify({"ok": False, "error": "Du kan ikke slette dig selv"}), 400
 
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT id FROM users WHERE id=?", (int(user_id),)).fetchone()
+        row = conn.execute("SELECT id, username FROM users WHERE id=?", (int(user_id),)).fetchone()
         if row is None:
             return jsonify({"ok": False, "error": "Bruger findes ikke"}), 404
+
+        deleted_tracking = 0
+        username = str(row["username"] or "").strip()
+        if username:
+            count_row = conn.execute(
+                """
+                SELECT COUNT(*) AS c
+                FROM tracking_shipments
+                WHERE lower(trim(COALESCE(target_username, ''))) = lower(trim(?))
+                """,
+                (username,),
+            ).fetchone()
+            deleted_tracking = int(count_row["c"] or 0) if count_row else 0
+            conn.execute(
+                """
+                DELETE FROM tracking_shipments
+                WHERE lower(trim(COALESCE(target_username, ''))) = lower(trim(?))
+                """,
+                (username,),
+            )
 
         conn.execute("DELETE FROM user_folder_access WHERE user_id=?", (int(user_id),))
         conn.execute("DELETE FROM users WHERE id=?", (int(user_id),))
         conn.commit()
 
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "deleted_tracking": deleted_tracking})
 
 
 @app.route("/api/admin/logs", methods=["GET", "DELETE"])
