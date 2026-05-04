@@ -7784,12 +7784,14 @@ def init_db() -> None:
                 tracking_url TEXT,
                 source TEXT,
                 error TEXT,
+                target_username TEXT NOT NULL DEFAULT '',
                 created_by TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 last_checked_at TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_tracking_shipments_updated ON tracking_shipments(updated_at DESC, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_tracking_shipments_target_username ON tracking_shipments(target_username, id DESC);
 
             CREATE TABLE IF NOT EXISTS tracking_share_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -7974,6 +7976,12 @@ def init_db() -> None:
         )
         conn.execute("UPDATE users SET sms_phone_number='' WHERE sms_phone_number IS NULL")
 
+        tracking_cols = [r[1] for r in conn.execute("PRAGMA table_info(tracking_shipments)").fetchall()]
+        if "target_username" not in tracking_cols:
+            conn.execute("ALTER TABLE tracking_shipments ADD COLUMN target_username TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE tracking_shipments SET target_username='' WHERE target_username IS NULL")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tracking_shipments_target_username ON tracking_shipments(target_username, id DESC)")
+
         # Generic app onboarding flag (first-login guide)
         if "app_onboarding_seen_v1" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0")
@@ -8077,6 +8085,7 @@ def _tracking_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "tracking_url": str(row["tracking_url"] or ""),
         "source": str(row["source"] or ""),
         "error": str(row["error"] or ""),
+        "target_username": str(row["target_username"] or ""),
         "created_by": str(row["created_by"] or ""),
         "created_at": str(row["created_at"] or ""),
         "updated_at": str(row["updated_at"] or ""),
@@ -13159,6 +13168,23 @@ def api_admin_tracking_extract_label():
     return jsonify({"ok": True, "tracking_number": tracking_number})
 
 
+@app.route("/api/tracking", methods=["GET"])
+@login_required
+def api_tracking_list_for_user():
+    username = str(current_user.username or "").strip()
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM tracking_shipments
+            WHERE lower(trim(COALESCE(target_username, ''))) = lower(trim(?))
+            ORDER BY id DESC
+            """,
+            (username,),
+        ).fetchall()
+    return jsonify({"ok": True, "items": [_tracking_row_to_dict(row) for row in rows]})
+
+
 @app.route("/api/admin/tracking", methods=["GET", "POST"])
 @login_required
 def api_admin_tracking():
@@ -13178,6 +13204,7 @@ def api_admin_tracking():
 
     body = request.get_json(silent=True) or {}
     raw_tracking_number = str(body.get("tracking_number") or body.get("number") or "").strip()
+    raw_target_username = str(body.get("target_username") or body.get("owner_username") or body.get("username") or "").strip()
     try:
         tracking_number = normalize_tracking_number(raw_tracking_number)
     except ValueError as exc:
@@ -13194,6 +13221,24 @@ def api_admin_tracking():
     now = now_iso()
     try:
         with closing(get_conn()) as conn:
+            target_username = ""
+            if raw_target_username:
+                user_row = conn.execute(
+                    "SELECT username FROM users WHERE lower(username)=lower(?) LIMIT 1",
+                    (raw_target_username,),
+                ).fetchone()
+                if user_row is None:
+                    log_activity(
+                        kind="tracking",
+                        action="create-failed",
+                        message=f"Tracking kunne ikke tilføjes - bruger findes ikke: {raw_target_username}",
+                        level="warn",
+                        target=tracking_number,
+                        actor=str(current_user.username or ""),
+                    )
+                    return jsonify({"ok": False, "error": "Bruger findes ikke"}), 400
+                target_username = str(user_row["username"] or "").strip()
+
             existing = conn.execute(
                 "SELECT id FROM tracking_shipments WHERE tracking_number=?",
                 (tracking_number,),
@@ -13211,10 +13256,10 @@ def api_admin_tracking():
             cur = conn.execute(
                 """
                 INSERT INTO tracking_shipments(
-                    carrier, tracking_number, status, created_by, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    carrier, tracking_number, status, target_username, created_by, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                ("bring", tracking_number, "Afventer opdatering", str(current_user.username or ""), now, now),
+                ("bring", tracking_number, "Afventer opdatering", target_username, str(current_user.username or ""), now, now),
             )
             tracking_id = int(cur.lastrowid)
             conn.commit()

@@ -89,6 +89,7 @@
     currentPrintReadyProjectId: 0,
     smsConfirmResolver: null,
     smsConfirmContext: "",
+    smsConfirmTargetUsername: "",
     smsOnboardingCountdownTimer: null,
     smsOnboardingExpiresAt: 0,
     smsGatewayTokenConfigured: false,
@@ -1758,6 +1759,7 @@
     const resolver = state.smsConfirmResolver;
     state.smsConfirmResolver = null;
     state.smsConfirmContext = "";
+    state.smsConfirmTargetUsername = "";
     if (els.smsConfirmModal) els.smsConfirmModal.classList.add("hidden");
     resetSmsConfirmFields();
     showStatus(els.smsConfirmStatus, "");
@@ -1769,6 +1771,7 @@
     return new Promise((resolve) => {
       state.smsConfirmResolver = resolve;
       state.smsConfirmContext = String(contextText || "").trim();
+      state.smsConfirmTargetUsername = String((project && project.owner_username) || "").trim();
       if (els.smsConfirmSummary) {
         const projectTitle = String((project && project.title) || "").trim();
         const fallback = projectTitle ? `Projekt: ${projectTitle}` : "Projekt færdigmelding";
@@ -1783,8 +1786,9 @@
     });
   }
 
-  async function createTrackingEntry(trackingNumber) {
+  async function createTrackingEntry(trackingNumber, options = {}) {
     const number = String(trackingNumber || "").trim();
+    const targetUsername = String((options && options.targetUsername) || "").trim();
     if (!number) {
       const err = new Error("Indtast tracking- eller pakkenummer.");
       err.status = 400;
@@ -1792,9 +1796,11 @@
     }
 
     try {
+      const payload = { tracking_number: number };
+      if (targetUsername) payload.target_username = targetUsername;
       const data = await api("/api/admin/tracking", {
         method: "POST",
-        body: { tracking_number: number },
+        body: payload,
       });
       await loadTracking();
       return {
@@ -1822,7 +1828,9 @@
     if (els.smsConfirmAddTrackingBtn) els.smsConfirmAddTrackingBtn.disabled = true;
     showStatus(els.smsConfirmStatus, "Tilføjer trackingnummer...", "ok");
     try {
-      const result = await createTrackingEntry(trackingNumber);
+      const result = await createTrackingEntry(trackingNumber, {
+        targetUsername: state.smsConfirmTargetUsername,
+      });
       if (els.smsConfirmTrackingInput) els.smsConfirmTrackingInput.value = "";
       if (result.duplicate) {
         setSmsConfirmExtracted(trackingNumber, "Tracking findes allerede");
@@ -1877,7 +1885,9 @@
         throw new Error("Kunne ikke finde et gyldigt pakkenummer i PDF-filen.");
       }
 
-      const result = await createTrackingEntry(extractedNumber);
+      const result = await createTrackingEntry(extractedNumber, {
+        targetUsername: state.smsConfirmTargetUsername,
+      });
       if (els.smsConfirmTrackingInput) els.smsConfirmTrackingInput.value = extractedNumber;
 
       if (result.duplicate) {
@@ -8219,9 +8229,6 @@
     const projectCardStatusClass = isCompletedProject
       ? "project-completed"
       : (isCancelledProject ? "project-cancelled" : "project-ready");
-    const projectStatusText = isCompletedProject
-      ? "Færdigt"
-      : (isCancelledProject ? "Annulleret" : "Klar til print");
     const fileCount = Number(project.file_count || files.length || 0);
     const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
     const qty = Number(project.total_quantity || 0);
@@ -8267,7 +8274,11 @@
             ${
               isAdmin
                 ? `
-                  <button class="btn small ${isFinalProject ? "" : "primary"}" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${isFinalProject ? " disabled" : ""}>${isCancelledProject ? "Annulleret" : (isCompletedProject ? "Færdigt" : "Projekt færdig")}</button>
+                  ${
+                    isCancelledProject
+                      ? ""
+                      : `<button class="btn small ${isCompletedProject ? "" : "primary"}" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${isCompletedProject ? " disabled" : ""}>${isCompletedProject ? "Færdigt" : "Projekt færdig"}</button>`
+                  }
                   <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${Number(project.id || 0)}">${isCancelledProject ? "Slet" : "Annuller"}</button>
                 `
                 : ""
@@ -8771,9 +8782,10 @@
   }
 
   async function loadTracking() {
-    if (state.role !== "admin" || !els.trackingTableBody) return;
+    if (!els.trackingTableBody) return;
+    const endpoint = state.role === "admin" ? "/api/admin/tracking" : "/api/tracking";
     try {
-      const data = await api("/api/admin/tracking");
+      const data = await api(endpoint);
       state.tracking = Array.isArray(data.items) ? data.items : [];
       const liveIds = new Set(state.tracking.map((item) => Number(item.id || 0)).filter(Boolean));
       state.trackingExpandedIds.forEach((id) => {
@@ -8790,6 +8802,7 @@
 
   function renderTracking() {
     if (!els.trackingTableBody) return;
+    const isAdmin = state.role === "admin";
     if (!state.tracking.length) {
       els.trackingTableBody.innerHTML = `<tr><td colspan="6" class="hint">Ingen trackingnumre endnu.</td></tr>`;
       return;
@@ -8806,17 +8819,27 @@
         const eventText = String(item.last_event_text || item.summary || "-");
         const eventLocation = String(item.last_event_location || "");
         const source = String(item.source || "");
+        const targetUsername = String(item.target_username || "").trim();
         const error = String(item.error || "");
         const trackingUrl = String(item.tracking_url || "");
         const numberHtml = trackingUrl
           ? `<a href="${esc(trackingUrl)}" target="_blank" rel="noopener">${esc(item.tracking_number)}</a>`
           : esc(item.tracking_number);
+        const actionButtons = [
+          canExpandEvents
+            ? `<button class="btn small" type="button" data-tracking-action="toggle-events" data-tracking-id="${id}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Fold ind" : "Fold ud"}</button>`
+            : "",
+          isAdmin ? `<button class="btn small primary" type="button" data-tracking-action="refresh" data-tracking-id="${id}">Opdater</button>` : "",
+          isAdmin ? `<button class="btn danger" type="button" data-tracking-action="delete" data-tracking-id="${id}">Slet</button>` : "",
+          isAdmin ? `<button class="btn small" type="button" data-tracking-action="share" data-tracking-id="${id}">Del</button>` : "",
+        ].filter(Boolean).join("");
         return `
           <tr>
             <td>${id}</td>
             <td>
               <div class="tracking-number-cell">
                 ${numberHtml}
+                ${isAdmin && targetUsername ? `<span class="hint">Bruger: ${esc(targetUsername)}</span>` : ""}
                 ${source ? `<span class="hint">${esc(source)}</span>` : ""}
               </div>
             </td>
@@ -8830,10 +8853,7 @@
             <td>${esc(formatTrackingDate(item.last_checked_at || item.updated_at))}</td>
             <td>
               <div class="tracking-row-actions">
-                ${canExpandEvents ? `<button class="btn small" type="button" data-tracking-action="toggle-events" data-tracking-id="${id}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Fold ind" : "Fold ud"}</button>` : ""}
-                <button class="btn small primary" type="button" data-tracking-action="refresh" data-tracking-id="${id}">Opdater</button>
-                <button class="btn danger" type="button" data-tracking-action="delete" data-tracking-id="${id}">Slet</button>
-                <button class="btn small" type="button" data-tracking-action="share" data-tracking-id="${id}">Del</button>
+                ${actionButtons || `<span class="hint">-</span>`}
               </div>
             </td>
           </tr>
@@ -11227,7 +11247,7 @@
         if (tab === "print-ready") {
           await loadPrintReadyProjects();
         }
-        if (tab === "tracking" && state.role === "admin") {
+        if (tab === "tracking") {
           await loadTracking();
         }
         if (tab === "settings" && state.role === "admin") {
