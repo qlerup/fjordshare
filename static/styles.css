@@ -1709,7 +1709,7 @@ input[type="checkbox"] {
 }
 
 .tracking-table {
-  min-width: 900px;
+  min-width: 1040px;
 }
 
 #tab-tracking .panel {
@@ -2287,6 +2287,12 @@ input[type="checkbox"] {
 
 .tracking-share-modal-card {
   width: min(720px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+}
+
+.tracking-assign-modal-card {
+  width: min(560px, calc(100vw - 24px));
   display: grid;
   gap: 10px;
 }

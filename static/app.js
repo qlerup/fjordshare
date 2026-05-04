@@ -98,6 +98,7 @@
     smsGatewayTokenPreviewActive: false,
     appOnboardingSeenPersisted: false,
     trackingExpandedIds: new Set(),
+    trackingAssignTrackingId: 0,
   };
 
   const els = {
@@ -360,6 +361,13 @@
     trackingAddBtn: document.getElementById("trackingAddBtn"),
     trackingStatus: document.getElementById("trackingStatus"),
     trackingTableBody: document.getElementById("trackingTableBody"),
+    trackingAssignModal: document.getElementById("trackingAssignModal"),
+    trackingAssignModalCloseBtn: document.getElementById("trackingAssignModalCloseBtn"),
+    trackingAssignNumberHint: document.getElementById("trackingAssignNumberHint"),
+    trackingAssignUserSelect: document.getElementById("trackingAssignUserSelect"),
+    trackingAssignCancelBtn: document.getElementById("trackingAssignCancelBtn"),
+    trackingAssignSaveBtn: document.getElementById("trackingAssignSaveBtn"),
+    trackingAssignStatus: document.getElementById("trackingAssignStatus"),
     trackingShareModal: document.getElementById("trackingShareModal"),
     trackingShareModalCloseBtn: document.getElementById("trackingShareModalCloseBtn"),
     trackingShareLinkInput: document.getElementById("trackingShareLinkInput"),
@@ -8873,7 +8881,7 @@
     if (!els.trackingTableBody) return;
     const isAdmin = state.role === "admin";
     if (!state.tracking.length) {
-      els.trackingTableBody.innerHTML = `<tr><td colspan="6" class="hint">Ingen trackingnumre endnu.</td></tr>`;
+      els.trackingTableBody.innerHTML = `<tr><td colspan="7" class="hint">Ingen trackingnumre endnu.</td></tr>`;
       return;
     }
     els.trackingTableBody.innerHTML = state.tracking
@@ -8889,6 +8897,7 @@
         const eventLocation = String(item.last_event_location || "");
         const source = String(item.source || "");
         const targetUsername = String(item.target_username || "").trim();
+        const assigneeHtml = targetUsername ? esc(targetUsername) : `<span class="hint">Ikke tildelt</span>`;
         const error = String(item.error || "");
         const trackingUrl = String(item.tracking_url || "");
         const numberHtml = trackingUrl
@@ -8898,6 +8907,7 @@
           canExpandEvents
             ? `<button class="btn small" type="button" data-tracking-action="toggle-events" data-tracking-id="${id}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Fold ind" : "Fold ud"}</button>`
             : "",
+          isAdmin ? `<button class="btn small" type="button" data-tracking-action="assign-user" data-tracking-id="${id}">Tildel en bruger</button>` : "",
           isAdmin ? `<button class="btn small primary" type="button" data-tracking-action="refresh" data-tracking-id="${id}">Opdater</button>` : "",
           isAdmin ? `<button class="btn danger" type="button" data-tracking-action="delete" data-tracking-id="${id}">Slet</button>` : "",
           isAdmin ? `<button class="btn small" type="button" data-tracking-action="share" data-tracking-id="${id}">Del</button>` : "",
@@ -8908,10 +8918,10 @@
             <td>
               <div class="tracking-number-cell">
                 ${numberHtml}
-                ${isAdmin && targetUsername ? `<span class="hint">Bruger: ${esc(targetUsername)}</span>` : ""}
                 ${source ? `<span class="hint">${esc(source)}</span>` : ""}
               </div>
             </td>
+            <td>${assigneeHtml}</td>
             <td><span class="tracking-status ${statusClass}">${esc(status)}</span></td>
             <td>
               <div class="tracking-event">${esc(eventText)}</div>
@@ -8929,7 +8939,7 @@
           ${isExpanded ? `
             <tr class="tracking-events-row">
               <td></td>
-              <td colspan="5">
+              <td colspan="6">
                 <div class="tracking-events-wrap">
                   <div class="tracking-events-head">Alle hændelser</div>
                   ${renderTrackingEvents(events)}
@@ -9004,6 +9014,98 @@
     showStatus(els.trackingStatus, "Tracking slettet.", "ok");
   }
 
+  function closeTrackingAssignModal() {
+    state.trackingAssignTrackingId = 0;
+    if (els.trackingAssignModal) els.trackingAssignModal.classList.add("hidden");
+    if (els.trackingAssignUserSelect) els.trackingAssignUserSelect.innerHTML = "";
+    if (els.trackingAssignNumberHint) els.trackingAssignNumberHint.textContent = "-";
+    if (els.trackingAssignSaveBtn) els.trackingAssignSaveBtn.disabled = false;
+    showStatus(els.trackingAssignStatus, "");
+  }
+
+  async function openTrackingAssignModal(id) {
+    if (state.role !== "admin" || !id || !els.trackingAssignModal) return;
+    const item = state.tracking.find((entry) => Number(entry.id || 0) === Number(id));
+    if (!item) {
+      throw new Error("Tracking findes ikke");
+    }
+
+    state.trackingAssignTrackingId = Number(id);
+    if (els.trackingAssignNumberHint) {
+      const number = String(item.tracking_number || "").trim() || "-";
+      els.trackingAssignNumberHint.textContent = `Tracking: ${number}`;
+    }
+
+    if (els.trackingAssignSaveBtn) els.trackingAssignSaveBtn.disabled = true;
+    if (els.trackingAssignModal) els.trackingAssignModal.classList.remove("hidden");
+    showStatus(els.trackingAssignStatus, "Henter brugere...", "ok");
+
+    try {
+      const data = await api("/api/admin/users");
+      const users = (Array.isArray(data.items) ? data.items : [])
+        .map((u) => ({
+          username: String((u && u.username) || "").trim(),
+          role: String((u && u.role) || "user").trim().toLowerCase(),
+        }))
+        .filter((u) => !!u.username)
+        .sort((a, b) => a.username.localeCompare(b.username, "da", { sensitivity: "base" }));
+
+      if (els.trackingAssignUserSelect) {
+        const optionsHtml = [
+          `<option value="">Ikke tildelt</option>`,
+          ...users.map((u) => {
+            const roleLabel = u.role === "admin" ? "admin" : "bruger";
+            return `<option value="${esc(u.username)}">${esc(u.username)} (${roleLabel})</option>`;
+          }),
+        ].join("");
+        els.trackingAssignUserSelect.innerHTML = optionsHtml;
+        els.trackingAssignUserSelect.value = String(item.target_username || "").trim();
+      }
+
+      showStatus(els.trackingAssignStatus, "");
+    } catch (err) {
+      showStatus(els.trackingAssignStatus, err.message || "Kunne ikke hente brugerliste", "error");
+      throw err;
+    } finally {
+      if (els.trackingAssignSaveBtn) els.trackingAssignSaveBtn.disabled = false;
+    }
+  }
+
+  async function saveTrackingAssignee() {
+    if (state.role !== "admin") return;
+    const trackingId = Number(state.trackingAssignTrackingId || 0);
+    if (!trackingId) {
+      throw new Error("Tracking findes ikke");
+    }
+
+    const targetUsername = String((els.trackingAssignUserSelect && els.trackingAssignUserSelect.value) || "").trim();
+    if (els.trackingAssignSaveBtn) els.trackingAssignSaveBtn.disabled = true;
+    showStatus(els.trackingAssignStatus, "Gemmer tildeling...", "ok");
+
+    try {
+      const data = await api(`/api/admin/tracking/${trackingId}/assign-user`, {
+        method: "POST",
+        body: { target_username: targetUsername },
+      });
+      const item = data && data.item ? data.item : null;
+      if (item) {
+        const idx = state.tracking.findIndex((entry) => Number(entry.id || 0) === Number(item.id || 0));
+        if (idx >= 0) state.tracking[idx] = item;
+        else state.tracking.unshift(item);
+        renderTracking();
+      } else {
+        await loadTracking();
+      }
+      const msg = targetUsername
+        ? `Tracking er nu tildelt bruger ${targetUsername}.`
+        : "Tracking er ikke længere tildelt en bruger.";
+      showStatus(els.trackingStatus, msg, "ok");
+      closeTrackingAssignModal();
+    } finally {
+      if (els.trackingAssignSaveBtn) els.trackingAssignSaveBtn.disabled = false;
+    }
+  }
+
   function closeTrackingShareModal() {
     if (els.trackingShareModal) els.trackingShareModal.classList.add("hidden");
     if (els.trackingShareLinkInput) els.trackingShareLinkInput.value = "";
@@ -9057,6 +9159,7 @@
     const id = Number(btn.dataset.trackingId || 0);
     const action = String(btn.dataset.trackingAction || "");
     if (action === "toggle-events") toggleTrackingEvents(id);
+    if (action === "assign-user") await openTrackingAssignModal(id);
     if (action === "refresh") await refreshTracking(id);
     if (action === "delete") await deleteTracking(id);
     if (action === "share") await openTrackingShareModal(id);
@@ -12665,6 +12768,19 @@
     if (els.trackingShareModalCloseBtn) {
       els.trackingShareModalCloseBtn.addEventListener("click", closeTrackingShareModal);
     }
+    if (els.trackingAssignModalCloseBtn) {
+      els.trackingAssignModalCloseBtn.addEventListener("click", closeTrackingAssignModal);
+    }
+    if (els.trackingAssignCancelBtn) {
+      els.trackingAssignCancelBtn.addEventListener("click", closeTrackingAssignModal);
+    }
+    if (els.trackingAssignSaveBtn) {
+      els.trackingAssignSaveBtn.addEventListener("click", () => {
+        saveTrackingAssignee().catch((err) => {
+          showStatus(els.trackingAssignStatus, err.message || "Kunne ikke gemme tildeling", "error");
+        });
+      });
+    }
     if (els.trackingShareCopyBtn) {
       els.trackingShareCopyBtn.addEventListener("click", () => {
         copyTrackingShareLink().catch((err) => {
@@ -12676,6 +12792,13 @@
       els.trackingShareModal.addEventListener("click", (event) => {
         if (event.target === els.trackingShareModal || event.target.classList.contains("modal-backdrop")) {
           closeTrackingShareModal();
+        }
+      });
+    }
+    if (els.trackingAssignModal) {
+      els.trackingAssignModal.addEventListener("click", (event) => {
+        if (event.target === els.trackingAssignModal || event.target.classList.contains("modal-backdrop")) {
+          closeTrackingAssignModal();
         }
       });
     }

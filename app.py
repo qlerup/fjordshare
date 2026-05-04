@@ -13558,6 +13558,73 @@ def api_admin_tracking_refresh(tracking_id: int):
         return jsonify({"ok": False, "error": f"Kunne ikke opdatere tracking: {exc}"}), 500
 
 
+@app.route("/api/admin/tracking/<int:tracking_id>/assign-user", methods=["POST"])
+@login_required
+def api_admin_tracking_assign_user(tracking_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    body = request.get_json(silent=True) or {}
+    raw_target_username = str(body.get("target_username") or body.get("username") or "").strip()
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT * FROM tracking_shipments WHERE id=?",
+            (int(tracking_id),),
+        ).fetchone()
+        if row is None:
+            log_activity(
+                kind="tracking",
+                action="assign-user-failed",
+                message=f"Tracking-bruger kunne ikke sættes - id findes ikke: {int(tracking_id)}",
+                level="warn",
+                target=str(int(tracking_id)),
+                actor=str(current_user.username or ""),
+            )
+            return jsonify({"ok": False, "error": "Tracking findes ikke"}), 404
+
+        target_username = ""
+        if raw_target_username:
+            user_row = conn.execute(
+                "SELECT username FROM users WHERE lower(username)=lower(?) LIMIT 1",
+                (raw_target_username,),
+            ).fetchone()
+            if user_row is None:
+                log_activity(
+                    kind="tracking",
+                    action="assign-user-failed",
+                    message=f"Tracking-bruger kunne ikke sættes - bruger findes ikke: {raw_target_username}",
+                    level="warn",
+                    target=str(row["tracking_number"] or ""),
+                    actor=str(current_user.username or ""),
+                )
+                return jsonify({"ok": False, "error": "Bruger findes ikke"}), 400
+            target_username = str(user_row["username"] or "").strip()
+
+        conn.execute(
+            "UPDATE tracking_shipments SET target_username=?, updated_at=? WHERE id=?",
+            (target_username, now_iso(), int(tracking_id)),
+        )
+        updated_row = conn.execute(
+            "SELECT * FROM tracking_shipments WHERE id=?",
+            (int(tracking_id),),
+        ).fetchone()
+        conn.commit()
+
+    tracking_number = str((updated_row["tracking_number"] if updated_row is not None else row["tracking_number"]) or "")
+    assigned_text = target_username or "(ingen)"
+    log_activity(
+        kind="tracking",
+        action="assign-user",
+        message=f"Tracking-bruger opdateret: {tracking_number} -> {assigned_text}",
+        level="info",
+        target=tracking_number,
+        actor=str(current_user.username or ""),
+    )
+
+    return jsonify({"ok": True, "item": _tracking_row_to_dict(updated_row if updated_row is not None else row)})
+
+
 @app.route("/api/admin/tracking/<int:tracking_id>/share", methods=["POST"])
 @login_required
 def api_admin_tracking_share(tracking_id: int):

@@ -178,6 +178,7 @@
             <tr>
               <th>ID</th>
               <th>Pakkenummer</th>
+              <th>Delt med</th>
               <th>Status</th>
               <th>Seneste hændelse</th>
               <th>Sidst opdateret</th>
@@ -693,6 +694,28 @@
       <input id="shareResultLink" class="input" type="text" readonly>
       <button id="copyShareLinkBtn" class="btn" type="button">Kopier</button>
     </div>
+  </div>
+</div>
+
+<div id="trackingAssignModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card tracking-assign-modal-card">
+    <div class="toolbar">
+      <h3>Tildel en bruger</h3>
+      <button id="trackingAssignModalCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <p id="trackingAssignNumberHint" class="hint">-</p>
+    <div class="form-grid">
+      <div>
+        <label for="trackingAssignUserSelect">Vælg bruger</label>
+        <select id="trackingAssignUserSelect" class="select"></select>
+      </div>
+    </div>
+    <div class="toolbar end">
+      <button id="trackingAssignCancelBtn" class="btn" type="button">Annuller</button>
+      <button id="trackingAssignSaveBtn" class="btn primary" type="button">Gem tildeling</button>
+    </div>
+    <div id="trackingAssignStatus" class="status hidden"></div>
   </div>
 </div>
 
