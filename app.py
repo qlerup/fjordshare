@@ -8071,6 +8071,23 @@ def _tracking_error_result(tracking_number: str, exc: Exception) -> TrackingLook
     )
 
 
+def _tracking_log_message(prefix: str, item: dict[str, Any]) -> tuple[str, str]:
+    number = str((item or {}).get("tracking_number") or "").strip()
+    status = str((item or {}).get("status") or "").strip()
+    source = str((item or {}).get("source") or "").strip()
+    error = str((item or {}).get("error") or "").strip()
+    parts = [prefix]
+    if number:
+        parts.append(number)
+    if status:
+        parts.append(f"status: {status}")
+    if source:
+        parts.append(f"kilde: {source}")
+    if error:
+        parts.append(f"fejl: {error}")
+    return " - ".join(parts), ("warn" if error else "info")
+
+
 def refresh_tracking_shipment(tracking_id: int) -> dict[str, Any]:
     with closing(get_conn()) as conn:
         row = conn.execute(
@@ -12779,9 +12796,18 @@ def api_admin_tracking():
         return jsonify({"ok": True, "items": [_tracking_row_to_dict(row) for row in rows]})
 
     body = request.get_json(silent=True) or {}
+    raw_tracking_number = str(body.get("tracking_number") or body.get("number") or "").strip()
     try:
-        tracking_number = normalize_tracking_number(body.get("tracking_number") or body.get("number"))
+        tracking_number = normalize_tracking_number(raw_tracking_number)
     except ValueError as exc:
+        log_activity(
+            kind="tracking",
+            action="create-failed",
+            message=f"Tracking kunne ikke tilføjes - ugyldigt nummer: {str(exc)}",
+            level="warn",
+            target=raw_tracking_number[:90],
+            actor=str(current_user.username or ""),
+        )
         return jsonify({"ok": False, "error": str(exc)}), 400
 
     now = now_iso()
@@ -12792,6 +12818,14 @@ def api_admin_tracking():
                 (tracking_number,),
             ).fetchone()
             if existing is not None:
+                log_activity(
+                    kind="tracking",
+                    action="create-failed",
+                    message=f"Tracking kunne ikke tilføjes - nummer findes allerede: {tracking_number}",
+                    level="warn",
+                    target=tracking_number,
+                    actor=str(current_user.username or ""),
+                )
                 return jsonify({"ok": False, "error": "Trackingnummer findes allerede"}), 409
             cur = conn.execute(
                 """
@@ -12805,18 +12839,35 @@ def api_admin_tracking():
             conn.commit()
 
         item = refresh_tracking_shipment(tracking_id)
+        message, level = _tracking_log_message("Tracking tilføjet og scannet", item)
         log_activity(
             kind="tracking",
             action="create",
-            message=f"Tracking tilføjet: {tracking_number}",
-            level="info",
+            message=message,
+            level=level,
             target=tracking_number,
             actor=str(current_user.username or ""),
         )
         return jsonify({"ok": True, "item": item})
     except sqlite3.IntegrityError:
+        log_activity(
+            kind="tracking",
+            action="create-failed",
+            message=f"Tracking kunne ikke tilføjes - nummer findes allerede: {tracking_number}",
+            level="warn",
+            target=tracking_number,
+            actor=str(current_user.username or ""),
+        )
         return jsonify({"ok": False, "error": "Trackingnummer findes allerede"}), 409
     except Exception as exc:
+        log_activity(
+            kind="tracking",
+            action="create-failed",
+            message=f"Tracking kunne ikke tilføjes: {tracking_number} - {str(exc)[:240]}",
+            level="error",
+            target=tracking_number,
+            actor=str(current_user.username or ""),
+        )
         return jsonify({"ok": False, "error": f"Kunne ikke tilføje tracking: {exc}"}), 500
 
 
@@ -12827,18 +12878,35 @@ def api_admin_tracking_refresh(tracking_id: int):
         return jsonify({"ok": False, "error": "Kun admin"}), 403
     try:
         item = refresh_tracking_shipment(int(tracking_id))
+        message, level = _tracking_log_message("Tracking scannet/opdateret", item)
         log_activity(
             kind="tracking",
             action="refresh",
-            message=f"Tracking opdateret: {item.get('tracking_number') or tracking_id}",
-            level="info" if not item.get("error") else "warn",
+            message=message,
+            level=level,
             target=str(item.get("tracking_number") or ""),
             actor=str(current_user.username or ""),
         )
         return jsonify({"ok": True, "item": item})
     except LookupError:
+        log_activity(
+            kind="tracking",
+            action="refresh-failed",
+            message=f"Tracking kunne ikke scannes/opdateres - id findes ikke: {int(tracking_id)}",
+            level="warn",
+            target=str(int(tracking_id)),
+            actor=str(current_user.username or ""),
+        )
         return jsonify({"ok": False, "error": "Tracking findes ikke"}), 404
     except Exception as exc:
+        log_activity(
+            kind="tracking",
+            action="refresh-failed",
+            message=f"Tracking kunne ikke scannes/opdateres: id {int(tracking_id)} - {str(exc)[:240]}",
+            level="error",
+            target=str(int(tracking_id)),
+            actor=str(current_user.username or ""),
+        )
         return jsonify({"ok": False, "error": f"Kunne ikke opdatere tracking: {exc}"}), 500
 
 
@@ -12853,6 +12921,14 @@ def api_admin_tracking_delete(tracking_id: int):
             (int(tracking_id),),
         ).fetchone()
         if row is None:
+            log_activity(
+                kind="tracking",
+                action="delete-failed",
+                message=f"Tracking kunne ikke slettes - id findes ikke: {int(tracking_id)}",
+                level="warn",
+                target=str(int(tracking_id)),
+                actor=str(current_user.username or ""),
+            )
             return jsonify({"ok": False, "error": "Tracking findes ikke"}), 404
         tracking_number = str(row["tracking_number"] or "")
         conn.execute("DELETE FROM tracking_shipments WHERE id=?", (int(tracking_id),))
