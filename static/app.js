@@ -94,6 +94,7 @@
     smsGatewayTokenConfigured: false,
     smsGatewayTokenPreview: "",
     smsGatewayTokenPreviewActive: false,
+    appOnboardingSeenPersisted: false,
     trackingExpandedIds: new Set(),
   };
 
@@ -326,6 +327,9 @@
     smsOnboardingSkipBtn: document.getElementById("smsOnboardingSkipBtn"),
     smsOnboardingSendCodeBtn: document.getElementById("smsOnboardingSendCodeBtn"),
     smsOnboardingVerifyBtn: document.getElementById("smsOnboardingVerifyBtn"),
+    appOnboardingModal: document.getElementById("appOnboardingModal"),
+    appOnboardingCloseBtn: document.getElementById("appOnboardingCloseBtn"),
+    appOnboardingDontShowBtn: document.getElementById("appOnboardingDontShowBtn"),
     printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
     printReadyStatus: document.getElementById("printReadyStatus"),
     printReadyAdminList: document.getElementById("printReadyAdminList"),
@@ -619,12 +623,31 @@
     try {
       const data = await api("/api/me");
       const user = (data && data.user) || {};
-      if (!user.app_onboarding_seen_v1 && els.appOnboardingModal) {
+      state.appOnboardingSeenPersisted = !!user.app_onboarding_seen_v1;
+      if (!state.appOnboardingSeenPersisted && els.appOnboardingModal) {
         els.appOnboardingModal.classList.remove("hidden");
       }
     } catch (err) {
       // Ignore onboarding on error to not block UI
     }
+  }
+
+  async function markAppOnboardingSeen() {
+    if (state.appOnboardingSeenPersisted) return;
+    state.appOnboardingSeenPersisted = true;
+    try {
+      await api("/api/me/onboarding/seen", { method: "POST" });
+    } catch (err) {
+      state.appOnboardingSeenPersisted = false;
+      throw err;
+    }
+  }
+
+  function dismissAppOnboarding() {
+    if (els.appOnboardingModal) els.appOnboardingModal.classList.add("hidden");
+    markAppOnboardingSeen().catch(() => {
+      // Ignore save errors; onboarding can be shown again later if needed.
+    });
   }
 
   async function saveMyProfile() {
@@ -12646,25 +12669,21 @@
       });
     }
     // App onboarding modal elements/bindings
-    if (!els.appOnboardingModal) els.appOnboardingModal = document.getElementById("appOnboardingModal");
-    if (!els.appOnboardingCloseBtn) els.appOnboardingCloseBtn = document.getElementById("appOnboardingCloseBtn");
-    if (!els.appOnboardingDontShowBtn) els.appOnboardingDontShowBtn = document.getElementById("appOnboardingDontShowBtn");
     if (els.appOnboardingModal) {
       els.appOnboardingModal.addEventListener("click", (event) => {
         if (event.target === els.appOnboardingModal || event.target.classList.contains("modal-backdrop")) {
-          els.appOnboardingModal.classList.add("hidden");
+          dismissAppOnboarding();
         }
       });
     }
     if (els.appOnboardingCloseBtn) {
       els.appOnboardingCloseBtn.addEventListener("click", () => {
-        if (els.appOnboardingModal) els.appOnboardingModal.classList.add("hidden");
+        dismissAppOnboarding();
       });
     }
     if (els.appOnboardingDontShowBtn) {
-      els.appOnboardingDontShowBtn.addEventListener("click", async () => {
-        try { await api("/api/me/onboarding/seen", { method: "POST" }); } catch (_) {}
-        if (els.appOnboardingModal) els.appOnboardingModal.classList.add("hidden");
+      els.appOnboardingDontShowBtn.addEventListener("click", () => {
+        dismissAppOnboarding();
       });
     }
     bindSlicerUploadModalDropZone();
