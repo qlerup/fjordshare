@@ -496,13 +496,64 @@ input[type="checkbox"] {
   display: none !important;
 }
 
+.upload-top-status-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
 .upload-top-status-label {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 0.76rem;
   color: var(--muted);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.upload-top-status-cancel {
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 106, 95, 0.5);
+  background: rgba(255, 106, 95, 0.18);
+  color: #ffd8d4;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 5px 8px;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-2px);
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease, background .18s ease, border-color .18s ease;
+}
+
+.upload-top-status.can-cancel-thumb:hover .upload-top-status-cancel,
+.upload-top-status.can-cancel-thumb:focus-within .upload-top-status-cancel,
+.upload-top-status.is-cancelling-thumb .upload-top-status-cancel {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.upload-top-status.can-cancel-thumb:hover .upload-top-status-cancel,
+.upload-top-status.can-cancel-thumb:focus-within .upload-top-status-cancel {
+  pointer-events: auto;
+}
+
+.upload-top-status-cancel:hover {
+  background: rgba(255, 106, 95, 0.28);
+  border-color: rgba(255, 133, 124, 0.7);
+}
+
+.upload-top-status-cancel:disabled {
+  opacity: 0.85;
+  cursor: default;
+  pointer-events: none;
+}
+
+.upload-top-status-cancel.hidden {
+  display: none !important;
 }
 
 .upload-top-status-progress {

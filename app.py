@@ -251,6 +251,8 @@ if HEIC_CONVERSION_AVAILABLE:
 THUMB_QUEUE: "queue_mod.Queue[int]" = queue_mod.Queue()
 THUMB_QUEUE_LOCK = threading.Lock()
 THUMB_QUEUED_IDS: set[int] = set()
+THUMB_CANCEL_LOCK = threading.Lock()
+THUMB_CANCELLED_IDS: set[int] = set()
 THUMB_WORKER_LOCK = threading.Lock()
 THUMB_WORKER_STARTED = False
 SLICE_QUEUE: "queue_mod.Queue[Dict[str, Any]]" = queue_mod.Queue()
@@ -1247,6 +1249,7 @@ def _set_file_thumbnail_state(
                 "queued": "Thumbnail sat i kø",
                 "processing": "Thumbnail generering startet",
                 "ready": "Thumbnail klar",
+                "cancelled": "Thumbnail annulleret",
                 "none": "Thumbnail ikke relevant for filtypen",
                 "error": safe_error or "Thumbnail fejl",
             }.get(safe_status, f"Thumbnail status: {safe_status}")
@@ -7299,6 +7302,24 @@ def _generate_thumbnail_file(file_row: sqlite3.Row) -> str:
     return rel_name
 
 
+def _thumbnail_cancel_mark(file_id: int) -> None:
+    fid = int(file_id)
+    with THUMB_CANCEL_LOCK:
+        THUMB_CANCELLED_IDS.add(fid)
+
+
+def _thumbnail_cancel_requested(file_id: int) -> bool:
+    fid = int(file_id)
+    with THUMB_CANCEL_LOCK:
+        return fid in THUMB_CANCELLED_IDS
+
+
+def _thumbnail_cancel_clear(file_id: int) -> None:
+    fid = int(file_id)
+    with THUMB_CANCEL_LOCK:
+        THUMB_CANCELLED_IDS.discard(fid)
+
+
 def _process_thumbnail_for_file_id(file_id: int) -> None:
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -7308,6 +7329,14 @@ def _process_thumbnail_for_file_id(file_id: int) -> None:
 
     ext = str(row["ext"] or "").lower()
     existing_rel = str(row["thumb_rel"] or "").strip()
+    status_now = str(row["thumb_status"] or "none").strip().lower()
+    if status_now == "cancelled":
+        return
+
+    if _thumbnail_cancel_requested(int(file_id)):
+        _set_file_thumbnail_state(int(file_id), "cancelled", thumb_rel=existing_rel, error="")
+        return
+
     if not _supports_thumbnail_for_ext(ext):
         if existing_rel:
             _safe_remove_thumbnail(existing_rel)
@@ -7317,11 +7346,19 @@ def _process_thumbnail_for_file_id(file_id: int) -> None:
     _set_file_thumbnail_state(int(file_id), "processing", thumb_rel=existing_rel, error="")
     try:
         rel_name = _generate_thumbnail_file(row)
+        if _thumbnail_cancel_requested(int(file_id)):
+            if rel_name and rel_name != existing_rel:
+                _safe_remove_thumbnail(rel_name)
+            _set_file_thumbnail_state(int(file_id), "cancelled", thumb_rel=existing_rel, error="")
+            return
         if existing_rel and existing_rel != rel_name:
             _safe_remove_thumbnail(existing_rel)
         _set_file_thumbnail_state(int(file_id), "ready", thumb_rel=rel_name, error="")
     except Exception as exc:
-        _set_file_thumbnail_state(int(file_id), "error", thumb_rel=existing_rel, error=str(exc))
+        if _thumbnail_cancel_requested(int(file_id)):
+            _set_file_thumbnail_state(int(file_id), "cancelled", thumb_rel=existing_rel, error="")
+        else:
+            _set_file_thumbnail_state(int(file_id), "error", thumb_rel=existing_rel, error=str(exc))
 
 
 def _thumbnail_worker_loop() -> None:
@@ -7339,6 +7376,7 @@ def _thumbnail_worker_loop() -> None:
         finally:
             with THUMB_QUEUE_LOCK:
                 THUMB_QUEUED_IDS.discard(fid)
+            _thumbnail_cancel_clear(fid)
             THUMB_QUEUE.task_done()
 
 
@@ -7354,6 +7392,7 @@ def _start_thumbnail_worker_if_needed() -> None:
 
 def enqueue_thumbnail(file_id: int) -> None:
     fid = int(file_id)
+    _thumbnail_cancel_clear(fid)
     with THUMB_QUEUE_LOCK:
         if fid in THUMB_QUEUED_IDS:
             return
@@ -7590,6 +7629,7 @@ def _bootstrap_thumbnail_queue() -> None:
         SELECT id
         FROM files
         WHERE lower(COALESCE(ext,'')) IN ({placeholders})
+                    AND lower(COALESCE(thumb_status,'')) != 'cancelled'
           AND (thumb_rel IS NULL OR TRIM(thumb_rel)='' OR lower(COALESCE(thumb_status,'')) IN ('queued','processing','error'))
         ORDER BY id DESC
         LIMIT 2000
@@ -11240,7 +11280,7 @@ def api_files_list():
         ext = str(row["ext"] or "").lower()
         thumb_status = str(row["thumb_status"] or "none").strip().lower()
         thumb_rel = str(row["thumb_rel"] or "").strip()
-        if _supports_thumbnail_for_ext(ext) and (not thumb_rel or thumb_status in {"queued", "error"}):
+        if _supports_thumbnail_for_ext(ext) and thumb_status != "cancelled" and (not thumb_rel or thumb_status in {"queued", "error"}):
             try:
                 enqueue_thumbnail(int(row["id"]))
             except Exception:
@@ -11313,6 +11353,75 @@ def api_file_thumb(file_id: int):
         return jsonify({"ok": False, "error": "Thumbnail ikke klar endnu"}), 404
 
     return send_file(thumb_path, mimetype="image/png", as_attachment=False)
+
+
+@app.route("/api/files/thumbnails/cancel", methods=["POST"])
+@login_required
+def api_files_thumbnails_cancel():
+    body = request.get_json(silent=True) or {}
+    file_ids = _normalize_positive_ids(body.get("file_ids"))
+    if not file_ids:
+        return jsonify({"ok": False, "error": "file_ids skal være en liste med mindst én fil"}), 400
+
+    placeholders = ",".join("?" for _ in file_ids)
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM files WHERE id IN ({placeholders})",
+            tuple(file_ids),
+        ).fetchall()
+
+    row_by_id: dict[int, sqlite3.Row] = {int(row["id"]): row for row in rows}
+    for row in rows:
+        if not user_can_access_file(current_user, row, "upload"):
+            return jsonify({"ok": False, "error": "Ingen rettighed til at annullere en eller flere thumbnails"}), 403
+
+    cancelled_ids: list[int] = []
+    queued_cancelled = 0
+    processing_cancelled = 0
+    already_cancelled = 0
+    actor = str(current_user.username or "system")
+
+    for fid in file_ids:
+        row = row_by_id.get(int(fid))
+        if row is None:
+            continue
+
+        ext = str(row["ext"] or "").lower()
+        if not _supports_thumbnail_for_ext(ext):
+            continue
+
+        thumb_status = str(row["thumb_status"] or "none").strip().lower()
+        if thumb_status == "cancelled":
+            already_cancelled += 1
+            continue
+        if thumb_status not in {"queued", "processing"}:
+            continue
+
+        if thumb_status == "processing":
+            processing_cancelled += 1
+        else:
+            queued_cancelled += 1
+
+        _thumbnail_cancel_mark(int(fid))
+        _set_file_thumbnail_state(
+            int(fid),
+            "cancelled",
+            thumb_rel=str(row["thumb_rel"] or "").strip(),
+            error="",
+            actor=actor,
+        )
+        cancelled_ids.append(int(fid))
+
+    return jsonify(
+        {
+            "ok": True,
+            "cancelled": len(cancelled_ids),
+            "queued_cancelled": queued_cancelled,
+            "processing_cancelled": processing_cancelled,
+            "already_cancelled": already_cancelled,
+            "ids": cancelled_ids,
+        }
+    )
 
 
 @app.route("/api/files/<int:file_id>/metadata", methods=["PATCH"])

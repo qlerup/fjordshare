@@ -71,6 +71,7 @@
     sliceStatusHideTimer: null,
     sliceStatusFadePulse: 0,
     topStatusFadeTimer: null,
+    thumbTopStatusCancelling: false,
     slicePreview: null,
     slicePreviewLoadToken: 0,
     slicePlateAssets: null,
@@ -152,6 +153,7 @@
     thumbTopStatus: document.getElementById("thumbTopStatus"),
     thumbTopStatusLabel: document.getElementById("thumbTopStatusLabel"),
     thumbTopStatusBar: document.getElementById("thumbTopStatusBar"),
+    thumbTopStatusCancelBtn: document.getElementById("thumbTopStatusCancelBtn"),
     mapperSearchBtn: document.getElementById("mapperSearchBtn"),
     mapperMenuBtn: document.getElementById("mapperMenuBtn"),
     mapperMenu: document.getElementById("mapperMenu"),
@@ -2378,8 +2380,12 @@
       return `<video src="${esc(file.content_url)}" muted preload="metadata" controls></video>`;
     }
     if (file.is_3d) {
-      if (String(file.thumb_status || "").toLowerCase() === "error") {
+      const thumbStatus = String(file.thumb_status || "").toLowerCase();
+      if (thumbStatus === "error") {
         return `<div class="placeholder">Thumbnail fejl</div>`;
+      }
+      if (thumbStatus === "cancelled") {
+        return `<div class="placeholder">Thumbnail annulleret</div>`;
       }
       return `<div class="placeholder">Genererer 3D thumbnail...</div>`;
     }
@@ -7120,6 +7126,7 @@
     let queued = 0;
     let processing = 0;
     let error = 0;
+    let cancelled = 0;
 
     for (const f of state.files) {
       if (!f || !f.thumb_supported) continue;
@@ -7133,15 +7140,17 @@
         queued += 1;
       } else if (status === "error") {
         error += 1;
+      } else if (status === "cancelled") {
+        cancelled += 1;
       } else {
         queued += 1;
       }
     }
 
     const pending = queued + processing;
-    const done = ready + error;
+    const done = ready + error + cancelled;
     const progress = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
-    return { total, ready, queued, processing, error, pending, done, progress };
+    return { total, ready, queued, processing, error, cancelled, pending, done, progress };
   }
 
   function zipQueueStats() {
@@ -7263,6 +7272,12 @@
         && (now - Number(state.sliceStatusFadePulse || 0)) <= 1200;
       setThumbTopStatusVisible(false, shouldFadeHide);
       state.sliceStatusFadePulse = 0;
+      if (els.thumbTopStatusCancelBtn) {
+        els.thumbTopStatus.classList.remove("can-cancel-thumb", "is-cancelling-thumb");
+        els.thumbTopStatusCancelBtn.classList.add("hidden");
+        els.thumbTopStatusCancelBtn.disabled = true;
+        els.thumbTopStatusCancelBtn.textContent = "Annuller";
+      }
       els.thumbTopStatusLabel.textContent = "Thumbnails: Klar";
       els.thumbTopStatusBar.classList.remove("indeterminate");
       els.thumbTopStatusBar.style.width = "0%";
@@ -7271,6 +7286,15 @@
 
     state.sliceStatusFadePulse = 0;
     setThumbTopStatusVisible(true, false);
+
+    const canCancelThumbs = stats.pending > 0;
+    if (els.thumbTopStatusCancelBtn) {
+      els.thumbTopStatus.classList.toggle("can-cancel-thumb", canCancelThumbs && !state.thumbTopStatusCancelling);
+      els.thumbTopStatus.classList.toggle("is-cancelling-thumb", !!state.thumbTopStatusCancelling);
+      els.thumbTopStatusCancelBtn.classList.toggle("hidden", !canCancelThumbs && !state.thumbTopStatusCancelling);
+      els.thumbTopStatusCancelBtn.disabled = !canCancelThumbs || !!state.thumbTopStatusCancelling;
+      els.thumbTopStatusCancelBtn.textContent = state.thumbTopStatusCancelling ? "Annullerer..." : "Annuller";
+    }
 
     const labels = [];
     if (zipStats.pending > 0 || zipStats.error > 0) {
@@ -7324,6 +7348,50 @@
         ? Math.round(progressValues.reduce((sum, value) => sum + Number(value || 0), 0) / progressValues.length)
         : 0;
       els.thumbTopStatusBar.style.width = `${Math.max(0, Math.min(100, Number(mergedProgress || 0)))}%`;
+    }
+  }
+
+  function cancellableThumbFileIds() {
+    const ids = [];
+    for (const file of Array.isArray(state.files) ? state.files : []) {
+      if (!file || !file.thumb_supported) continue;
+      const status = String(file.thumb_status || "none").trim().toLowerCase();
+      if (status !== "queued" && status !== "processing") continue;
+      const id = Number(file.id || 0);
+      if (!id || ids.includes(id)) continue;
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  async function cancelTopThumbGeneration() {
+    if (state.thumbTopStatusCancelling) return;
+
+    const fileIds = cancellableThumbFileIds();
+    if (!fileIds.length) {
+      showStatus(els.uploadStatus, "Ingen aktive thumbnail-jobs at annullere.", "ok");
+      updateThumbTopStatus();
+      return;
+    }
+
+    state.thumbTopStatusCancelling = true;
+    updateThumbTopStatus();
+    try {
+      const data = await api("/api/files/thumbnails/cancel", {
+        method: "POST",
+        body: { file_ids: fileIds },
+      });
+      const cancelledCount = Number((data && data.cancelled) || 0);
+      if (cancelledCount > 0) {
+        const suffix = cancelledCount === 1 ? "" : "er";
+        showStatus(els.uploadStatus, `Thumbnail-generering annulleret for ${cancelledCount} fil${suffix}.`, "ok");
+      } else {
+        showStatus(els.uploadStatus, "Ingen aktive thumbnail-jobs at annullere.", "ok");
+      }
+      await loadFiles();
+    } finally {
+      state.thumbTopStatusCancelling = false;
+      updateThumbTopStatus();
     }
   }
 
@@ -11456,6 +11524,16 @@
         state.currentFolder = target;
         if (els.folderSelect) els.folderSelect.value = target;
         await loadFiles();
+      });
+    }
+
+    if (els.thumbTopStatusCancelBtn) {
+      els.thumbTopStatusCancelBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        cancelTopThumbGeneration().catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke annullere thumbnail-generering", "error");
+        });
       });
     }
 

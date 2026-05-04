@@ -37,7 +37,10 @@
           <h3>Mapper</h3>
           <div class="mapper-tools">
             <div id="thumbTopStatus" class="upload-top-status hidden" aria-live="polite">
-              <div id="thumbTopStatusLabel" class="upload-top-status-label">Thumbnails: Klar</div>
+              <div class="upload-top-status-head">
+                <div id="thumbTopStatusLabel" class="upload-top-status-label">Thumbnails: Klar</div>
+                <button id="thumbTopStatusCancelBtn" class="upload-top-status-cancel hidden" type="button" aria-label="Annuller thumbnail-generering">&#10005; Annuller</button>
+              </div>
               <div class="upload-top-status-progress"><span id="thumbTopStatusBar" class="upload-top-status-bar" style="width:0%"></span></div>
             </div>
             <button id="mapperSearchBtn" class="icon-btn" type="button" title="Søg mappe" aria-label="Søg mappe">&#128269;</button>
