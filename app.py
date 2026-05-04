@@ -7831,7 +7831,6 @@ def init_db() -> None:
                 last_checked_at TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_tracking_shipments_updated ON tracking_shipments(updated_at DESC, id DESC);
-            CREATE INDEX IF NOT EXISTS idx_tracking_shipments_target_username ON tracking_shipments(target_username, id DESC);
 
             CREATE TABLE IF NOT EXISTS tracking_share_links (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
