@@ -7287,7 +7287,7 @@
     state.sliceStatusFadePulse = 0;
     setThumbTopStatusVisible(true, false);
 
-    const canCancelThumbs = stats.pending > 0;
+    const canCancelThumbs = state.role === "admin" && stats.pending > 0;
     if (els.thumbTopStatusCancelBtn) {
       els.thumbTopStatus.classList.toggle("can-cancel-thumb", canCancelThumbs && !state.thumbTopStatusCancelling);
       els.thumbTopStatus.classList.toggle("is-cancelling-thumb", !!state.thumbTopStatusCancelling);
@@ -7366,6 +7366,7 @@
 
   async function cancelTopThumbGeneration() {
     if (state.thumbTopStatusCancelling) return;
+    if (state.role !== "admin") return;
 
     const fileIds = cancellableThumbFileIds();
     if (!fileIds.length) {
@@ -11527,7 +11528,7 @@
       });
     }
 
-    if (els.thumbTopStatusCancelBtn) {
+    if (els.thumbTopStatusCancelBtn && state.role === "admin") {
       els.thumbTopStatusCancelBtn.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();

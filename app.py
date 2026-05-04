@@ -11358,6 +11358,9 @@ def api_file_thumb(file_id: int):
 @app.route("/api/files/thumbnails/cancel", methods=["POST"])
 @login_required
 def api_files_thumbnails_cancel():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
     body = request.get_json(silent=True) or {}
     file_ids = _normalize_positive_ids(body.get("file_ids"))
     if not file_ids:
