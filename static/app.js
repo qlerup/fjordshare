@@ -8360,7 +8360,6 @@
             <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))}</div>
             <div class="hint">Filer i alt: ${fileCount}</div>
             <div class="hint">Printet: ${printedCount}</div>
-            ${project.selected_summary ? `<div class="hint">${esc(project.selected_summary)}</div>` : ""}
           </div>
           <div class="toolbar">
             <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
