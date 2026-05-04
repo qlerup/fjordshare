@@ -1890,7 +1890,7 @@ input[type="checkbox"] {
   gap: 10px;
   position: relative;
   isolation: isolate;
-  overflow-x: auto;
+  overflow: hidden;
 }
 
 .print-ready-project-card > * {
@@ -1982,6 +1982,12 @@ input[type="checkbox"] {
 
 .print-ready-table {
   min-width: 940px;
+}
+
+.print-ready-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .print-ready-table thead th {

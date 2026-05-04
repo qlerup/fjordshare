@@ -8278,20 +8278,22 @@
             }
           </div>
         </div>
-        <table class="table compact print-ready-table">
-          <thead>
-            <tr>
-              <th>Sti i mappe</th>
-              <th>Filnavn</th>
-              <th>Info</th>
-              <th>Status</th>
-              <th>Antal</th>
-              <th>Billeder</th>
-              <th>Handling</th>
-            </tr>
-          </thead>
-          <tbody>${rows || `<tr><td colspan="7" class="hint">Ingen filer.</td></tr>`}</tbody>
-        </table>
+        <div class="print-ready-table-wrap">
+          <table class="table compact print-ready-table">
+            <thead>
+              <tr>
+                <th>Sti i mappe</th>
+                <th>Filnavn</th>
+                <th>Info</th>
+                <th>Status</th>
+                <th>Antal</th>
+                <th>Billeder</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody>${rows || `<tr><td colspan="7" class="hint">Ingen filer.</td></tr>`}</tbody>
+          </table>
+        </div>
       </article>
     `;
   }
