@@ -20,6 +20,7 @@
     zipJobs: [],
     shares: [],
     printReadyProjects: [],
+    tracking: [],
     users: [],
     adminLogs: [],
     pendingMetadata: [],
@@ -108,6 +109,7 @@
     tabProfile: document.getElementById("tab-profile"),
     tabPrintReady: document.getElementById("tab-print-ready"),
     tabSettings: document.getElementById("tab-settings"),
+    tabTracking: document.getElementById("tab-tracking"),
     profileSmsEnabledChk: document.getElementById("profileSmsEnabledChk"),
     profileSmsCountrySelect: document.getElementById("profileSmsCountrySelect"),
     profileSmsPhoneInput: document.getElementById("profileSmsPhoneInput"),
@@ -341,6 +343,10 @@
     createUserBtn: document.getElementById("createUserBtn"),
     userStatus: document.getElementById("userStatus"),
     usersTableBody: document.getElementById("usersTableBody"),
+    trackingNumberInput: document.getElementById("trackingNumberInput"),
+    trackingAddBtn: document.getElementById("trackingAddBtn"),
+    trackingStatus: document.getElementById("trackingStatus"),
+    trackingTableBody: document.getElementById("trackingTableBody"),
     logsRefreshBtn: document.getElementById("logsRefreshBtn"),
     logsClearBtn: document.getElementById("logsClearBtn"),
     logsStatus: document.getElementById("logsStatus"),
@@ -397,6 +403,10 @@
     settings: {
       title: "Indstillinger",
       subtitle: "Delinger, DNS, brugere, SMS og slicer-profiler",
+    },
+    tracking: {
+      title: "Tracking",
+      subtitle: "Bring pakker og manuelle tracking-opdateringer",
     },
     "print-ready": {
       title: "Projekter klar til print",
@@ -1470,6 +1480,7 @@
       profile: els.tabProfile,
       "print-ready": els.tabPrintReady,
       settings: els.tabSettings,
+      tracking: els.tabTracking,
     };
     Object.entries(map).forEach(([key, section]) => {
       if (!section) return;
@@ -8388,6 +8399,149 @@
     await loadFolders();
   }
 
+  function formatTrackingDate(value) {
+    const text = String(value || "").trim();
+    if (!text) return "-";
+    const d = new Date(text);
+    if (!Number.isNaN(d.getTime())) return d.toLocaleString();
+    return text;
+  }
+
+  function trackingStatusClass(item) {
+    if (item && item.error) return "error";
+    const status = String((item && item.status) || "").toLowerCase();
+    if (status.includes("leveret") || status.includes("delivered")) return "ok";
+    if (status.includes("ikke fundet") || status.includes("fejl")) return "error";
+    return "";
+  }
+
+  async function loadTracking() {
+    if (state.role !== "admin" || !els.trackingTableBody) return;
+    try {
+      const data = await api("/api/admin/tracking");
+      state.tracking = Array.isArray(data.items) ? data.items : [];
+      renderTracking();
+      showStatus(els.trackingStatus, "");
+    } catch (err) {
+      state.tracking = [];
+      renderTracking();
+      showStatus(els.trackingStatus, err.message || "Kunne ikke hente tracking", "error");
+    }
+  }
+
+  function renderTracking() {
+    if (!els.trackingTableBody) return;
+    if (!state.tracking.length) {
+      els.trackingTableBody.innerHTML = `<tr><td colspan="6" class="hint">Ingen trackingnumre endnu.</td></tr>`;
+      return;
+    }
+    els.trackingTableBody.innerHTML = state.tracking
+      .map((item) => {
+        const id = Number(item.id || 0);
+        const status = String(item.status || (item.error ? "Fejl" : "-"));
+        const statusClass = trackingStatusClass(item);
+        const eventText = String(item.last_event_text || item.summary || "-");
+        const eventLocation = String(item.last_event_location || "");
+        const source = String(item.source || "");
+        const error = String(item.error || "");
+        const trackingUrl = String(item.tracking_url || "");
+        const numberHtml = trackingUrl
+          ? `<a href="${esc(trackingUrl)}" target="_blank" rel="noopener">${esc(item.tracking_number)}</a>`
+          : esc(item.tracking_number);
+        return `
+          <tr>
+            <td>${id}</td>
+            <td>
+              <div class="tracking-number-cell">
+                ${numberHtml}
+                ${source ? `<span class="hint">${esc(source)}</span>` : ""}
+              </div>
+            </td>
+            <td><span class="tracking-status ${statusClass}">${esc(status)}</span></td>
+            <td>
+              <div class="tracking-event">${esc(eventText)}</div>
+              ${eventLocation ? `<div class="hint">${esc(eventLocation)}</div>` : ""}
+              ${error ? `<div class="tracking-error">${esc(error)}</div>` : ""}
+            </td>
+            <td>${esc(formatTrackingDate(item.last_checked_at || item.updated_at))}</td>
+            <td>
+              <div class="tracking-row-actions">
+                <button class="btn small primary" type="button" data-tracking-action="refresh" data-tracking-id="${id}">Opdater</button>
+                <button class="btn danger" type="button" data-tracking-action="delete" data-tracking-id="${id}">Slet</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
+  async function addTracking() {
+    if (state.role !== "admin") return;
+    const trackingNumber = String((els.trackingNumberInput && els.trackingNumberInput.value) || "").trim();
+    if (!trackingNumber) {
+      showStatus(els.trackingStatus, "Indtast tracking- eller pakkenummer.", "error");
+      if (els.trackingNumberInput) els.trackingNumberInput.focus();
+      return;
+    }
+    if (els.trackingAddBtn) els.trackingAddBtn.disabled = true;
+    showStatus(els.trackingStatus, "Tilføjer og henter Bring status...", "ok");
+    try {
+      const data = await api("/api/admin/tracking", {
+        method: "POST",
+        body: { tracking_number: trackingNumber },
+      });
+      if (els.trackingNumberInput) els.trackingNumberInput.value = "";
+      await loadTracking();
+      const item = data && data.item ? data.item : null;
+      showStatus(
+        els.trackingStatus,
+        item && item.error ? `Tracking tilføjet, men Bring svarede: ${item.error}` : "Tracking tilføjet og opdateret.",
+        item && item.error ? "error" : "ok",
+      );
+    } finally {
+      if (els.trackingAddBtn) els.trackingAddBtn.disabled = false;
+    }
+  }
+
+  async function refreshTracking(id) {
+    if (state.role !== "admin" || !id) return;
+    showStatus(els.trackingStatus, "Opdaterer tracking hos Bring...", "ok");
+    const data = await api(`/api/admin/tracking/${id}/refresh`, { method: "POST" });
+    const item = data && data.item ? data.item : null;
+    if (item) {
+      const idx = state.tracking.findIndex((entry) => Number(entry.id || 0) === Number(item.id || 0));
+      if (idx >= 0) state.tracking[idx] = item;
+      else state.tracking.unshift(item);
+      renderTracking();
+    } else {
+      await loadTracking();
+    }
+    showStatus(
+      els.trackingStatus,
+      item && item.error ? `Opdateret med fejl: ${item.error}` : "Tracking opdateret.",
+      item && item.error ? "error" : "ok",
+    );
+  }
+
+  async function deleteTracking(id) {
+    if (state.role !== "admin" || !id) return;
+    if (!window.confirm("Vil du slette dette trackingnummer?")) return;
+    await api(`/api/admin/tracking/${id}`, { method: "DELETE" });
+    state.tracking = state.tracking.filter((item) => Number(item.id || 0) !== Number(id));
+    renderTracking();
+    showStatus(els.trackingStatus, "Tracking slettet.", "ok");
+  }
+
+  async function onTrackingTableClick(event) {
+    const btn = event.target.closest("[data-tracking-action]");
+    if (!btn) return;
+    const id = Number(btn.dataset.trackingId || 0);
+    const action = String(btn.dataset.trackingAction || "");
+    if (action === "refresh") await refreshTracking(id);
+    if (action === "delete") await deleteTracking(id);
+  }
+
   async function loadAdminLogs() {
     if (state.role !== "admin" || !els.logsTableBody) return;
     try {
@@ -10642,6 +10796,9 @@
         if (tab === "print-ready" && state.role === "admin") {
           await loadPrintReadyProjects();
         }
+        if (tab === "tracking" && state.role === "admin") {
+          await loadTracking();
+        }
         if (tab === "settings" && state.role === "admin") {
           if (state.currentSettingsTab === "shares") await loadShares();
           if (state.currentSettingsTab === "dns") await loadDns();
@@ -11920,6 +12077,30 @@
       els.usersTableBody.addEventListener("click", (event) => {
         onUsersTableClick(event).catch((err) => {
           showStatus(els.userStatus, err.message || "Kunne ikke slette bruger", "error");
+        });
+      });
+    }
+    if (els.trackingAddBtn) {
+      els.trackingAddBtn.addEventListener("click", () => {
+        addTracking().catch((err) => {
+          showStatus(els.trackingStatus, err.message || "Kunne ikke tilføje tracking", "error");
+        });
+      });
+    }
+    if (els.trackingNumberInput) {
+      els.trackingNumberInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        addTracking().catch((err) => {
+          showStatus(els.trackingStatus, err.message || "Kunne ikke tilføje tracking", "error");
+        });
+      });
+      els.trackingNumberInput.addEventListener("input", () => showStatus(els.trackingStatus, ""));
+    }
+    if (els.trackingTableBody) {
+      els.trackingTableBody.addEventListener("click", (event) => {
+        onTrackingTableClick(event).catch((err) => {
+          showStatus(els.trackingStatus, err.message || "Kunne ikke ændre tracking", "error");
         });
       });
     }

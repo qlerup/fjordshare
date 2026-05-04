@@ -48,6 +48,8 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from tracking_providers import TrackingLookupResult, fetch_bring_tracking, normalize_tracking_number
+
 try:
     from cryptography.fernet import Fernet, InvalidToken as FernetInvalidToken
 except Exception:
@@ -223,6 +225,7 @@ ACTIVITY_KIND_LABELS = {
     "delete": "Slet",
     "folder": "Mappe",
     "sms": "SMS",
+    "tracking": "Tracking",
     "system": "System",
 }
 
@@ -7755,6 +7758,27 @@ def init_db() -> None:
                 value TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS tracking_shipments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                carrier TEXT NOT NULL DEFAULT 'bring',
+                tracking_number TEXT UNIQUE NOT NULL,
+                status TEXT,
+                status_code TEXT,
+                summary TEXT,
+                last_event_at TEXT,
+                last_event_text TEXT,
+                last_event_location TEXT,
+                events_json TEXT,
+                tracking_url TEXT,
+                source TEXT,
+                error TEXT,
+                created_by TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_checked_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_tracking_shipments_updated ON tracking_shipments(updated_at DESC, id DESC);
+
             CREATE TABLE IF NOT EXISTS zip_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 folder_path TEXT NOT NULL,
@@ -8002,6 +8026,113 @@ def set_setting(key: str, value: str) -> None:
             (str(key), str(value)),
         )
         conn.commit()
+
+
+def _tracking_events_from_json(value: Any) -> list[dict[str, Any]]:
+    try:
+        parsed = json.loads(str(value or "[]"))
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)][:30]
+
+
+def _tracking_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "carrier": str(row["carrier"] or "bring"),
+        "tracking_number": str(row["tracking_number"] or ""),
+        "status": str(row["status"] or ""),
+        "status_code": str(row["status_code"] or ""),
+        "summary": str(row["summary"] or ""),
+        "last_event_at": str(row["last_event_at"] or ""),
+        "last_event_text": str(row["last_event_text"] or ""),
+        "last_event_location": str(row["last_event_location"] or ""),
+        "events": _tracking_events_from_json(row["events_json"]),
+        "tracking_url": str(row["tracking_url"] or ""),
+        "source": str(row["source"] or ""),
+        "error": str(row["error"] or ""),
+        "created_by": str(row["created_by"] or ""),
+        "created_at": str(row["created_at"] or ""),
+        "updated_at": str(row["updated_at"] or ""),
+        "last_checked_at": str(row["last_checked_at"] or ""),
+    }
+
+
+def _tracking_error_result(tracking_number: str, exc: Exception) -> TrackingLookupResult:
+    return TrackingLookupResult(
+        carrier="bring",
+        tracking_number=str(tracking_number or ""),
+        status="Fejl ved opdatering",
+        tracking_url=f"https://tracking.bring.com/tracking/{str(tracking_number or '').strip()}?lang=da",
+        source="fjordshare",
+        error=str(exc)[:260] or "Kunne ikke opdatere tracking",
+    )
+
+
+def refresh_tracking_shipment(tracking_id: int) -> dict[str, Any]:
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT id, tracking_number FROM tracking_shipments WHERE id=?",
+            (int(tracking_id),),
+        ).fetchone()
+    if row is None:
+        raise LookupError("Tracking findes ikke")
+
+    number = str(row["tracking_number"] or "")
+    try:
+        result = fetch_bring_tracking(number, client_url=get_setting("external_base_url", ""))
+    except Exception as exc:
+        result = _tracking_error_result(number, exc)
+
+    now = now_iso()
+    events_json = json.dumps((result.events or [])[:30], ensure_ascii=False)
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE tracking_shipments
+            SET carrier=?,
+                status=?,
+                status_code=?,
+                summary=?,
+                last_event_at=?,
+                last_event_text=?,
+                last_event_location=?,
+                events_json=?,
+                tracking_url=?,
+                source=?,
+                error=?,
+                updated_at=?,
+                last_checked_at=?
+            WHERE id=?
+            """,
+            (
+                str(result.carrier or "bring"),
+                str(result.status or ""),
+                str(result.status_code or ""),
+                str(result.summary or ""),
+                str(result.last_event_at or ""),
+                str(result.last_event_text or ""),
+                str(result.last_event_location or ""),
+                events_json,
+                str(result.tracking_url or ""),
+                str(result.source or ""),
+                str(result.error or ""),
+                now,
+                now,
+                int(tracking_id),
+            ),
+        )
+        updated = conn.execute(
+            "SELECT * FROM tracking_shipments WHERE id=?",
+            (int(tracking_id),),
+        ).fetchone()
+        conn.commit()
+
+    if updated is None:
+        raise LookupError("Tracking findes ikke")
+    return _tracking_row_to_dict(updated)
 
 
 def _normalize_sms_country_code(value: Any, default: str = "+45", strict: bool = False) -> str:
@@ -12628,6 +12759,114 @@ def api_settings_slicer_profiles():
             }
         )
     )
+
+
+@app.route("/api/admin/tracking", methods=["GET", "POST"])
+@login_required
+def api_admin_tracking():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    if request.method == "GET":
+        with closing(get_conn()) as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM tracking_shipments
+                ORDER BY id DESC
+                """
+            ).fetchall()
+        return jsonify({"ok": True, "items": [_tracking_row_to_dict(row) for row in rows]})
+
+    body = request.get_json(silent=True) or {}
+    try:
+        tracking_number = normalize_tracking_number(body.get("tracking_number") or body.get("number"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    now = now_iso()
+    try:
+        with closing(get_conn()) as conn:
+            existing = conn.execute(
+                "SELECT id FROM tracking_shipments WHERE tracking_number=?",
+                (tracking_number,),
+            ).fetchone()
+            if existing is not None:
+                return jsonify({"ok": False, "error": "Trackingnummer findes allerede"}), 409
+            cur = conn.execute(
+                """
+                INSERT INTO tracking_shipments(
+                    carrier, tracking_number, status, created_by, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                ("bring", tracking_number, "Afventer opdatering", str(current_user.username or ""), now, now),
+            )
+            tracking_id = int(cur.lastrowid)
+            conn.commit()
+
+        item = refresh_tracking_shipment(tracking_id)
+        log_activity(
+            kind="tracking",
+            action="create",
+            message=f"Tracking tilføjet: {tracking_number}",
+            level="info",
+            target=tracking_number,
+            actor=str(current_user.username or ""),
+        )
+        return jsonify({"ok": True, "item": item})
+    except sqlite3.IntegrityError:
+        return jsonify({"ok": False, "error": "Trackingnummer findes allerede"}), 409
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke tilføje tracking: {exc}"}), 500
+
+
+@app.route("/api/admin/tracking/<int:tracking_id>/refresh", methods=["POST"])
+@login_required
+def api_admin_tracking_refresh(tracking_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+    try:
+        item = refresh_tracking_shipment(int(tracking_id))
+        log_activity(
+            kind="tracking",
+            action="refresh",
+            message=f"Tracking opdateret: {item.get('tracking_number') or tracking_id}",
+            level="info" if not item.get("error") else "warn",
+            target=str(item.get("tracking_number") or ""),
+            actor=str(current_user.username or ""),
+        )
+        return jsonify({"ok": True, "item": item})
+    except LookupError:
+        return jsonify({"ok": False, "error": "Tracking findes ikke"}), 404
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke opdatere tracking: {exc}"}), 500
+
+
+@app.route("/api/admin/tracking/<int:tracking_id>", methods=["DELETE"])
+@login_required
+def api_admin_tracking_delete(tracking_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT tracking_number FROM tracking_shipments WHERE id=?",
+            (int(tracking_id),),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Tracking findes ikke"}), 404
+        tracking_number = str(row["tracking_number"] or "")
+        conn.execute("DELETE FROM tracking_shipments WHERE id=?", (int(tracking_id),))
+        conn.commit()
+
+    log_activity(
+        kind="tracking",
+        action="delete",
+        message=f"Tracking slettet: {tracking_number}",
+        level="info",
+        target=tracking_number,
+        actor=str(current_user.username or ""),
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/users", methods=["GET", "POST"])

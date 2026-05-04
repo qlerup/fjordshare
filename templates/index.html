@@ -18,6 +18,7 @@
       <button class="nav-item active" data-tab="files">Mapper</button>
       <button class="nav-item admin-only" data-tab="print-ready">Projekter klar til print</button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
+      <button class="nav-item admin-only" data-tab="tracking">Tracking</button>
     </nav>
 
     <div class="sidebar-footer">
@@ -147,6 +148,41 @@
         <p class="hint">Brugerprojekter der er markeret klar til produktion.</p>
         <div id="printReadyStatus" class="status hidden"></div>
         <div id="printReadyAdminList" class="print-ready-admin-list"></div>
+      </div>
+    </section>
+
+    <section id="tab-tracking" class="tab-section hidden admin-only">
+      <div class="panel">
+        <h3>Tilføj tracking</h3>
+        <div class="form-grid">
+          <div>
+            <label for="trackingNumberInput">Tracking / pakkenummer</label>
+            <input id="trackingNumberInput" class="input" type="text" placeholder="Bring tracking- eller pakkenummer">
+          </div>
+          <div class="end">
+            <button id="trackingAddBtn" class="btn primary" type="button">Tilføj</button>
+          </div>
+        </div>
+        <div id="trackingStatus" class="status hidden"></div>
+      </div>
+
+      <div class="panel">
+        <div class="toolbar">
+          <h3>Tracking</h3>
+        </div>
+        <table class="table compact tracking-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Pakkenummer</th>
+              <th>Status</th>
+              <th>Seneste hændelse</th>
+              <th>Sidst opdateret</th>
+              <th>Handling</th>
+            </tr>
+          </thead>
+          <tbody id="trackingTableBody"></tbody>
+        </table>
       </div>
     </section>
 
