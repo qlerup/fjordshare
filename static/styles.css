@@ -1927,11 +1927,11 @@ input[type="checkbox"] {
   width: 172px;
 }
 
-.print-ready-file-row.is-printed td {
+.print-ready-file-row.project-completed td {
   background: linear-gradient(90deg, rgba(34, 197, 94, 0.28), rgba(22, 163, 74, 0.16));
 }
 
-.print-ready-file-row.is-printed td:first-child {
+.print-ready-file-row.project-completed td:first-child {
   box-shadow: inset 3px 0 0 rgba(74, 222, 128, 0.85);
 }
 

@@ -8207,7 +8207,7 @@
     const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
     const qty = Number(project.total_quantity || 0);
     const rows = files.map((file) => `
-      <tr class="print-ready-file-row${file.printed ? " is-printed" : ""}">
+      <tr class="print-ready-file-row${isCompletedProject ? " project-completed" : ""}">
         <td>${esc(file.display_path || file.folder_path || "-")}</td>
         <td><a href="${esc(file.download_url || "#")}" target="_blank" rel="noopener">${esc(file.filename || "-")}</a></td>
         <td>${esc(file.note || "-")}</td>
