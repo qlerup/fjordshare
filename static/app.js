@@ -7074,15 +7074,12 @@
       .map((file) => {
         const id = Number(file.id || 0);
         const isSelected = isFileEffectivelySelected(file);
-        const isPrinted = !!file.printed;
-        const printedBadge = isPrinted ? `<span class="file-print-badge">Printet</span>` : "";
         const sliceBadge = sliceBadgeHtml(file);
         return `
           <article class="file-card file-card-compact ${isSelected ? "selected" : ""}" data-file-id="${id}">
             <div class="file-preview">
               <span class="select-mark ${isSelected ? "selected" : ""}"></span>
               <button class="file-info-btn" data-action="open-info" data-file-id="${id}" aria-label="Vis fil-info">i</button>
-              ${printedBadge}
               ${sliceBadge}
               ${filePreviewHtml(file)}
             </div>
@@ -8260,7 +8257,6 @@
         <div class="print-ready-project-head">
           <div>
             <div class="print-ready-project-title">${esc(project.title || "Klar til print")}</div>
-            <div class="print-ready-status-pill project-status ${projectCardStatusClass}">${projectStatusText}</div>
             <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}</div>
             <div class="hint">Printet: ${printedCount}/${fileCount}</div>
             ${project.selected_summary ? `<div class="hint">${esc(project.selected_summary)}</div>` : ""}
