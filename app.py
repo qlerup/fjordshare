@@ -146,7 +146,20 @@ THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
 PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl"}
 PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl"
 THUMB_RENDER_FACE_LIMIT = 200_000
-THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "480")) or "480")
+THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "320")) or "320")
+THUMB_FAST_SIZE_PX = int(str(os.getenv("THUMB_FAST_SIZE_PX", "220")) or "220")
+THUMB_FAST_SIZE_PX = max(96, min(THUMB_SIZE_PX, THUMB_FAST_SIZE_PX))
+try:
+    THUMB_FAST_RENDER_FACE_LIMIT = int(str(os.getenv("THUMB_FAST_RENDER_FACE_LIMIT", "35000")) or "35000")
+except Exception:
+    THUMB_FAST_RENDER_FACE_LIMIT = 35_000
+THUMB_FAST_RENDER_FACE_LIMIT = max(5_000, min(THUMB_RENDER_FACE_LIMIT, THUMB_FAST_RENDER_FACE_LIMIT))
+THUMB_DETAIL_PASS_ENABLED = str(os.getenv("THUMB_DETAIL_PASS_ENABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+try:
+    THUMB_WORKER_COUNT = int(str(os.getenv("THUMB_WORKER_COUNT", "2")) or "2")
+except Exception:
+    THUMB_WORKER_COUNT = 2
+THUMB_WORKER_COUNT = max(1, min(4, THUMB_WORKER_COUNT))
 THUMB_RENDER_STYLE_VERSION = "9"
 SLICABLE_3D_EXTENSIONS = {".stl"}
 BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
@@ -251,10 +264,15 @@ if HEIC_CONVERSION_AVAILABLE:
 THUMB_QUEUE: "queue_mod.Queue[int]" = queue_mod.Queue()
 THUMB_QUEUE_LOCK = threading.Lock()
 THUMB_QUEUED_IDS: set[int] = set()
+THUMB_DETAIL_QUEUE: "queue_mod.Queue[int]" = queue_mod.Queue()
+THUMB_DETAIL_QUEUE_LOCK = threading.Lock()
+THUMB_DETAIL_QUEUED_IDS: set[int] = set()
 THUMB_CANCEL_LOCK = threading.Lock()
 THUMB_CANCELLED_IDS: set[int] = set()
 THUMB_WORKER_LOCK = threading.Lock()
 THUMB_WORKER_STARTED = False
+THUMB_DETAIL_WORKER_LOCK = threading.Lock()
+THUMB_DETAIL_WORKER_STARTED = False
 SLICE_QUEUE: "queue_mod.Queue[Dict[str, Any]]" = queue_mod.Queue()
 SLICE_QUEUE_LOCK = threading.Lock()
 SLICE_QUEUED_IDS: set[int] = set()
@@ -7075,7 +7093,11 @@ def enqueue_slice_job(
 def _load_mesh_for_thumbnail(mesh_path: Path):
     import trimesh
 
-    loaded = trimesh.load(str(mesh_path), force="scene")
+    loaded = trimesh.load(str(mesh_path), force="mesh", process=False)
+    if isinstance(loaded, trimesh.Trimesh):
+        mesh = loaded
+    else:
+        loaded = trimesh.load(str(mesh_path), force="scene", process=False)
     if isinstance(loaded, trimesh.Scene):
         meshes = []
         for geom in loaded.geometry.values():
@@ -7190,7 +7212,7 @@ def _ensure_preview_glb_for_row(file_row: sqlite3.Row) -> Optional[Path]:
     return preview_path if preview_path.exists() else None
 
 
-def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
+def _render_mesh_thumbnail(mesh_path: Path, output_png: Path, *, size_px: int, face_limit: int) -> None:
     import numpy as np
     import matplotlib
 
@@ -7203,28 +7225,20 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
         mesh.remove_degenerate_faces()
     except Exception:
         pass
-    try:
-        mesh.fix_normals()
-    except Exception:
-        pass
 
     verts = mesh.vertices
     faces = mesh.faces
-    # Prefer smooth shading using vertex normals averaged per face
-    try:
-        vnormals = mesh.vertex_normals
-    except Exception:
-        vnormals = mesh.face_normals
 
-    if len(faces) > THUMB_RENDER_FACE_LIMIT:
+    safe_face_limit = max(1000, int(face_limit or THUMB_RENDER_FACE_LIMIT))
+    if len(faces) > safe_face_limit:
         # Keep contiguous surface appearance instead of random sparse sampling.
-        step = max(1, int(np.ceil(len(faces) / float(THUMB_RENDER_FACE_LIMIT))))
+        step = max(1, int(np.ceil(len(faces) / float(safe_face_limit))))
         faces = faces[::step]
-        normals = normals[::step]
 
     triangles = verts[faces]
 
-    fig = plt.figure(figsize=(THUMB_SIZE_PX / 100.0, THUMB_SIZE_PX / 100.0), dpi=100)
+    safe_size_px = max(96, int(size_px or THUMB_SIZE_PX))
+    fig = plt.figure(figsize=(safe_size_px / 100.0, safe_size_px / 100.0), dpi=100)
     ax = fig.add_subplot(111, projection="3d")
     fig.patch.set_facecolor((0.06, 0.09, 0.13, 1.0))
     ax.set_facecolor((0.06, 0.09, 0.13, 1.0))
@@ -7233,10 +7247,14 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
     # Directional light similar to viewer; use smoothed per-face normals.
     light = np.array([0.25, 0.45, 0.85], dtype=float)
     light = light / np.linalg.norm(light)
-    # Average vertex normals for each face and normalize
-    face_normals_smooth = vnormals[faces].mean(axis=1)
-    norm_len = np.linalg.norm(face_normals_smooth, axis=1, keepdims=True)
-    safe_normals = face_normals_smooth / np.maximum(norm_len, 1e-9)
+
+    # Fast per-face normal calculation (much cheaper than global mesh normal fixing).
+    edge_a = triangles[:, 1] - triangles[:, 0]
+    edge_b = triangles[:, 2] - triangles[:, 0]
+    face_normals = np.cross(edge_a, edge_b)
+    norm_len = np.linalg.norm(face_normals, axis=1, keepdims=True)
+    safe_normals = face_normals / np.maximum(norm_len, 1e-9)
+
     # Use abs(dot) to avoid random black patches from inconsistent winding,
     # add a soft ambient floor and slight gamma for "solid" look.
     intensity = np.clip(np.abs(safe_normals.dot(light)), 0.22, 1.0)
@@ -7272,7 +7290,7 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path) -> None:
     plt.close(fig)
 
 
-def _generate_thumbnail_file(file_row: sqlite3.Row) -> str:
+def _generate_thumbnail_file(file_row: sqlite3.Row, *, detailed: bool = False) -> str:
     ext = str(file_row["ext"] or "").lower()
     file_id = int(file_row["id"])
     rel_name = _thumbnail_rel_name(file_id)
@@ -7288,6 +7306,8 @@ def _generate_thumbnail_file(file_row: sqlite3.Row) -> str:
         temp_output.unlink(missing_ok=True)
 
     render_source = source_path
+    render_size_px = THUMB_SIZE_PX if detailed else THUMB_FAST_SIZE_PX
+    render_face_limit = THUMB_RENDER_FACE_LIMIT if detailed else THUMB_FAST_RENDER_FACE_LIMIT
     with tempfile.TemporaryDirectory(prefix="thumb-", dir=str(DATA_DIR)) as tmp:
         tmp_dir = Path(tmp)
         if ext in {".step", ".stp"}:
@@ -7296,7 +7316,12 @@ def _generate_thumbnail_file(file_row: sqlite3.Row) -> str:
                 raise RuntimeError(f"STEP conversion failed: {convert_error}")
             render_source = converted_obj
 
-        _render_mesh_thumbnail(render_source, temp_output)
+        _render_mesh_thumbnail(
+            render_source,
+            temp_output,
+            size_px=render_size_px,
+            face_limit=render_face_limit,
+        )
 
     temp_output.replace(thumb_path)
     return rel_name
@@ -7345,7 +7370,7 @@ def _process_thumbnail_for_file_id(file_id: int) -> None:
 
     _set_file_thumbnail_state(int(file_id), "processing", thumb_rel=existing_rel, error="")
     try:
-        rel_name = _generate_thumbnail_file(row)
+        rel_name = _generate_thumbnail_file(row, detailed=False)
         if _thumbnail_cancel_requested(int(file_id)):
             if rel_name and rel_name != existing_rel:
                 _safe_remove_thumbnail(rel_name)
@@ -7354,6 +7379,7 @@ def _process_thumbnail_for_file_id(file_id: int) -> None:
         if existing_rel and existing_rel != rel_name:
             _safe_remove_thumbnail(existing_rel)
         _set_file_thumbnail_state(int(file_id), "ready", thumb_rel=rel_name, error="")
+        enqueue_thumbnail_detail(int(file_id))
     except Exception as exc:
         if _thumbnail_cancel_requested(int(file_id)):
             _set_file_thumbnail_state(int(file_id), "cancelled", thumb_rel=existing_rel, error="")
@@ -7386,8 +7412,13 @@ def _start_thumbnail_worker_if_needed() -> None:
         if THUMB_WORKER_STARTED:
             return
         THUMB_WORKER_STARTED = True
-    t = threading.Thread(target=_thumbnail_worker_loop, daemon=True, name="thumbnail-worker")
-    t.start()
+    for i in range(THUMB_WORKER_COUNT):
+        t = threading.Thread(
+            target=_thumbnail_worker_loop,
+            daemon=True,
+            name=f"thumbnail-worker-{i + 1}",
+        )
+        t.start()
 
 
 def enqueue_thumbnail(file_id: int) -> None:
@@ -7399,6 +7430,86 @@ def enqueue_thumbnail(file_id: int) -> None:
         THUMB_QUEUED_IDS.add(fid)
     _start_thumbnail_worker_if_needed()
     THUMB_QUEUE.put(fid)
+
+
+def _thumbnail_quick_queue_is_idle() -> bool:
+    with THUMB_QUEUE_LOCK:
+        return len(THUMB_QUEUED_IDS) == 0
+
+
+def _wait_for_thumbnail_quick_queue_idle() -> None:
+    while not _thumbnail_quick_queue_is_idle():
+        time.sleep(0.35)
+
+
+def _process_thumbnail_detail_for_file_id(file_id: int) -> None:
+    fid = int(file_id)
+    if _thumbnail_cancel_requested(fid):
+        return
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM files WHERE id=?", (fid,)).fetchone()
+
+    if row is None:
+        return
+
+    ext = str(row["ext"] or "").lower()
+    if not _supports_thumbnail_for_ext(ext):
+        return
+
+    status_now = str(row["thumb_status"] or "none").strip().lower()
+    if status_now in {"cancelled", "error", "none"}:
+        return
+
+    existing_rel = str(row["thumb_rel"] or "").strip()
+    if not existing_rel:
+        return
+
+    try:
+        rel_name = _generate_thumbnail_file(row, detailed=True)
+        if _thumbnail_cancel_requested(fid):
+            return
+        _set_file_thumbnail_state(fid, "ready", thumb_rel=rel_name, error="")
+    except Exception:
+        # Keep quick thumbnail even if detail pass fails.
+        return
+
+
+def _thumbnail_detail_worker_loop() -> None:
+    while True:
+        file_id = THUMB_DETAIL_QUEUE.get()
+        fid = int(file_id)
+        try:
+            _wait_for_thumbnail_quick_queue_idle()
+            _process_thumbnail_detail_for_file_id(fid)
+        except Exception:
+            pass
+        finally:
+            with THUMB_DETAIL_QUEUE_LOCK:
+                THUMB_DETAIL_QUEUED_IDS.discard(fid)
+            THUMB_DETAIL_QUEUE.task_done()
+
+
+def _start_thumbnail_detail_worker_if_needed() -> None:
+    global THUMB_DETAIL_WORKER_STARTED
+    with THUMB_DETAIL_WORKER_LOCK:
+        if THUMB_DETAIL_WORKER_STARTED:
+            return
+        THUMB_DETAIL_WORKER_STARTED = True
+    t = threading.Thread(target=_thumbnail_detail_worker_loop, daemon=True, name="thumbnail-detail-worker")
+    t.start()
+
+
+def enqueue_thumbnail_detail(file_id: int) -> None:
+    if not THUMB_DETAIL_PASS_ENABLED:
+        return
+    fid = int(file_id)
+    with THUMB_DETAIL_QUEUE_LOCK:
+        if fid in THUMB_DETAIL_QUEUED_IDS:
+            return
+        THUMB_DETAIL_QUEUED_IDS.add(fid)
+    _start_thumbnail_detail_worker_if_needed()
+    THUMB_DETAIL_QUEUE.put(fid)
 
 
 def _serialize_zip_job_row(row: sqlite3.Row) -> dict:
