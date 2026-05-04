@@ -2019,6 +2019,7 @@ input[type="checkbox"] {
 
 .print-ready-table {
   min-width: 940px;
+  table-layout: fixed;
 }
 
 .print-ready-table-wrap {
@@ -2031,24 +2032,51 @@ input[type="checkbox"] {
   color: #e8f1ff;
 }
 
+.print-ready-table th:nth-child(1),
+.print-ready-table td:nth-child(1) {
+  width: 18%;
+}
+
+.print-ready-table th:nth-child(2),
+.print-ready-table td:nth-child(2) {
+  width: 28%;
+}
+
+.print-ready-table th:nth-child(3),
+.print-ready-table td:nth-child(3) {
+  width: 10%;
+}
+
+.print-ready-table th:nth-child(4),
+.print-ready-table td:nth-child(4) {
+  width: 8%;
+}
+
+.print-ready-table th:nth-child(5),
+.print-ready-table td:nth-child(5) {
+  width: 6%;
+}
+
+.print-ready-table th:nth-child(6),
+.print-ready-table td:nth-child(6) {
+  width: 12%;
+}
+
+.print-ready-table th:nth-child(7),
+.print-ready-table td:nth-child(7) {
+  width: 18%;
+}
+
 .print-ready-table td:nth-child(1),
 .print-ready-table td:nth-child(2),
-.print-ready-table td:nth-child(3) {
+.print-ready-table td:nth-child(3),
+.print-ready-table td:nth-child(7) {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
-.print-ready-table td:nth-child(4) {
-  width: 120px;
-}
-
 .print-ready-table td:nth-child(5) {
-  width: 74px;
   font-variant-numeric: tabular-nums;
-}
-
-.print-ready-table td:nth-child(7) {
-  width: 172px;
 }
 
 .print-ready-status-muted {
