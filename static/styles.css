@@ -1936,6 +1936,23 @@ input[type="checkbox"] {
   line-height: 1.2;
 }
 
+.print-ready-status-pill.project-status {
+  margin-top: 4px;
+  margin-bottom: 2px;
+}
+
+.print-ready-status-pill.project-ready {
+  border-color: rgba(96, 165, 250, 0.65);
+  background: rgba(30, 64, 175, 0.45);
+  color: #e6f1ff;
+}
+
+.print-ready-status-pill.project-completed {
+  border-color: rgba(52, 211, 153, 0.65);
+  background: rgba(20, 114, 78, 0.82);
+  color: #e8fff5;
+}
+
 .print-ready-row-actions {
   display: flex;
   align-items: center;

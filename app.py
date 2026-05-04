@@ -11918,8 +11918,14 @@ def api_admin_print_ready():
             """
             SELECT *
             FROM print_ready_projects
-            WHERE status='ready'
-            ORDER BY id DESC
+            WHERE lower(COALESCE(status, 'ready')) IN ('ready', 'completed')
+            ORDER BY
+                CASE lower(COALESCE(status, 'ready'))
+                    WHEN 'ready' THEN 0
+                    WHEN 'completed' THEN 1
+                    ELSE 2
+                END,
+                id DESC
             LIMIT 200
             """
         ).fetchall()

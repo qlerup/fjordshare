@@ -8178,9 +8178,10 @@
 
   function renderPrintReadyProjectCard(project) {
     const files = Array.isArray(project.files) ? project.files : [];
+    const projectStatus = String(project.status || "ready").trim().toLowerCase() || "ready";
+    const isCompletedProject = projectStatus === "completed";
     const fileCount = Number(project.file_count || files.length || 0);
     const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
-    const allPrinted = fileCount > 0 && printedCount >= fileCount;
     const qty = Number(project.total_quantity || 0);
     const rows = files.map((file) => `
       <tr>
@@ -8195,9 +8196,13 @@
         <td>
           <div class="print-ready-row-actions">
             ${
-              file.printed
-                ? `<button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Fjern printet</button>`
-                : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
+              isCompletedProject
+                ? `<button class="btn small" type="button" disabled>Projekt færdigt</button>`
+                : (
+                  file.printed
+                    ? `<button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Fjern printet</button>`
+                    : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
+                )
             }
           </div>
         </td>
@@ -8208,6 +8213,7 @@
         <div class="print-ready-project-head">
           <div>
             <div class="print-ready-project-title">${esc(project.title || "Klar til print")}</div>
+            <div class="print-ready-status-pill project-status ${isCompletedProject ? "project-completed" : "project-ready"}">${isCompletedProject ? "Færdigt" : "Klar til print"}</div>
             <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}</div>
             <div class="hint">Printet: ${printedCount}/${fileCount}</div>
             ${project.selected_summary ? `<div class="hint">${esc(project.selected_summary)}</div>` : ""}
@@ -8215,7 +8221,7 @@
           <div class="toolbar">
             <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
             <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener">Download PDF produktions info</a>
-            <button class="btn small primary" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${allPrinted ? " disabled" : ""}>Projekt færdig</button>
+            <button class="btn small ${isCompletedProject ? "" : "primary"}" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${isCompletedProject ? " disabled" : ""}>${isCompletedProject ? "Færdigt" : "Projekt færdig"}</button>
             <button class="btn danger" type="button" data-print-ready-action="cancel" data-id="${Number(project.id || 0)}">Annuller</button>
           </div>
         </div>
