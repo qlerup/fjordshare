@@ -1951,7 +1951,7 @@
     const fileCount = Number(project.file_count || (Array.isArray(project.files) ? project.files.length : 0) || 0);
     const qty = Number(project.total_quantity || 0);
     if (els.printReadyModalSummary) {
-      els.printReadyModalSummary.textContent = `${project.title || "Klar til print"} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}`;
+      els.printReadyModalSummary.textContent = `${project.title || "Klar til print"} · ${fileCount} fil(er) · total stk (sum af Antal): ${qty || fileCount}`;
     }
     if (els.printReadyZipLink) {
       els.printReadyZipLink.href = String(project.zip_url || "#");
@@ -8358,7 +8358,7 @@
         <div class="print-ready-project-head">
           <div>
             <div class="print-ready-project-title">${esc(project.title || "Klar til print")}</div>
-            <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))} · ${fileCount} fil(er) · antal i alt: ${qty || fileCount}</div>
+            <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))} · ${fileCount} fil(er) · total stk (sum af Antal): ${qty || fileCount}</div>
             <div class="hint">Printet: ${printedCount}/${fileCount}</div>
             ${project.selected_summary ? `<div class="hint">${esc(project.selected_summary)}</div>` : ""}
           </div>
