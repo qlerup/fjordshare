@@ -8400,11 +8400,110 @@
     await loadFolders();
   }
 
+  const TRACKING_MONTH_NAMES = [
+    "januar",
+    "februar",
+    "marts",
+    "april",
+    "maj",
+    "juni",
+    "juli",
+    "august",
+    "september",
+    "oktober",
+    "november",
+    "december",
+  ];
+  const TRACKING_MONTH_ALIASES = {
+    januar: 0,
+    jan: 0,
+    january: 0,
+    februar: 1,
+    feb: 1,
+    february: 1,
+    marts: 2,
+    mar: 2,
+    march: 2,
+    april: 3,
+    apr: 3,
+    maj: 4,
+    may: 4,
+    juni: 5,
+    jun: 5,
+    june: 5,
+    juli: 6,
+    jul: 6,
+    july: 6,
+    august: 7,
+    aug: 7,
+    september: 8,
+    sep: 8,
+    sept: 8,
+    oktober: 9,
+    oct: 9,
+    october: 9,
+    november: 10,
+    nov: 10,
+    december: 11,
+    dec: 11,
+  };
+
+  function padTrackingTime(value) {
+    return String(value || 0).padStart(2, "0");
+  }
+
+  function parseTrackingDate(value) {
+    const text = String(value || "").trim();
+    if (!text) return null;
+
+    const numericMatch = text.match(
+      /^(\d{1,2})[./-](\d{1,2})[./-](\d{4})(?:[,\s]+(?:kl\.?\s*)?(\d{1,2})[.:](\d{2})(?:[.:](\d{2}))?)?/i,
+    );
+    if (numericMatch) {
+      return new Date(
+        Number(numericMatch[3]),
+        Number(numericMatch[2]) - 1,
+        Number(numericMatch[1]),
+        Number(numericMatch[4] || 0),
+        Number(numericMatch[5] || 0),
+        Number(numericMatch[6] || 0),
+      );
+    }
+
+    const monthMatch = text.toLocaleLowerCase("da-DK").match(
+      /^(\d{1,2})\.?\s+([a-zæøå]+)\s+(\d{4})(?:\s*(?:kl\.?|at)?\s*(\d{1,2})[.:](\d{2})(?:[.:](\d{2}))?)?/i,
+    );
+    if (monthMatch && Object.prototype.hasOwnProperty.call(TRACKING_MONTH_ALIASES, monthMatch[2])) {
+      return new Date(
+        Number(monthMatch[3]),
+        TRACKING_MONTH_ALIASES[monthMatch[2]],
+        Number(monthMatch[1]),
+        Number(monthMatch[4] || 0),
+        Number(monthMatch[5] || 0),
+        Number(monthMatch[6] || 0),
+      );
+    }
+
+    const directDate = new Date(text);
+    if (!Number.isNaN(directDate.getTime())) return directDate;
+
+    return null;
+  }
+
+  function trackingDateHasTime(value) {
+    return /(?:T|\bkl\.?\b|\bat\b|(?:^|[\s,])\d{1,2}[.:]\d{2}(?:[.:]\d{2})?(?:\s|$))/i.test(String(value || ""));
+  }
+
   function formatTrackingDate(value) {
     const text = String(value || "").trim();
     if (!text) return "-";
-    const d = new Date(text);
-    if (!Number.isNaN(d.getTime())) return d.toLocaleString();
+    const d = parseTrackingDate(text);
+    if (d) {
+      const datePart = `${d.getDate()} ${TRACKING_MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+      if (!trackingDateHasTime(text)) return datePart;
+      const timePart = `${padTrackingTime(d.getHours())}:${padTrackingTime(d.getMinutes())}`;
+      return `${datePart}, ${timePart}`;
+    }
     return text;
   }
 
