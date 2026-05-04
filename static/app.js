@@ -94,6 +94,7 @@
     smsGatewayTokenConfigured: false,
     smsGatewayTokenPreview: "",
     smsGatewayTokenPreviewActive: false,
+    trackingExpandedIds: new Set(),
   };
 
   const els = {
@@ -8415,11 +8416,61 @@
     return "";
   }
 
+  function trackingEventsForItem(item) {
+    const events = Array.isArray(item && item.events) ? item.events.filter(Boolean) : [];
+    if (events.length) return events;
+    const fallbackText = String((item && item.last_event_text) || "").trim();
+    if (!fallbackText) return [];
+    return [{
+      description: fallbackText,
+      display_date: String((item && item.last_event_at) || "").trim(),
+      location: String((item && item.last_event_location) || "").trim(),
+      status: String((item && item.status_code) || "").trim(),
+      date_iso: "",
+    }];
+  }
+
+  function trackingEventDate(event) {
+    const value = String(
+      (event && (event.date_iso || event.display_date || event.display_time)) || "",
+    ).trim();
+    return formatTrackingDate(value);
+  }
+
+  function renderTrackingEvents(events) {
+    if (!events.length) {
+      return `<div class="hint">Ingen hændelser gemt endnu. Tryk Opdater for at hente seneste historik fra Bring.</div>`;
+    }
+    return `
+      <ol class="tracking-timeline">
+        ${events.map((event) => {
+          const description = String((event && event.description) || (event && event.status) || "Hændelse").trim();
+          const dateText = trackingEventDate(event);
+          const location = String((event && event.location) || "").trim();
+          return `
+            <li class="tracking-timeline-item">
+              <span class="tracking-timeline-dot" aria-hidden="true"></span>
+              <div class="tracking-timeline-body">
+                <div class="tracking-timeline-title">${esc(description)}</div>
+                ${dateText && dateText !== "-" ? `<div class="tracking-timeline-date">${esc(dateText)}</div>` : ""}
+                ${location ? `<div class="tracking-timeline-location">${esc(location)}</div>` : ""}
+              </div>
+            </li>
+          `;
+        }).join("")}
+      </ol>
+    `;
+  }
+
   async function loadTracking() {
     if (state.role !== "admin" || !els.trackingTableBody) return;
     try {
       const data = await api("/api/admin/tracking");
       state.tracking = Array.isArray(data.items) ? data.items : [];
+      const liveIds = new Set(state.tracking.map((item) => Number(item.id || 0)).filter(Boolean));
+      state.trackingExpandedIds.forEach((id) => {
+        if (!liveIds.has(id)) state.trackingExpandedIds.delete(id);
+      });
       renderTracking();
       showStatus(els.trackingStatus, "");
     } catch (err) {
@@ -8440,6 +8491,10 @@
         const id = Number(item.id || 0);
         const status = String(item.status || (item.error ? "Fejl" : "-"));
         const statusClass = trackingStatusClass(item);
+        const events = trackingEventsForItem(item);
+        const hasEvents = events.length > 0;
+        const canExpandEvents = events.length > 1;
+        const isExpanded = canExpandEvents && state.trackingExpandedIds.has(id);
         const eventText = String(item.last_event_text || item.summary || "-");
         const eventLocation = String(item.last_event_location || "");
         const source = String(item.source || "");
@@ -8461,16 +8516,29 @@
             <td>
               <div class="tracking-event">${esc(eventText)}</div>
               ${eventLocation ? `<div class="hint">${esc(eventLocation)}</div>` : ""}
+              ${hasEvents ? `<div class="hint">${events.length} hændelse${events.length === 1 ? "" : "r"} gemt</div>` : ""}
               ${error ? `<div class="tracking-error">${esc(error)}</div>` : ""}
             </td>
             <td>${esc(formatTrackingDate(item.last_checked_at || item.updated_at))}</td>
             <td>
               <div class="tracking-row-actions">
+                ${canExpandEvents ? `<button class="btn small" type="button" data-tracking-action="toggle-events" data-tracking-id="${id}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Fold ind" : "Fold ud"}</button>` : ""}
                 <button class="btn small primary" type="button" data-tracking-action="refresh" data-tracking-id="${id}">Opdater</button>
                 <button class="btn danger" type="button" data-tracking-action="delete" data-tracking-id="${id}">Slet</button>
               </div>
             </td>
           </tr>
+          ${isExpanded ? `
+            <tr class="tracking-events-row">
+              <td></td>
+              <td colspan="5">
+                <div class="tracking-events-wrap">
+                  <div class="tracking-events-head">Alle hændelser</div>
+                  ${renderTrackingEvents(events)}
+                </div>
+              </td>
+            </tr>
+          ` : ""}
         `;
       })
       .join("");
@@ -8529,8 +8597,16 @@
     if (!window.confirm("Vil du slette dette trackingnummer?")) return;
     await api(`/api/admin/tracking/${id}`, { method: "DELETE" });
     state.tracking = state.tracking.filter((item) => Number(item.id || 0) !== Number(id));
+    state.trackingExpandedIds.delete(Number(id));
     renderTracking();
     showStatus(els.trackingStatus, "Tracking slettet.", "ok");
+  }
+
+  function toggleTrackingEvents(id) {
+    if (!id) return;
+    if (state.trackingExpandedIds.has(id)) state.trackingExpandedIds.delete(id);
+    else state.trackingExpandedIds.add(id);
+    renderTracking();
   }
 
   async function onTrackingTableClick(event) {
@@ -8538,6 +8614,7 @@
     if (!btn) return;
     const id = Number(btn.dataset.trackingId || 0);
     const action = String(btn.dataset.trackingAction || "");
+    if (action === "toggle-events") toggleTrackingEvents(id);
     if (action === "refresh") await refreshTracking(id);
     if (action === "delete") await deleteTracking(id);
   }

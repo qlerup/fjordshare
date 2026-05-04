@@ -1730,6 +1730,88 @@ input[type="checkbox"] {
   flex-wrap: wrap;
 }
 
+.tracking-events-row td {
+  background: rgba(15, 23, 42, 0.22);
+}
+
+.tracking-events-wrap {
+  display: grid;
+  gap: 10px;
+  max-width: 760px;
+  padding: 8px 0 10px;
+}
+
+.tracking-events-head {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
+
+.tracking-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.tracking-timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  padding: 0 0 14px;
+}
+
+.tracking-timeline-item::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 15px;
+  bottom: -1px;
+  border-left: 2px solid rgba(74, 222, 128, 0.55);
+}
+
+.tracking-timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.tracking-timeline-item:last-child::before {
+  display: none;
+}
+
+.tracking-timeline-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: #4ade80;
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.12);
+}
+
+.tracking-timeline-body {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.tracking-timeline-title {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.tracking-timeline-date {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.tracking-timeline-location {
+  color: var(--muted);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
 .print-ready-admin-list {
   display: grid;
   gap: 16px;

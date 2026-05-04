@@ -4,6 +4,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from html import unescape as html_unescape
 from html.parser import HTMLParser
 from typing import Any, Optional
 from urllib import error as urllib_error
@@ -13,6 +14,12 @@ from urllib import request as urllib_request
 BRING_API_URL = "https://api.bring.com/tracking/api/v2/tracking.json"
 BRING_PUBLIC_TRACKING_URL = "https://tracking.bring.com/tracking/{tracking_number}?lang=da"
 DEFAULT_TIMEOUT_SECONDS = int(str(os.getenv("BRING_TRACKING_TIMEOUT", "20") or "20"))
+_REACT_ROUTER_STREAM_PATTERN = re.compile(
+    r'window\.__reactRouterContext\.streamController\.enqueue\("((?:\\.|[^"\\])*)"\)'
+)
+_DEVALUE_KEY_REF_PATTERN = re.compile(r"^_(\d+)$")
+_DEVALUE_SPECIAL_LIST_TYPES = {"P", "u", "n", "D", "S", "M", "R", "r", "s", "m", "i", "b"}
+_PUBLIC_TRACKING_ROUTE_ID = "routes/$sporing.$trackingNumber"
 
 
 @dataclass
@@ -94,6 +101,12 @@ def _text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _strip_markup_text(value: Any) -> str:
+    text = re.sub(r"<[^>]*>", " ", str(value or ""))
+    text = re.sub(r"\s+([.,;:!?])", r"\1", html_unescape(text))
+    return _text(text)
+
+
 def _listify(value: Any, *nested_keys: str) -> list[Any]:
     if isinstance(value, list):
         return value
@@ -119,8 +132,14 @@ def _first_text(source: dict[str, Any], *keys: str) -> str:
 
 
 def _event_location(event: dict[str, Any]) -> str:
+    postal_code = _first_text(event, "postalCode", "PostalCode")
     city = _first_text(event, "city", "City")
     country = _first_text(event, "country", "Country")
+    place = " ".join([part for part in (postal_code, city) if part]).strip()
+    if place and country:
+        return f"{place}, {country}"
+    if place:
+        return place
     if city and country:
         return f"{city}, {country}"
     return city or country
@@ -276,7 +295,7 @@ def _normalize_api_event(event: dict[str, Any]) -> dict[str, Any]:
     display_date = _first_text(event, "displayDate", "OccuredAtDisplayDate", "DisplayDate")
     display_time = _first_text(event, "displayTime", "DisplayTime")
     return {
-        "description": _first_text(event, "description", "Description"),
+        "description": _strip_markup_text(event.get("description") or event.get("Description") or ""),
         "status": _first_text(event, "status", "Status"),
         "date_iso": _first_text(event, "dateIso", "DateIso"),
         "display_date": " ".join([part for part in (display_date, display_time) if part]).strip(),
@@ -398,6 +417,15 @@ def _fetch_bring_public_tracking(number: str, timeout: int) -> TrackingLookupRes
     delivery_method = testid_text("parcel-details-delivery-method")
     sender = testid_text("trackingnumber-sender-summary")
     summary = " - ".join([part for part in (delivery_method, sender) if part])
+
+    stream_result = _parse_public_stream_tracking(html, number)
+    if stream_result and stream_result.events:
+        if status:
+            stream_result.status = status
+        if summary:
+            stream_result.summary = summary
+        return stream_result
+
     return TrackingLookupResult(
         carrier="bring",
         tracking_number=number,
@@ -412,6 +440,107 @@ def _fetch_bring_public_tracking(number: str, timeout: int) -> TrackingLookupRes
         source="bring-public",
         error="",
     )
+
+
+def _parse_public_stream_tracking(html: str, number: str) -> Optional[TrackingLookupResult]:
+    route_data = _extract_public_tracking_route_data(html)
+    if not isinstance(route_data, dict):
+        return None
+    consignment = route_data.get("consignment")
+    if not isinstance(consignment, dict):
+        return None
+    result = _parse_bring_api_payload({"consignmentSet": [consignment]}, number)
+    result.source = "bring-public"
+    result.tracking_url = _tracking_url(number)
+    return result
+
+
+def _extract_public_tracking_route_data(html: str) -> Optional[dict[str, Any]]:
+    for match in _REACT_ROUTER_STREAM_PATTERN.finditer(html):
+        literal = match.group(1)
+        if "loaderData" not in literal and "eventSet" not in literal:
+            continue
+        try:
+            stream_text = json.loads(f'"{literal}"').strip()
+            pool = json.loads(stream_text)
+        except Exception:
+            continue
+        if not isinstance(pool, list):
+            continue
+        root = _hydrate_react_router_stream_pool(pool)
+        if not isinstance(root, dict):
+            continue
+        loader_data = root.get("loaderData")
+        if not isinstance(loader_data, dict):
+            continue
+        route_data = loader_data.get(_PUBLIC_TRACKING_ROUTE_ID)
+        if isinstance(route_data, dict):
+            return route_data
+    return None
+
+
+def _hydrate_react_router_stream_pool(pool: list[Any]) -> Any:
+    cache: dict[int, Any] = {}
+    resolving: set[int] = set()
+
+    def hydrate_key(value: Any) -> Any:
+        if isinstance(value, str):
+            match = _DEVALUE_KEY_REF_PATTERN.match(value)
+            if match:
+                return hydrate_value(int(match.group(1)))
+        return hydrate_value(value)
+
+    def hydrate_value(value: Any) -> Any:
+        if isinstance(value, int):
+            if value < 0 or value >= len(pool):
+                return None
+            return hydrate_index(value)
+        if isinstance(value, list):
+            if value and isinstance(value[0], str) and value[0] in _DEVALUE_SPECIAL_LIST_TYPES:
+                return None
+            return [hydrate_value(item) for item in value]
+        if isinstance(value, dict):
+            hydrated: dict[str, Any] = {}
+            for key, child in value.items():
+                hydrated_key = hydrate_key(key)
+                if hydrated_key is None:
+                    continue
+                hydrated[str(hydrated_key)] = hydrate_value(child)
+            return hydrated
+        return value
+
+    def hydrate_index(index: int) -> Any:
+        if index in cache:
+            return cache[index]
+        if index in resolving:
+            return None
+        resolving.add(index)
+        source = pool[index]
+        if isinstance(source, dict):
+            hydrated_dict: dict[str, Any] = {}
+            cache[index] = hydrated_dict
+            for key, child in source.items():
+                hydrated_key = hydrate_key(key)
+                if hydrated_key is None:
+                    continue
+                hydrated_dict[str(hydrated_key)] = hydrate_value(child)
+            result: Any = hydrated_dict
+        elif isinstance(source, list):
+            if source and isinstance(source[0], str) and source[0] in _DEVALUE_SPECIAL_LIST_TYPES:
+                result = None
+                cache[index] = result
+            else:
+                hydrated_list: list[Any] = []
+                cache[index] = hydrated_list
+                hydrated_list.extend(hydrate_value(item) for item in source)
+                result = hydrated_list
+        else:
+            result = source
+            cache[index] = result
+        resolving.remove(index)
+        return result
+
+    return hydrate_index(0) if pool else None
 
 
 def _normalize_public_events(raw_events: list[str]) -> list[dict[str, Any]]:
