@@ -1742,11 +1742,12 @@ input[type="checkbox"] {
 }
 
 .tracking-events-head {
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 800;
+  color: #aab4c8;
+  font-size: 0.8rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: .02em;
+  letter-spacing: 0;
+  line-height: 1.25;
 }
 
 .tracking-timeline {
@@ -1797,7 +1798,11 @@ input[type="checkbox"] {
 }
 
 .tracking-timeline-title {
-  font-weight: 800;
+  color: #f0f4fb;
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.32;
+  letter-spacing: 0;
   overflow-wrap: anywhere;
 }
 
