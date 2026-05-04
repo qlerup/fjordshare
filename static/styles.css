@@ -1680,6 +1680,33 @@ input[type="checkbox"] {
   overflow-x: auto;
 }
 
+#tab-tracking .form-grid {
+  grid-template-columns: minmax(260px, 620px) auto;
+  align-items: end;
+  justify-content: start;
+}
+
+#tab-tracking .form-grid .end {
+  align-self: end;
+}
+
+#trackingAddBtn {
+  min-height: 38px;
+}
+
+#settings-panel-users .form-grid {
+  grid-template-columns: repeat(3, minmax(180px, 1fr)) auto;
+  align-items: end;
+}
+
+#settings-panel-users .form-grid .end {
+  align-self: end;
+}
+
+#createUserBtn {
+  min-height: 38px;
+}
+
 .tracking-number-cell {
   display: grid;
   gap: 3px;
@@ -1731,6 +1758,17 @@ input[type="checkbox"] {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.tracking-row-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 11px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .tracking-events-row td {
@@ -3064,6 +3102,16 @@ input[type="checkbox"] {
 
   .tabs-mobile {
     display: block;
+  }
+
+  #tab-tracking .form-grid,
+  #settings-panel-users .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #trackingAddBtn,
+  #createUserBtn {
+    width: fit-content;
   }
 
   .toolbar {
