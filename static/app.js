@@ -8368,9 +8368,9 @@
               isAdmin
                 ? `
                   ${
-                    isCancelledProject
+                    (isCancelledProject || isCompletedProject)
                       ? ""
-                      : `<button class="btn small ${isCompletedProject ? "" : "primary"}" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${isCompletedProject ? " disabled" : ""}>${isCompletedProject ? "Færdigt" : "Projekt færdig"}</button>`
+                      : `<button class="btn small primary" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}">Projekt færdig</button>`
                   }
                   <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${Number(project.id || 0)}">${isCancelledProject ? "Slet" : "Annuller"}</button>
                 `
