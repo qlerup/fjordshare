@@ -1948,10 +1948,11 @@
   function openPrintReadyModal(project) {
     if (!project || !els.printReadyModal) return;
     state.currentPrintReadyProjectId = Number(project.id || 0) || 0;
-    const fileCount = Number(project.file_count || (Array.isArray(project.files) ? project.files.length : 0) || 0);
-    const qty = Number(project.total_quantity || 0);
+    const files = Array.isArray(project.files) ? project.files : [];
+    const fileCount = Number(project.file_count || files.length || 0);
+    const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
     if (els.printReadyModalSummary) {
-      els.printReadyModalSummary.textContent = `${project.title || "Klar til print"} · ${fileCount} fil(er) · total stk (sum af Antal): ${qty || fileCount}`;
+      els.printReadyModalSummary.textContent = `${project.title || "Klar til print"} · Filer i alt: ${fileCount} · Printet: ${printedCount}`;
     }
     if (els.printReadyZipLink) {
       els.printReadyZipLink.href = String(project.zip_url || "#");
@@ -8325,7 +8326,6 @@
       : (isCancelledProject ? "project-cancelled" : "project-ready");
     const fileCount = Number(project.file_count || files.length || 0);
     const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
-    const qty = Number(project.total_quantity || 0);
     const rows = files.map((file) => `
       <tr class="print-ready-file-row">
         <td>${esc(file.display_path || file.folder_path || "-")}</td>
@@ -8358,8 +8358,9 @@
         <div class="print-ready-project-head">
           <div>
             <div class="print-ready-project-title">${esc(project.title || "Klar til print")}</div>
-            <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))} · ${fileCount} fil(er) · total stk (sum af Antal): ${qty || fileCount}</div>
-            <div class="hint">Printet: ${printedCount}/${fileCount}</div>
+            <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))}</div>
+            <div class="hint">Filer i alt: ${fileCount}</div>
+            <div class="hint">Printet: ${printedCount}</div>
             ${project.selected_summary ? `<div class="hint">${esc(project.selected_summary)}</div>` : ""}
           </div>
           <div class="toolbar">
