@@ -1892,15 +1892,23 @@ input[type="checkbox"] {
 }
 
 .print-ready-project-card.project-completed {
-  border-color: rgba(74, 222, 128, 0.45);
-  background: linear-gradient(
-    112deg,
-    rgba(20, 114, 78, 0.42) 0%,
-    rgba(22, 163, 74, 0.30) 16%,
-    rgba(24, 132, 97, 0.24) 28%,
-    rgba(27, 78, 94, 0.32) 44%,
-    rgba(30, 41, 59, 0.92) 72%
-  );
+  border: 1px solid transparent;
+  background:
+    linear-gradient(
+      112deg,
+      rgba(20, 114, 78, 0.42) 0%,
+      rgba(22, 163, 74, 0.30) 16%,
+      rgba(24, 132, 97, 0.24) 28%,
+      rgba(27, 78, 94, 0.32) 44%,
+      rgba(30, 41, 59, 0.92) 72%
+    ) padding-box,
+    linear-gradient(
+      112deg,
+      rgba(74, 222, 128, 0.66) 0%,
+      rgba(45, 212, 191, 0.46) 30%,
+      rgba(96, 165, 250, 0.40) 72%,
+      rgba(148, 163, 184, 0.30) 100%
+    ) border-box;
 }
 
 .print-ready-project-head {
