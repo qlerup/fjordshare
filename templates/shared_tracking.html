@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Tracking - Fjord3D{% endblock %}
+{% block body %}
+<div id="trackingShareBootstrap" data-token="{{ token }}"></div>
+
+<div class="shared-wrap tracking-share-wrap">
+  <header class="shared-header tracking-share-header">
+    <div>
+      <img class="shared-logo" src="{{ url_for('static', filename='logos/logos/fjord3D-logo-horizontal-transparent.png', v=app_build) }}" alt="Fjord3D">
+      <h1 id="trackingShareTitle">Tracking</h1>
+      <p id="trackingShareMeta" class="hint"></p>
+    </div>
+  </header>
+
+  <section class="panel tracking-share-panel">
+    <div class="toolbar tracking-share-toolbar">
+      <div>
+        <h3 id="trackingShareNumber">Forsendelse</h3>
+        <p id="trackingShareLatest" class="hint"></p>
+      </div>
+      <button id="trackingShareRefreshBtn" class="btn primary" type="button">Opdater</button>
+    </div>
+    <div id="trackingShareStatus" class="status hidden"></div>
+    <div id="trackingShareContent" class="tracking-share-content"></div>
+  </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='tracking_share.js', v=app_build) }}"></script>
+{% endblock %}

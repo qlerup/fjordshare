@@ -2128,6 +2128,12 @@ input[type="checkbox"] {
   gap: 10px;
 }
 
+.tracking-share-modal-card {
+  width: min(720px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+}
+
 .slice-studio-modal {
   place-items: stretch;
   padding: 8px;
@@ -2873,6 +2879,51 @@ input[type="checkbox"] {
   margin-bottom: 10px;
 }
 
+.tracking-share-wrap {
+  max-width: 920px;
+}
+
+.tracking-share-header h1 {
+  margin: 0;
+}
+
+.tracking-share-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.tracking-share-toolbar {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.tracking-share-toolbar h3 {
+  margin: 0;
+}
+
+.tracking-share-summary-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(220px, 1.3fr) minmax(150px, 0.7fr);
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(31, 36, 48, 0.48);
+}
+
+.tracking-share-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  text-transform: uppercase;
+}
+
+.tracking-share-events {
+  max-width: none;
+  padding-top: 4px;
+}
+
 @media (min-width: 1001px) {
   .app-shell {
     height: 100dvh;
@@ -3112,6 +3163,14 @@ input[type="checkbox"] {
   #trackingAddBtn,
   #createUserBtn {
     width: fit-content;
+  }
+
+  .tracking-share-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .tracking-share-toolbar {
+    align-items: stretch;
   }
 
   .toolbar {

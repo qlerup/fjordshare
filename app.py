@@ -7779,6 +7779,18 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_tracking_shipments_updated ON tracking_shipments(updated_at DESC, id DESC);
 
+            CREATE TABLE IF NOT EXISTS tracking_share_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tracking_id INTEGER NOT NULL UNIQUE,
+                token_hash TEXT UNIQUE NOT NULL,
+                token_plain TEXT,
+                created_by TEXT,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT,
+                FOREIGN KEY(tracking_id) REFERENCES tracking_shipments(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_tracking_share_links_token ON tracking_share_links(token_hash);
+
             CREATE TABLE IF NOT EXISTS zip_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 folder_path TEXT NOT NULL,
@@ -8086,6 +8098,109 @@ def _tracking_log_message(prefix: str, item: dict[str, Any]) -> tuple[str, str]:
     if error:
         parts.append(f"fejl: {error}")
     return " - ".join(parts), ("warn" if error else "info")
+
+
+def build_tracking_share_url(token: str) -> str:
+    base = str(get_setting("external_base_url", "") or "").strip().rstrip("/")
+    if not base:
+        base = request.host_url.rstrip("/")
+    return f"{base}/tracking/{str(token or '').strip()}"
+
+
+def _tracking_share_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    item = _tracking_row_to_dict(row)
+    item["share_id"] = int(row["share_id"] or 0)
+    item["share_created_at"] = str(row["share_created_at"] or "")
+    item["share_last_used_at"] = str(row["share_last_used_at"] or "")
+    return item
+
+
+def _resolve_tracking_share(token: str) -> Optional[sqlite3.Row]:
+    digest = token_digest(token)
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                l.id AS share_id,
+                l.created_at AS share_created_at,
+                l.last_used_at AS share_last_used_at,
+                t.*
+            FROM tracking_share_links l
+            JOIN tracking_shipments t ON t.id = l.tracking_id
+            WHERE l.token_hash=? OR l.token_plain=?
+            LIMIT 1
+            """,
+            (digest, str(token or "")),
+        ).fetchone()
+    return row
+
+
+def _touch_tracking_share_used(share_id: int) -> None:
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE tracking_share_links SET last_used_at=? WHERE id=?",
+            (now_iso(), int(share_id)),
+        )
+        conn.commit()
+
+
+def _create_or_get_tracking_share_link(tracking_id: int, actor: str = "") -> tuple[str, str]:
+    with closing(get_conn()) as conn:
+        shipment = conn.execute(
+            "SELECT id FROM tracking_shipments WHERE id=?",
+            (int(tracking_id),),
+        ).fetchone()
+        if shipment is None:
+            raise LookupError("Tracking findes ikke")
+
+        existing = conn.execute(
+            "SELECT id, token_plain FROM tracking_share_links WHERE tracking_id=?",
+            (int(tracking_id),),
+        ).fetchone()
+        if existing is not None:
+            token = str(existing["token_plain"] or "").strip()
+            if token:
+                return token, build_tracking_share_url(token)
+
+        for _ in range(5):
+            token = secrets.token_urlsafe(18)
+            try:
+                if existing is not None:
+                    conn.execute(
+                        """
+                        UPDATE tracking_share_links
+                        SET token_hash=?, token_plain=?, created_by=?, created_at=?
+                        WHERE id=?
+                        """,
+                        (
+                            token_digest(token),
+                            token,
+                            str(actor or ""),
+                            now_iso(),
+                            int(existing["id"]),
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO tracking_share_links(
+                            tracking_id, token_hash, token_plain, created_by, created_at
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            int(tracking_id),
+                            token_digest(token),
+                            token,
+                            str(actor or ""),
+                            now_iso(),
+                        ),
+                    )
+                conn.commit()
+                return token, build_tracking_share_url(token)
+            except sqlite3.IntegrityError:
+                continue
+
+    raise RuntimeError("Kunne ikke oprette tracking-link")
 
 
 def refresh_tracking_shipment(tracking_id: int) -> dict[str, Any]:
@@ -12910,6 +13025,56 @@ def api_admin_tracking_refresh(tracking_id: int):
         return jsonify({"ok": False, "error": f"Kunne ikke opdatere tracking: {exc}"}), 500
 
 
+@app.route("/api/admin/tracking/<int:tracking_id>/share", methods=["POST"])
+@login_required
+def api_admin_tracking_share(tracking_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT id, tracking_number FROM tracking_shipments WHERE id=?",
+            (int(tracking_id),),
+        ).fetchone()
+    if row is None:
+        log_activity(
+            kind="tracking",
+            action="share-failed",
+            message=f"Tracking-link kunne ikke oprettes - id findes ikke: {int(tracking_id)}",
+            level="warn",
+            target=str(int(tracking_id)),
+            actor=str(current_user.username or ""),
+        )
+        return jsonify({"ok": False, "error": "Tracking findes ikke"}), 404
+
+    tracking_number = str(row["tracking_number"] or "")
+    try:
+        token, link = _create_or_get_tracking_share_link(
+            int(tracking_id),
+            actor=str(current_user.username or ""),
+        )
+    except Exception as exc:
+        log_activity(
+            kind="tracking",
+            action="share-failed",
+            message=f"Tracking-link kunne ikke oprettes: {tracking_number} - {str(exc)[:240]}",
+            level="error",
+            target=tracking_number,
+            actor=str(current_user.username or ""),
+        )
+        return jsonify({"ok": False, "error": f"Kunne ikke oprette tracking-link: {exc}"}), 500
+
+    log_activity(
+        kind="tracking",
+        action="share",
+        message=f"Tracking-link klar: {tracking_number}",
+        level="info",
+        target=tracking_number,
+        actor=str(current_user.username or ""),
+    )
+    return jsonify({"ok": True, "token": token, "link": link})
+
+
 @app.route("/api/admin/tracking/<int:tracking_id>", methods=["DELETE"])
 @login_required
 def api_admin_tracking_delete(tracking_id: int):
@@ -12931,6 +13096,7 @@ def api_admin_tracking_delete(tracking_id: int):
             )
             return jsonify({"ok": False, "error": "Tracking findes ikke"}), 404
         tracking_number = str(row["tracking_number"] or "")
+        conn.execute("DELETE FROM tracking_share_links WHERE tracking_id=?", (int(tracking_id),))
         conn.execute("DELETE FROM tracking_shipments WHERE id=?", (int(tracking_id),))
         conn.commit()
 
@@ -12943,6 +13109,56 @@ def api_admin_tracking_delete(tracking_id: int):
         actor=str(current_user.username or ""),
     )
     return jsonify({"ok": True})
+
+
+@app.route("/tracking/<token>", methods=["GET"])
+def public_tracking_page(token: str):
+    return render_template("shared_tracking.html", token=token)
+
+
+@app.route("/api/tracking-share/<token>", methods=["GET"])
+def api_tracking_share_info(token: str):
+    row = _resolve_tracking_share(token)
+    if row is None:
+        return jsonify({"ok": False, "error": "Tracking-link er ugyldigt eller slettet"}), 404
+
+    _touch_tracking_share_used(int(row["share_id"] or 0))
+    return jsonify({"ok": True, "item": _tracking_share_row_to_dict(row)})
+
+
+@app.route("/api/tracking-share/<token>/refresh", methods=["POST"])
+def api_tracking_share_refresh(token: str):
+    row = _resolve_tracking_share(token)
+    if row is None:
+        return jsonify({"ok": False, "error": "Tracking-link er ugyldigt eller slettet"}), 404
+
+    tracking_id = int(row["id"])
+    share_id = int(row["share_id"] or 0)
+    try:
+        item = refresh_tracking_shipment(tracking_id)
+        _touch_tracking_share_used(share_id)
+        message, level = _tracking_log_message("Tracking opdateret via delt link", item)
+        log_activity(
+            kind="tracking",
+            action="public-refresh",
+            message=message,
+            level=level,
+            target=str(item.get("tracking_number") or ""),
+            actor="tracking-share",
+        )
+        return jsonify({"ok": True, "item": item})
+    except LookupError:
+        return jsonify({"ok": False, "error": "Tracking findes ikke længere"}), 404
+    except Exception as exc:
+        log_activity(
+            kind="tracking",
+            action="public-refresh-failed",
+            message=f"Tracking kunne ikke opdateres via delt link: id {tracking_id} - {str(exc)[:240]}",
+            level="error",
+            target=str(tracking_id),
+            actor="tracking-share",
+        )
+        return jsonify({"ok": False, "error": f"Kunne ikke opdatere tracking: {exc}"}), 500
 
 
 @app.route("/api/admin/users", methods=["GET", "POST"])

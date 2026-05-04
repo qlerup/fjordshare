@@ -348,6 +348,11 @@
     trackingAddBtn: document.getElementById("trackingAddBtn"),
     trackingStatus: document.getElementById("trackingStatus"),
     trackingTableBody: document.getElementById("trackingTableBody"),
+    trackingShareModal: document.getElementById("trackingShareModal"),
+    trackingShareModalCloseBtn: document.getElementById("trackingShareModalCloseBtn"),
+    trackingShareLinkInput: document.getElementById("trackingShareLinkInput"),
+    trackingShareCopyBtn: document.getElementById("trackingShareCopyBtn"),
+    trackingShareStatus: document.getElementById("trackingShareStatus"),
     logsRefreshBtn: document.getElementById("logsRefreshBtn"),
     logsClearBtn: document.getElementById("logsClearBtn"),
     logsStatus: document.getElementById("logsStatus"),
@@ -8624,6 +8629,7 @@
                 ${canExpandEvents ? `<button class="btn small" type="button" data-tracking-action="toggle-events" data-tracking-id="${id}" aria-expanded="${isExpanded ? "true" : "false"}">${isExpanded ? "Fold ind" : "Fold ud"}</button>` : ""}
                 <button class="btn small primary" type="button" data-tracking-action="refresh" data-tracking-id="${id}">Opdater</button>
                 <button class="btn danger" type="button" data-tracking-action="delete" data-tracking-id="${id}">Slet</button>
+                <button class="btn small" type="button" data-tracking-action="share" data-tracking-id="${id}">Del</button>
               </div>
             </td>
           </tr>
@@ -8701,6 +8707,46 @@
     showStatus(els.trackingStatus, "Tracking slettet.", "ok");
   }
 
+  function closeTrackingShareModal() {
+    if (els.trackingShareModal) els.trackingShareModal.classList.add("hidden");
+    if (els.trackingShareLinkInput) els.trackingShareLinkInput.value = "";
+    showStatus(els.trackingShareStatus, "");
+  }
+
+  async function openTrackingShareModal(id) {
+    if (state.role !== "admin" || !id || !els.trackingShareModal) return;
+    if (els.trackingShareLinkInput) els.trackingShareLinkInput.value = "";
+    els.trackingShareModal.classList.remove("hidden");
+    showStatus(els.trackingShareStatus, "Opretter tracking-link...", "ok");
+    try {
+      const data = await api(`/api/admin/tracking/${id}/share`, { method: "POST" });
+      if (els.trackingShareLinkInput) {
+        els.trackingShareLinkInput.value = String((data && data.link) || "");
+        els.trackingShareLinkInput.focus();
+        els.trackingShareLinkInput.select();
+      }
+      showStatus(els.trackingShareStatus, "Tracking-link er klar.", "ok");
+    } catch (err) {
+      showStatus(els.trackingShareStatus, err.message || "Kunne ikke oprette tracking-link", "error");
+      throw err;
+    }
+  }
+
+  async function copyTrackingShareLink() {
+    const text = String((els.trackingShareLinkInput && els.trackingShareLinkInput.value) || "").trim();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      showStatus(els.trackingShareStatus, "Link kopieret.", "ok");
+    } catch {
+      if (els.trackingShareLinkInput) {
+        els.trackingShareLinkInput.focus();
+        els.trackingShareLinkInput.select();
+      }
+      showStatus(els.trackingShareStatus, "Kunne ikke kopiere automatisk. Linket er markeret.", "error");
+    }
+  }
+
   function toggleTrackingEvents(id) {
     if (!id) return;
     if (state.trackingExpandedIds.has(id)) state.trackingExpandedIds.delete(id);
@@ -8716,6 +8762,7 @@
     if (action === "toggle-events") toggleTrackingEvents(id);
     if (action === "refresh") await refreshTracking(id);
     if (action === "delete") await deleteTracking(id);
+    if (action === "share") await openTrackingShareModal(id);
   }
 
   async function loadAdminLogs() {
@@ -12278,6 +12325,23 @@
         onTrackingTableClick(event).catch((err) => {
           showStatus(els.trackingStatus, err.message || "Kunne ikke ændre tracking", "error");
         });
+      });
+    }
+    if (els.trackingShareModalCloseBtn) {
+      els.trackingShareModalCloseBtn.addEventListener("click", closeTrackingShareModal);
+    }
+    if (els.trackingShareCopyBtn) {
+      els.trackingShareCopyBtn.addEventListener("click", () => {
+        copyTrackingShareLink().catch((err) => {
+          showStatus(els.trackingShareStatus, err.message || "Kunne ikke kopiere link", "error");
+        });
+      });
+    }
+    if (els.trackingShareModal) {
+      els.trackingShareModal.addEventListener("click", (event) => {
+        if (event.target === els.trackingShareModal || event.target.classList.contains("modal-backdrop")) {
+          closeTrackingShareModal();
+        }
       });
     }
 
