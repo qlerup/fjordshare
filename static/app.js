@@ -425,7 +425,7 @@
     },
     "print-ready": {
       title: "Projekter klar til print",
-      subtitle: "Printprojekter markeret af brugere",
+      subtitle: "Projekter markeret klar til produktion",
     },
   };
 
@@ -8147,9 +8147,10 @@
   }
 
   async function loadPrintReadyProjects() {
-    if (state.role !== "admin" || !els.printReadyAdminList) return;
+    if (!els.printReadyAdminList) return;
+    const listEndpoint = state.role === "admin" ? "/api/admin/print-ready" : "/api/print-ready";
     try {
-      const data = await api("/api/admin/print-ready");
+      const data = await api(listEndpoint);
       state.printReadyProjects = Array.isArray(data.items) ? data.items : [];
       showStatus(els.printReadyStatus, "");
     } catch (err) {
@@ -8176,9 +8177,21 @@
 
   function renderPrintReadyProjects() {
     if (!els.printReadyAdminList) return;
+    const isAdmin = state.role === "admin";
     const projects = Array.isArray(state.printReadyProjects) ? state.printReadyProjects : [];
     if (!projects.length) {
-      els.printReadyAdminList.innerHTML = `<div class="hint">Ingen projekter er markeret klar til print endnu.</div>`;
+      els.printReadyAdminList.innerHTML = `<div class="hint">${isAdmin ? "Ingen projekter er markeret klar til print endnu." : "Du har ingen projekter klar til print endnu."}</div>`;
+      return;
+    }
+
+    if (!isAdmin) {
+      els.printReadyAdminList.innerHTML = `
+        <section class="print-ready-user-group">
+          <div class="print-ready-projects">
+            ${projects.map((project) => renderPrintReadyProjectCard(project)).join("")}
+          </div>
+        </section>
+      `;
       return;
     }
 
@@ -8200,6 +8213,7 @@
   }
 
   function renderPrintReadyProjectCard(project) {
+    const isAdmin = state.role === "admin";
     const files = Array.isArray(project.files) ? project.files : [];
     const projectStatus = String(project.status || "ready").trim().toLowerCase() || "ready";
     const isCompletedProject = projectStatus === "completed";
@@ -8217,13 +8231,17 @@
         <td>
           <div class="print-ready-row-actions">
             ${
-              isCompletedProject
-                ? `<button class="btn small" type="button" disabled>Projekt færdigt</button>`
-                : (
-                  file.printed
-                    ? `<button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Fjern printet</button>`
-                    : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
+              isAdmin
+                ? (
+                  isCompletedProject
+                    ? `<button class="btn small" type="button" disabled>Projekt færdigt</button>`
+                    : (
+                      file.printed
+                        ? `<button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Fjern printet</button>`
+                        : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
+                    )
                 )
+                : `<span class="hint">-</span>`
             }
           </div>
         </td>
@@ -8242,8 +8260,14 @@
           <div class="toolbar">
             <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
             <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener">Download PDF produktions info</a>
-            <button class="btn small ${isCompletedProject ? "" : "primary"}" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${isCompletedProject ? " disabled" : ""}>${isCompletedProject ? "Færdigt" : "Projekt færdig"}</button>
-            <button class="btn danger" type="button" data-print-ready-action="cancel" data-id="${Number(project.id || 0)}">Annuller</button>
+            ${
+              isAdmin
+                ? `
+                  <button class="btn small ${isCompletedProject ? "" : "primary"}" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}"${isCompletedProject ? " disabled" : ""}>${isCompletedProject ? "Færdigt" : "Projekt færdig"}</button>
+                  <button class="btn danger" type="button" data-print-ready-action="cancel" data-id="${Number(project.id || 0)}">Annuller</button>
+                `
+                : ""
+            }
           </div>
         </div>
         <table class="table compact print-ready-table">
@@ -8265,6 +8289,7 @@
   }
 
   async function onPrintReadyAdminClick(event) {
+    if (state.role !== "admin") return;
     const btn = event.target.closest("[data-print-ready-action]");
     if (!btn) return;
     const action = String(btn.dataset.printReadyAction || "");
@@ -11184,7 +11209,7 @@
         if (tab === "profile") {
           await loadMyProfile();
         }
-        if (tab === "print-ready" && state.role === "admin") {
+        if (tab === "print-ready") {
           await loadPrintReadyProjects();
         }
         if (tab === "tracking" && state.role === "admin") {

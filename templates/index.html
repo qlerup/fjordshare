@@ -16,7 +16,7 @@
 
     <nav id="sidebarNav" class="nav">
       <button class="nav-item active" data-tab="files">Mapper</button>
-      <button class="nav-item admin-only" data-tab="print-ready">Projekter klar til print</button>
+      <button class="nav-item" data-tab="print-ready">Projekter klar til print</button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
       <button class="nav-item admin-only" data-tab="tracking">Tracking</button>
     </nav>
@@ -139,13 +139,13 @@
       </div>
     </aside>
 
-    <section id="tab-print-ready" class="tab-section hidden admin-only">
+    <section id="tab-print-ready" class="tab-section hidden">
       <div class="panel">
         <div class="toolbar">
           <h3>Projekter klar til print</h3>
           <button id="printReadyRefreshBtn" class="icon-btn" type="button" title="Opdater klar til print" aria-label="Opdater klar til print">&#8635;</button>
         </div>
-        <p class="hint">Brugerprojekter der er markeret klar til produktion.</p>
+        <p class="hint">Projekter der er markeret klar til produktion.</p>
         <div id="printReadyStatus" class="status hidden"></div>
         <div id="printReadyAdminList" class="print-ready-admin-list"></div>
       </div>

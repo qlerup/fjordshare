@@ -11907,6 +11907,36 @@ def api_print_ready_zip(project_id: int):
     )
 
 
+@app.route("/api/print-ready", methods=["GET"])
+@login_required
+def api_print_ready_list():
+    with closing(get_conn()) as conn:
+        project_rows = conn.execute(
+            """
+            SELECT *
+            FROM print_ready_projects
+            WHERE owner_user_id=?
+              AND lower(COALESCE(status, 'ready')) IN ('ready', 'completed')
+            ORDER BY
+                CASE lower(COALESCE(status, 'ready'))
+                    WHEN 'ready' THEN 0
+                    WHEN 'completed' THEN 1
+                    ELSE 2
+                END,
+                id DESC
+            LIMIT 200
+            """,
+            (int(current_user.id),),
+        ).fetchall()
+        items: list[dict] = []
+        for project_row in project_rows:
+            files = _print_ready_file_rows(conn, int(project_row["id"]))
+            attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+            items.append(serialize_print_ready_project(project_row, files, attachment_map))
+
+    return jsonify({"ok": True, "items": items})
+
+
 @app.route("/api/admin/print-ready", methods=["GET"])
 @login_required
 def api_admin_print_ready():
