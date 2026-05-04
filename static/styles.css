@@ -1743,11 +1743,11 @@ input[type="checkbox"] {
 
 .tracking-events-head {
   color: #aab4c8;
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0;
-  line-height: 1.25;
+  line-height: 18px;
 }
 
 .tracking-timeline {
@@ -1794,26 +1794,28 @@ input[type="checkbox"] {
 .tracking-timeline-body {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
 .tracking-timeline-title {
   color: #f0f4fb;
-  font-size: 0.92rem;
-  font-weight: 700;
-  line-height: 1.32;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
   letter-spacing: 0;
   overflow-wrap: anywhere;
 }
 
 .tracking-timeline-date {
   color: var(--text);
-  font-size: 0.86rem;
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .tracking-timeline-location {
   color: var(--muted);
-  font-size: 0.84rem;
+  font-size: 13px;
+  line-height: 18px;
   overflow-wrap: anywhere;
 }
 
