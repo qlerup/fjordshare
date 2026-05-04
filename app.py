@@ -10205,6 +10205,8 @@ def get_print_ready_project_payload(project_id: int) -> tuple[Optional[dict], Op
         if not _can_access_print_ready_project(project):
             return None, {"ok": False, "error": "Ingen adgang", "status": 403}
         files = _print_ready_file_rows(conn, int(project_id))
+        if not files:
+            return None, {"ok": False, "error": "Projektet indeholder ingen filer", "status": 404}
         attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
     return serialize_print_ready_project(project, files, attachment_map), None
 
@@ -10220,6 +10222,8 @@ def _load_print_ready_for_download(project_id: int) -> tuple[sqlite3.Row, list[s
         if not _can_access_print_ready_project(project):
             raise PermissionError("Ingen adgang")
         files = _print_ready_file_rows(conn, int(project_id))
+        if not files:
+            raise FileNotFoundError("Projektet indeholder ingen filer")
         attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
     return project, files, attachment_map
 
@@ -12163,6 +12167,8 @@ def api_print_ready_list():
         items: list[dict] = []
         for project_row in project_rows:
             files = _print_ready_file_rows(conn, int(project_row["id"]))
+            if not files:
+                continue
             attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
             items.append(serialize_print_ready_project(project_row, files, attachment_map))
 
@@ -12195,6 +12201,8 @@ def api_admin_print_ready():
         items: list[dict] = []
         for project_row in project_rows:
             files = _print_ready_file_rows(conn, int(project_row["id"]))
+            if not files:
+                continue
             attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
             items.append(serialize_print_ready_project(project_row, files, attachment_map))
 
