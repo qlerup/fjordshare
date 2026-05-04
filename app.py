@@ -11916,12 +11916,13 @@ def api_print_ready_list():
             SELECT *
             FROM print_ready_projects
             WHERE owner_user_id=?
-              AND lower(COALESCE(status, 'ready')) IN ('ready', 'completed')
+                            AND lower(COALESCE(status, 'ready')) IN ('ready', 'completed', 'cancelled')
             ORDER BY
                 CASE lower(COALESCE(status, 'ready'))
                     WHEN 'ready' THEN 0
                     WHEN 'completed' THEN 1
-                    ELSE 2
+                                        WHEN 'cancelled' THEN 2
+                                        ELSE 3
                 END,
                 id DESC
             LIMIT 200
@@ -11948,12 +11949,13 @@ def api_admin_print_ready():
             """
             SELECT *
             FROM print_ready_projects
-            WHERE lower(COALESCE(status, 'ready')) IN ('ready', 'completed')
+            WHERE lower(COALESCE(status, 'ready')) IN ('ready', 'completed', 'cancelled')
             ORDER BY
                 CASE lower(COALESCE(status, 'ready'))
                     WHEN 'ready' THEN 0
                     WHEN 'completed' THEN 1
-                    ELSE 2
+                    WHEN 'cancelled' THEN 2
+                    ELSE 3
                 END,
                 id DESC
             LIMIT 200
