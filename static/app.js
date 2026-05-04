@@ -8207,13 +8207,11 @@
     const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
     const qty = Number(project.total_quantity || 0);
     const rows = files.map((file) => `
-      <tr>
+      <tr class="print-ready-file-row${file.printed ? " is-printed" : ""}">
         <td>${esc(file.display_path || file.folder_path || "-")}</td>
         <td><a href="${esc(file.download_url || "#")}" target="_blank" rel="noopener">${esc(file.filename || "-")}</a></td>
-        <td>
-          ${esc(file.note || "-")}
-          ${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : ""}
-        </td>
+        <td>${esc(file.note || "-")}</td>
+        <td>${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : `<span class="print-ready-status-muted">Ikke printet</span>`}</td>
         <td>${Number(file.quantity || 1)}</td>
         <td>${printReadyAttachmentHtml(file.attachments)}</td>
         <td>
@@ -8254,12 +8252,13 @@
               <th>Sti i mappe</th>
               <th>Filnavn</th>
               <th>Info</th>
+              <th>Status</th>
               <th>Antal</th>
               <th>Billeder</th>
               <th>Handling</th>
             </tr>
           </thead>
-          <tbody>${rows || `<tr><td colspan="6" class="hint">Ingen filer.</td></tr>`}</tbody>
+          <tbody>${rows || `<tr><td colspan="7" class="hint">Ingen filer.</td></tr>`}</tbody>
         </table>
       </article>
     `;
