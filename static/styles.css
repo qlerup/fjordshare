@@ -2738,9 +2738,29 @@ input[type="checkbox"] {
 
 .sms-confirm-details {
   display: grid;
-  gap: 5px;
+  gap: 12px;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.sms-confirm-block {
+  display: grid;
+  gap: 6px;
+}
+
+.sms-confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sms-confirm-row .input {
+  flex: 1 1 260px;
+}
+
+#smsConfirmExtracted {
+  border-style: dashed;
 }
 
 .modal-card.sms-onboarding-card {

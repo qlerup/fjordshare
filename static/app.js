@@ -309,6 +309,11 @@
     smsConfirmSummary: document.getElementById("smsConfirmSummary"),
     smsConfirmDetails: document.getElementById("smsConfirmDetails"),
     smsConfirmStatus: document.getElementById("smsConfirmStatus"),
+    smsConfirmTrackingInput: document.getElementById("smsConfirmTrackingInput"),
+    smsConfirmAddTrackingBtn: document.getElementById("smsConfirmAddTrackingBtn"),
+    smsConfirmLabelPdfInput: document.getElementById("smsConfirmLabelPdfInput"),
+    smsConfirmExtractBtn: document.getElementById("smsConfirmExtractBtn"),
+    smsConfirmExtracted: document.getElementById("smsConfirmExtracted"),
     smsOnboardingModal: document.getElementById("smsOnboardingModal"),
     smsOnboardingSkipTopBtn: document.getElementById("smsOnboardingSkipTopBtn"),
     smsOnboardingCountrySelect: document.getElementById("smsOnboardingCountrySelect"),
@@ -1705,12 +1710,33 @@
     state.currentPrintReadyProjectId = 0;
   }
 
+  function resetSmsConfirmFields() {
+    if (els.smsConfirmTrackingInput) els.smsConfirmTrackingInput.value = "";
+    if (els.smsConfirmLabelPdfInput) els.smsConfirmLabelPdfInput.value = "";
+    if (els.smsConfirmExtracted) {
+      els.smsConfirmExtracted.textContent = "";
+      els.smsConfirmExtracted.classList.add("hidden");
+    }
+  }
+
+  function setSmsConfirmExtracted(value, prefix = "Trackingnummer") {
+    if (!els.smsConfirmExtracted) return;
+    const number = String(value || "").trim();
+    if (!number) {
+      els.smsConfirmExtracted.textContent = "";
+      els.smsConfirmExtracted.classList.add("hidden");
+      return;
+    }
+    els.smsConfirmExtracted.textContent = `${prefix}: ${number}`;
+    els.smsConfirmExtracted.classList.remove("hidden");
+  }
+
   function settleSmsConfirmModal(sendSms) {
     const resolver = state.smsConfirmResolver;
     state.smsConfirmResolver = null;
     state.smsConfirmContext = "";
     if (els.smsConfirmModal) els.smsConfirmModal.classList.add("hidden");
-    if (els.smsConfirmDetails) els.smsConfirmDetails.innerHTML = "";
+    resetSmsConfirmFields();
     showStatus(els.smsConfirmStatus, "");
     if (typeof resolver === "function") resolver(!!sendSms);
   }
@@ -1721,19 +1747,142 @@
       state.smsConfirmResolver = resolve;
       state.smsConfirmContext = String(contextText || "").trim();
       if (els.smsConfirmSummary) {
-        els.smsConfirmSummary.textContent = state.smsConfirmContext || "Projekt-opdatering";
+        const projectTitle = String((project && project.title) || "").trim();
+        const fallback = projectTitle ? `Projekt: ${projectTitle}` : "Projekt færdigmelding";
+        els.smsConfirmSummary.textContent = state.smsConfirmContext || fallback;
       }
-      if (els.smsConfirmDetails) {
-        const owner = String((project && project.owner_username) || "-");
-        const phone = String((project && project.sms_recipient_e164) || "-");
-        els.smsConfirmDetails.innerHTML = `
-          <div>Bruger: <strong>${esc(owner)}</strong></div>
-          <div>Registreret nummer: <strong>${esc(phone)}</strong></div>
-        `;
-      }
+      resetSmsConfirmFields();
       showStatus(els.smsConfirmStatus, "");
+      if (els.smsConfirmTrackingInput) {
+        els.smsConfirmTrackingInput.focus();
+      }
       els.smsConfirmModal.classList.remove("hidden");
     });
+  }
+
+  async function createTrackingEntry(trackingNumber) {
+    const number = String(trackingNumber || "").trim();
+    if (!number) {
+      const err = new Error("Indtast tracking- eller pakkenummer.");
+      err.status = 400;
+      throw err;
+    }
+
+    try {
+      const data = await api("/api/admin/tracking", {
+        method: "POST",
+        body: { tracking_number: number },
+      });
+      await loadTracking();
+      return {
+        duplicate: false,
+        item: data && data.item ? data.item : null,
+      };
+    } catch (err) {
+      if (Number((err && err.status) || 0) === 409) {
+        await loadTracking();
+        return { duplicate: true, item: null };
+      }
+      throw err;
+    }
+  }
+
+  async function addTrackingFromSmsConfirmInput() {
+    if (state.role !== "admin") return;
+    const trackingNumber = String((els.smsConfirmTrackingInput && els.smsConfirmTrackingInput.value) || "").trim();
+    if (!trackingNumber) {
+      showStatus(els.smsConfirmStatus, "Indtast tracking- eller pakkenummer.", "error");
+      if (els.smsConfirmTrackingInput) els.smsConfirmTrackingInput.focus();
+      return;
+    }
+
+    if (els.smsConfirmAddTrackingBtn) els.smsConfirmAddTrackingBtn.disabled = true;
+    showStatus(els.smsConfirmStatus, "Tilføjer trackingnummer...", "ok");
+    try {
+      const result = await createTrackingEntry(trackingNumber);
+      if (els.smsConfirmTrackingInput) els.smsConfirmTrackingInput.value = "";
+      if (result.duplicate) {
+        setSmsConfirmExtracted(trackingNumber, "Tracking findes allerede");
+        showStatus(els.smsConfirmStatus, "Trackingnummer findes allerede i listen.", "ok");
+        return;
+      }
+
+      const item = result.item;
+      const addedNumber = String((item && item.tracking_number) || trackingNumber).trim();
+      setSmsConfirmExtracted(addedNumber, "Tracking tilføjet");
+      showStatus(
+        els.smsConfirmStatus,
+        item && item.error ? `Tracking tilføjet, men Bring svarede: ${item.error}` : "Tracking tilføjet og opdateret.",
+        item && item.error ? "error" : "ok",
+      );
+    } catch (err) {
+      showStatus(els.smsConfirmStatus, err.message || "Kunne ikke tilføje tracking", "error");
+    } finally {
+      if (els.smsConfirmAddTrackingBtn) els.smsConfirmAddTrackingBtn.disabled = false;
+    }
+  }
+
+  async function extractTrackingFromSmsConfirmLabel() {
+    if (state.role !== "admin") return;
+    const input = els.smsConfirmLabelPdfInput;
+    const file = input && input.files && input.files.length ? input.files[0] : null;
+    if (!file) {
+      showStatus(els.smsConfirmStatus, "Vælg en pakkelabel i PDF-format.", "error");
+      return;
+    }
+
+    const fileName = String(file.name || "").toLowerCase();
+    const looksPdf = file.type === "application/pdf" || fileName.endsWith(".pdf");
+    if (!looksPdf) {
+      showStatus(els.smsConfirmStatus, "Kun PDF-filer kan bruges til udtræk.", "error");
+      if (els.smsConfirmLabelPdfInput) els.smsConfirmLabelPdfInput.value = "";
+      return;
+    }
+
+    if (els.smsConfirmExtractBtn) els.smsConfirmExtractBtn.disabled = true;
+    showStatus(els.smsConfirmStatus, "Udtrækker pakkenummer fra PDF...", "ok");
+    try {
+      const formData = new FormData();
+      formData.append("label_pdf", file, String(file.name || "label.pdf"));
+      const extractData = await api("/api/admin/tracking/extract-label", {
+        method: "POST",
+        body: formData,
+      });
+
+      const extractedNumber = String((extractData && extractData.tracking_number) || "").trim();
+      if (!extractedNumber) {
+        throw new Error("Kunne ikke finde et gyldigt pakkenummer i PDF-filen.");
+      }
+
+      const result = await createTrackingEntry(extractedNumber);
+      if (els.smsConfirmTrackingInput) els.smsConfirmTrackingInput.value = extractedNumber;
+
+      if (result.duplicate) {
+        setSmsConfirmExtracted(extractedNumber, "Udtrukket (allerede i tracking)");
+        showStatus(
+          els.smsConfirmStatus,
+          `Pakkenummer udtrukket (${extractedNumber}). Nummeret findes allerede i tracking.`,
+          "ok",
+        );
+        return;
+      }
+
+      const item = result.item;
+      const addedNumber = String((item && item.tracking_number) || extractedNumber).trim();
+      setSmsConfirmExtracted(addedNumber, "Udtrukket og tilføjet");
+      showStatus(
+        els.smsConfirmStatus,
+        item && item.error
+          ? `Pakkenummer udtrukket (${addedNumber}) og tilføjet, men Bring svarede: ${item.error}`
+          : `Pakkenummer udtrukket (${addedNumber}) og tilføjet til tracking.`,
+        item && item.error ? "error" : "ok",
+      );
+    } catch (err) {
+      showStatus(els.smsConfirmStatus, err.message || "Kunne ikke udtrække pakkenummer fra PDF", "error");
+    } finally {
+      if (els.smsConfirmLabelPdfInput) els.smsConfirmLabelPdfInput.value = "";
+      if (els.smsConfirmExtractBtn) els.smsConfirmExtractBtn.disabled = false;
+    }
   }
 
   function openPrintReadyModal(project) {
@@ -8116,19 +8265,11 @@
     if (action === "complete-file") {
       const fileId = Number(btn.dataset.fileId || 0);
       if (!fileId) return;
-      const sendSms = project && project.sms_available
-        ? await askSmsConfirmation(`Projekt: ${project.title || id} · fil markeres som printet`, project)
-        : false;
-      const data = await api(`/api/admin/print-ready/${id}/file/${fileId}/complete`, {
+      await api(`/api/admin/print-ready/${id}/file/${fileId}/complete`, {
         method: "POST",
-        body: { send_sms: sendSms },
+        body: { send_sms: false },
       });
-      const smsSent = !!(data && data.sms_sent);
-      const smsError = String((data && data.sms_error) || "").trim();
-      const smsTail = sendSms
-        ? (smsSent ? " SMS sendt." : (smsError ? ` SMS fejl: ${smsError}` : " SMS blev ikke sendt."))
-        : "";
-      showStatus(els.printReadyStatus, `Fil markeret som printet.${smsTail}`, sendSms && !smsSent ? "error" : "ok");
+      showStatus(els.printReadyStatus, "Fil markeret som printet.", "ok");
       await loadPrintReadyProjects();
       await loadFiles();
       return;
@@ -8145,19 +8286,14 @@
     }
 
     if (action === "complete-project") {
-      const sendSms = project && project.sms_available
-        ? await askSmsConfirmation(`Projekt: ${project.title || id} · markeres som færdigprintet`, project)
-        : false;
-      const data = await api(`/api/admin/print-ready/${id}/complete`, {
+      const shouldComplete = await askSmsConfirmation(`Projekt: ${project && project.title ? project.title : id}`, project);
+      if (!shouldComplete) return;
+
+      await api(`/api/admin/print-ready/${id}/complete`, {
         method: "POST",
-        body: { send_sms: sendSms },
+        body: { send_sms: false },
       });
-      const smsSent = !!(data && data.sms_sent);
-      const smsError = String((data && data.sms_error) || "").trim();
-      const smsTail = sendSms
-        ? (smsSent ? " SMS sendt." : (smsError ? ` SMS fejl: ${smsError}` : " SMS blev ikke sendt."))
-        : "";
-      showStatus(els.printReadyStatus, `Projekt markeret som færdigprintet.${smsTail}`, sendSms && !smsSent ? "error" : "ok");
+      showStatus(els.printReadyStatus, "Projekt markeret som færdigprintet.", "ok");
       await loadPrintReadyProjects();
       await loadFiles();
     }
@@ -8660,18 +8796,22 @@
     if (els.trackingAddBtn) els.trackingAddBtn.disabled = true;
     showStatus(els.trackingStatus, "Tilføjer og henter Bring status...", "ok");
     try {
-      const data = await api("/api/admin/tracking", {
-        method: "POST",
-        body: { tracking_number: trackingNumber },
-      });
+      const result = await createTrackingEntry(trackingNumber);
       if (els.trackingNumberInput) els.trackingNumberInput.value = "";
-      await loadTracking();
-      const item = data && data.item ? data.item : null;
+
+      if (result.duplicate) {
+        showStatus(els.trackingStatus, "Trackingnummer findes allerede.", "ok");
+        return;
+      }
+
+      const item = result.item;
       showStatus(
         els.trackingStatus,
         item && item.error ? `Tracking tilføjet, men Bring svarede: ${item.error}` : "Tracking tilføjet og opdateret.",
         item && item.error ? "error" : "ok",
       );
+    } catch (err) {
+      showStatus(els.trackingStatus, err.message || "Kunne ikke tilføje tracking", "error");
     } finally {
       if (els.trackingAddBtn) els.trackingAddBtn.disabled = false;
     }
@@ -12146,6 +12286,34 @@
     }
     if (els.smsConfirmYesBtn) {
       els.smsConfirmYesBtn.addEventListener("click", () => settleSmsConfirmModal(true));
+    }
+    if (els.smsConfirmAddTrackingBtn) {
+      els.smsConfirmAddTrackingBtn.addEventListener("click", () => {
+        addTrackingFromSmsConfirmInput().catch((err) => {
+          showStatus(els.smsConfirmStatus, err.message || "Kunne ikke tilføje tracking", "error");
+        });
+      });
+    }
+    if (els.smsConfirmTrackingInput) {
+      els.smsConfirmTrackingInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        addTrackingFromSmsConfirmInput().catch((err) => {
+          showStatus(els.smsConfirmStatus, err.message || "Kunne ikke tilføje tracking", "error");
+        });
+      });
+    }
+    if (els.smsConfirmExtractBtn) {
+      els.smsConfirmExtractBtn.addEventListener("click", () => {
+        extractTrackingFromSmsConfirmLabel().catch((err) => {
+          showStatus(els.smsConfirmStatus, err.message || "Kunne ikke udtrække pakkenummer", "error");
+        });
+      });
+    }
+    if (els.smsConfirmLabelPdfInput) {
+      els.smsConfirmLabelPdfInput.addEventListener("change", () => {
+        showStatus(els.smsConfirmStatus, "");
+      });
     }
     if (els.smsConfirmModal) {
       els.smsConfirmModal.addEventListener("click", (event) => {

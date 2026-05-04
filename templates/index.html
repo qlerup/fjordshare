@@ -562,16 +562,34 @@
   <div class="modal-backdrop"></div>
   <div class="modal-card sms-confirm-card">
     <div class="toolbar">
-      <h3>Send SMS opdatering</h3>
+      <h3>Projekt færdigt</h3>
       <button id="smsConfirmCloseBtn" class="btn" type="button">Luk</button>
     </div>
-    <p class="hint">Ønsker du at sende opdateringen på sms?</p>
+    <p class="hint">Tilføj valgfrit et trackingnummer manuelt eller udtræk det fra en pakkelabel (PDF). Label-filen gemmes ikke permanent.</p>
     <div id="smsConfirmSummary" class="metadata-current-file">-</div>
-    <div id="smsConfirmDetails" class="sms-confirm-details"></div>
+    <div id="smsConfirmDetails" class="sms-confirm-details">
+      <div class="sms-confirm-block">
+        <label for="smsConfirmTrackingInput">Manuelt tracking / pakkenummer</label>
+        <div class="sms-confirm-row">
+          <input id="smsConfirmTrackingInput" class="input" type="text" placeholder="Fx 370722152438034351">
+          <button id="smsConfirmAddTrackingBtn" class="btn" type="button">Tilføj nummer</button>
+        </div>
+      </div>
+
+      <div class="sms-confirm-block">
+        <label for="smsConfirmLabelPdfInput">Udtræk fra pakkelabel (PDF)</label>
+        <div class="sms-confirm-row">
+          <input id="smsConfirmLabelPdfInput" class="input" type="file" accept=".pdf,application/pdf">
+          <button id="smsConfirmExtractBtn" class="btn" type="button">Udtræk nummer</button>
+        </div>
+      </div>
+
+      <div id="smsConfirmExtracted" class="metadata-current-file hidden">-</div>
+    </div>
     <div id="smsConfirmStatus" class="status hidden"></div>
     <div class="toolbar end">
-      <button id="smsConfirmNoBtn" class="btn" type="button">Nej</button>
-      <button id="smsConfirmYesBtn" class="btn primary" type="button">Ja, send SMS</button>
+      <button id="smsConfirmNoBtn" class="btn" type="button">Annuller</button>
+      <button id="smsConfirmYesBtn" class="btn primary" type="button">Færdigmeld projekt</button>
     </div>
   </div>
 </div>

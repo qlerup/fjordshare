@@ -126,6 +126,18 @@ SMS_VERIFICATION_TTL_SECONDS = 60
 SMS_ONBOARDING_ENABLED = False
 SMS_TOKEN_ENCRYPTION_KEY = str(os.getenv("SMS_TOKEN_ENCRYPTION_KEY", "") or "").strip()
 SMS_GATEWAY_URL = "https://gatewayapi.com/rest/mtsms"
+try:
+    TRACKING_LABEL_PDF_MAX_BYTES = int(str(os.getenv("TRACKING_LABEL_PDF_MAX_BYTES", str(8 * 1024 * 1024))) or str(8 * 1024 * 1024))
+except Exception:
+    TRACKING_LABEL_PDF_MAX_BYTES = 8 * 1024 * 1024
+TRACKING_LABEL_PDF_MAX_BYTES = max(64 * 1024, min(32 * 1024 * 1024, TRACKING_LABEL_PDF_MAX_BYTES))
+try:
+    TRACKING_LABEL_PDF_MAX_PAGES = int(str(os.getenv("TRACKING_LABEL_PDF_MAX_PAGES", "8")) or "8")
+except Exception:
+    TRACKING_LABEL_PDF_MAX_PAGES = 8
+TRACKING_LABEL_PDF_MAX_PAGES = max(1, min(40, TRACKING_LABEL_PDF_MAX_PAGES))
+TRACKING_LABEL_GS1_RE = re.compile(r"\(\s*00\s*\)\s*([0-9\s\-]{16,48})", re.IGNORECASE)
+TRACKING_LABEL_DIGIT_BLOCK_RE = re.compile(r"\d(?:[\s\-]*\d){15,23}")
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
@@ -8100,6 +8112,108 @@ def _tracking_log_message(prefix: str, item: dict[str, Any]) -> tuple[str, str]:
     return " - ".join(parts), ("warn" if error else "info")
 
 
+def _cleanup_upload_temp_file(upload: Any) -> None:
+    if upload is None:
+        return
+    stream = getattr(upload, "stream", None)
+    stream_name = str(getattr(stream, "name", "") or "").strip()
+
+    try:
+        upload.close()
+    except Exception:
+        pass
+
+    if not stream_name:
+        return
+
+    try:
+        temp_path = Path(stream_name).resolve()
+        temp_root = Path(tempfile.gettempdir()).resolve()
+    except Exception:
+        return
+
+    if temp_path == temp_root or temp_root not in temp_path.parents:
+        return
+
+    try:
+        if temp_path.exists() and temp_path.is_file():
+            temp_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _tracking_candidates_from_text(raw_text: Any) -> list[str]:
+    text = str(raw_text or "")
+    if not text:
+        return []
+
+    text = text.replace("\u00a0", " ").replace("\u202f", " ").replace("\u2007", " ")
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def push_candidate(value: Any) -> None:
+        raw = str(value or "").strip()
+        if not raw:
+            return
+        try:
+            normalized = normalize_tracking_number(raw)
+        except Exception:
+            return
+        key = normalized.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(normalized)
+
+    for match in TRACKING_LABEL_GS1_RE.finditer(text):
+        digits = re.sub(r"\D", "", str(match.group(1) or ""))
+        if 16 <= len(digits) <= 24:
+            push_candidate(digits)
+
+    for match in TRACKING_LABEL_DIGIT_BLOCK_RE.finditer(text):
+        digits = re.sub(r"\D", "", str(match.group(0) or ""))
+        if 16 <= len(digits) <= 24:
+            push_candidate(digits)
+
+    return out
+
+
+def _extract_tracking_number_from_label_pdf(pdf_bytes: bytes) -> str:
+    if PdfReader is None:
+        raise RuntimeError("PDF-udtræk er ikke tilgængeligt på serveren")
+
+    if not pdf_bytes:
+        raise ValueError("PDF-filen er tom")
+
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+    except Exception as exc:
+        raise ValueError("Kunne ikke læse PDF-filen") from exc
+
+    total_pages = len(reader.pages)
+    if total_pages <= 0:
+        raise ValueError("PDF-filen indeholder ingen sider")
+
+    text_chunks: list[str] = []
+    page_limit = min(total_pages, TRACKING_LABEL_PDF_MAX_PAGES)
+    for idx in range(page_limit):
+        try:
+            page_text = str(reader.pages[idx].extract_text() or "")
+        except Exception:
+            page_text = ""
+        if page_text.strip():
+            text_chunks.append(page_text)
+
+    if not text_chunks:
+        raise ValueError("PDF-filen indeholder ikke læsbar tekst (forsøg en tekst-baseret label-PDF)")
+
+    combined = "\n".join(text_chunks)
+    candidates = _tracking_candidates_from_text(combined)
+    if not candidates:
+        raise ValueError("Kunne ikke finde et gyldigt pakkenummer i label-PDF")
+    return candidates[0]
+
+
 def build_tracking_share_url(token: str) -> str:
     base = str(get_setting("external_base_url", "") or "").strip().rstrip("/")
     if not base:
@@ -12891,6 +13005,84 @@ def api_settings_slicer_profiles():
             }
         )
     )
+
+@app.route("/api/admin/tracking/extract-label", methods=["POST"])
+@login_required
+def api_admin_tracking_extract_label():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    upload = request.files.get("label_pdf") or request.files.get("file")
+    if upload is None:
+        return jsonify({"ok": False, "error": "Vælg en pakkelabel i PDF-format"}), 400
+
+    filename = sanitize_filename(str(getattr(upload, "filename", "") or "").strip())
+    if filename and Path(filename).suffix.lower() != ".pdf":
+        _cleanup_upload_temp_file(upload)
+        return jsonify({"ok": False, "error": "Kun PDF-filer kan bruges til udtræk"}), 400
+
+    raw_pdf = b""
+    try:
+        raw_pdf = bytes(upload.read(TRACKING_LABEL_PDF_MAX_BYTES + 1) or b"")
+    finally:
+        _cleanup_upload_temp_file(upload)
+
+    if not raw_pdf:
+        return jsonify({"ok": False, "error": "PDF-filen er tom"}), 400
+    if len(raw_pdf) > TRACKING_LABEL_PDF_MAX_BYTES:
+        return jsonify(
+            {
+                "ok": False,
+                "error": f"PDF-filen er for stor (maks {TRACKING_LABEL_PDF_MAX_BYTES} bytes)",
+            }
+        ), 400
+
+    try:
+        tracking_number = _extract_tracking_number_from_label_pdf(raw_pdf)
+    except ValueError as exc:
+        log_activity(
+            kind="tracking",
+            action="extract-label-failed",
+            message=f"Pakkenummer kunne ikke udtrækkes fra label-PDF: {str(exc)[:220]}",
+            level="warn",
+            actor=str(current_user.username or ""),
+        )
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except RuntimeError as exc:
+        log_activity(
+            kind="tracking",
+            action="extract-label-failed",
+            message=f"Label-PDF udtræk utilgængeligt: {str(exc)[:220]}",
+            level="error",
+            actor=str(current_user.username or ""),
+        )
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    except Exception as exc:
+        log_activity(
+            kind="tracking",
+            action="extract-label-failed",
+            message=f"Fejl ved label-PDF udtræk: {str(exc)[:220]}",
+            level="error",
+            actor=str(current_user.username or ""),
+        )
+        return jsonify({"ok": False, "error": "Kunne ikke udtrække pakkenummer fra PDF"}), 500
+    finally:
+        # Best effort cleanup: release references immediately after extraction.
+        raw_pdf = b""
+
+    masked = tracking_number
+    if len(masked) > 10:
+        masked = f"{masked[:4]}...{masked[-4:]}"
+    log_activity(
+        kind="tracking",
+        action="extract-label",
+        message=f"Pakkenummer udtrukket fra label-PDF: {masked}",
+        level="info",
+        target=masked,
+        actor=str(current_user.username or ""),
+    )
+
+    return jsonify({"ok": True, "tracking_number": tracking_number})
 
 
 @app.route("/api/admin/tracking", methods=["GET", "POST"])
