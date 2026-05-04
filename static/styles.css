@@ -1904,7 +1904,7 @@ input[type="checkbox"] {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%) rotate(-12deg);
-  font-size: clamp(44px, 9vw, 138px);
+  font-size: clamp(38px, 7.8vw, 122px);
   font-weight: 900;
   line-height: 1;
   letter-spacing: 0.16em;
