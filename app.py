@@ -941,6 +941,38 @@ def username_to_folder_slug(username: str, user_id: Optional[int] = None) -> str
     return slug
 
 
+def sanitize_folder_segment(raw: str, fallback: str = "user") -> str:
+    value = re.sub(r"\s+", " ", str(raw or "").strip())
+    chars: list[str] = []
+    for ch in value:
+        if ch in {"/", "\\", ":", "*", "?", "\"", "<", ">", "|", "\x00"}:
+            continue
+        if ord(ch) < 32:
+            continue
+        chars.append(ch)
+    segment = "".join(chars).strip(". ")
+    if len(segment) > 120:
+        segment = segment[:120].rstrip(". ")
+    return segment or fallback
+
+
+def user_profile_folder_segment(
+    username: str,
+    first_name: str = "",
+    last_initial: str = "",
+    user_id: Optional[int] = None,
+) -> str:
+    fallback = username_to_folder_slug(username, user_id)
+    clean_username = sanitize_folder_segment(str(username or "").strip(), fallback=fallback)
+    clean_first_name = normalize_person_name(first_name, "Navn", required=False)
+    clean_last_initial = normalize_last_initial(last_initial, required=False)
+    if clean_first_name and clean_last_initial:
+        return sanitize_folder_segment(f"{clean_username} ({clean_first_name} {clean_last_initial})", fallback=fallback)
+    if clean_first_name:
+        return sanitize_folder_segment(f"{clean_username} ({clean_first_name})", fallback=fallback)
+    return clean_username
+
+
 def _ancestor_paths(path: str) -> list[str]:
     folder = normalize_folder_path(path)
     if not folder:
@@ -9431,12 +9463,12 @@ def create_user_with_password_hash(
     role_norm = "admin" if str(role or "").strip().lower() == "admin" else "user"
 
     with closing(get_conn()) as conn:
-        base_slug = username_to_folder_slug(clean_username)
-        home_folder = normalize_folder_path(f"users/{base_slug}")
+        base_segment = user_profile_folder_segment(clean_username, clean_first_name, clean_last_initial)
+        home_folder = normalize_folder_path(f"users/{base_segment}")
         suffix = 1
         while _home_folder_is_in_use(conn, home_folder):
             suffix += 1
-            home_folder = normalize_folder_path(f"users/{base_slug}-{suffix}")
+            home_folder = normalize_folder_path(f"users/{base_segment}-{suffix}")
 
         cur = conn.execute(
             "INSERT INTO users(username, first_name, last_initial, password_hash, role, home_folder, created_at) VALUES(?,?,?,?,?,?,?)",
