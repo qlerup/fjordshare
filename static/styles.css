@@ -3067,23 +3067,24 @@ input[type="checkbox"] {
 .modal-card.app-onboarding-card {
   display: grid;
   gap: 14px;
-  width: min(1320px, calc(100vw - 16px));
-  padding: 16px;
+  width: min(1520px, calc(100vw - 8px));
+  max-height: calc(100vh - 8px);
+  padding: 12px;
 }
 
 .app-onboarding-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 10px;
   align-items: start;
 }
 
 .app-onboarding-nav {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   border: 1px solid rgba(112, 130, 165, 0.28);
   border-radius: 14px;
-  padding: 10px;
+  padding: 8px;
   background:
     linear-gradient(180deg, rgba(34, 45, 63, 0.52), rgba(18, 26, 39, 0.78)),
     radial-gradient(130% 120% at 12% 2%, rgba(96, 130, 194, 0.16), rgba(0, 0, 0, 0));
@@ -3110,8 +3111,8 @@ input[type="checkbox"] {
   border: 1px solid var(--border);
   background: rgba(32, 41, 58, 0.74);
   color: var(--text);
-  border-radius: 12px;
-  padding: 10px 11px;
+  border-radius: 11px;
+  padding: 8px 9px;
   text-align: left;
   font: inherit;
   font-weight: 700;
@@ -3121,12 +3122,12 @@ input[type="checkbox"] {
 }
 
 .app-onboarding-nav-label {
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   line-height: 1.15;
 }
 
 .app-onboarding-nav-meta {
-  font-size: 0.76rem;
+  font-size: 0.7rem;
   color: #9caecc;
   font-weight: 500;
   line-height: 1.25;
@@ -3147,7 +3148,7 @@ input[type="checkbox"] {
 }
 
 .app-onboarding-nav-item-sub {
-  margin-left: 14px;
+  margin-left: 10px;
   position: relative;
 }
 
@@ -3174,7 +3175,7 @@ input[type="checkbox"] {
   background:
     linear-gradient(180deg, rgba(35, 44, 62, 0.62), rgba(25, 33, 49, 0.74)),
     var(--panel-2);
-  padding: 14px;
+  padding: 10px;
 }
 
 .app-onboarding-guide-head {
