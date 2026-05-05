@@ -22,6 +22,8 @@
     printReadyProjects: [],
     tracking: [],
     users: [],
+    signupRequests: [],
+    signupLinks: [],
     adminLogs: [],
     pendingMetadata: [],
     metadataIndex: 0,
@@ -372,6 +374,11 @@
     createUserModalStatus: document.getElementById("createUserModalStatus"),
     userStatus: document.getElementById("userStatus"),
     usersTableBody: document.getElementById("usersTableBody"),
+    signupRequestsStatus: document.getElementById("signupRequestsStatus"),
+    signupRequestsTableBody: document.getElementById("signupRequestsTableBody"),
+    createSignupLinkBtn: document.getElementById("createSignupLinkBtn"),
+    signupLinksStatus: document.getElementById("signupLinksStatus"),
+    signupLinksTableBody: document.getElementById("signupLinksTableBody"),
     trackingNumberInput: document.getElementById("trackingNumberInput"),
     trackingAddBtn: document.getElementById("trackingAddBtn"),
     trackingStatus: document.getElementById("trackingStatus"),
@@ -8693,6 +8700,8 @@
     const data = await api("/api/admin/users");
     state.users = Array.isArray(data.items) ? data.items : [];
     renderUsers();
+    await loadSignupRequests();
+    await loadSignupLinks();
   }
 
   function renderUsers() {
@@ -8720,6 +8729,154 @@
         `;
       })
       .join("");
+  }
+
+  async function loadSignupRequests() {
+    if (state.role !== "admin" || !els.signupRequestsTableBody) return;
+    const data = await api("/api/admin/profile-signup/requests");
+    state.signupRequests = Array.isArray(data.items) ? data.items : [];
+    renderSignupRequests();
+  }
+
+  function renderSignupRequests() {
+    if (!els.signupRequestsTableBody) return;
+    if (!state.signupRequests.length) {
+      els.signupRequestsTableBody.innerHTML = `<tr><td colspan="6" class="hint">Ingen oprettelser afventer godkendelse.</td></tr>`;
+      return;
+    }
+    els.signupRequestsTableBody.innerHTML = state.signupRequests
+      .map((item) => {
+        const id = Number(item.id || 0);
+        const firstName = String(item.first_name || "").trim() || "-";
+        const lastName = String(item.last_name || item.last_initial || "").trim() || "-";
+        return `
+          <tr>
+            <td>${id}</td>
+            <td>${esc(firstName)}</td>
+            <td>${esc(lastName)}</td>
+            <td>${esc(item.username || "")}</td>
+            <td>${esc(formatDate(item.created_at))}</td>
+            <td>
+              <div class="toolbar">
+                <button class="btn primary" data-signup-request-action="approve" data-request-id="${id}">Acceptér</button>
+                <button class="btn danger" data-signup-request-action="cancel" data-request-id="${id}">Annuller</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
+  async function loadSignupLinks() {
+    if (state.role !== "admin" || !els.signupLinksTableBody) return;
+    const data = await api("/api/admin/profile-signup/links");
+    state.signupLinks = Array.isArray(data.items) ? data.items : [];
+    renderSignupLinks();
+  }
+
+  function renderSignupLinks() {
+    if (!els.signupLinksTableBody) return;
+    if (!state.signupLinks.length) {
+      els.signupLinksTableBody.innerHTML = `<tr><td colspan="5" class="hint">Ingen oprettelseslinks.</td></tr>`;
+      return;
+    }
+    els.signupLinksTableBody.innerHTML = state.signupLinks
+      .map((item) => {
+        const id = Number(item.id || 0);
+        const link = String(item.link || "");
+        const isActive = String(item.status || "") === "active" && !!link;
+        return `
+          <tr>
+            <td>${id}</td>
+            <td>${esc(item.status_label || "-")}</td>
+            <td>${esc(formatDate(item.created_at))}</td>
+            <td>
+              ${link ? `<input class="input signup-link-input" type="text" readonly value="${esc(link)}">` : `<span class="hint">Linket er brugt</span>`}
+            </td>
+            <td>
+              <div class="toolbar">
+                ${isActive ? `<button class="btn" data-signup-link-action="copy" data-link-id="${id}">Kopier</button>` : ""}
+                <button class="btn danger" data-signup-link-action="delete" data-link-id="${id}">Fjern</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
+  async function createSignupLink() {
+    if (state.role !== "admin") return;
+    const data = await api("/api/admin/profile-signup/links", { method: "POST" });
+    const item = data && data.item ? data.item : null;
+    if (item) {
+      state.signupLinks.unshift(item);
+      renderSignupLinks();
+      if (item.link) {
+        try {
+          await navigator.clipboard.writeText(item.link);
+          showStatus(els.signupLinksStatus, "Oprettelseslink genereret og kopieret.", "ok");
+          return;
+        } catch {
+          // Fall through to a non-copy success message.
+        }
+      }
+    } else {
+      await loadSignupLinks();
+    }
+    showStatus(els.signupLinksStatus, "Oprettelseslink genereret.", "ok");
+  }
+
+  async function onSignupRequestsTableClick(event) {
+    const btn = event.target.closest("[data-signup-request-action]");
+    if (!btn) return;
+    const action = String(btn.dataset.signupRequestAction || "");
+    const id = Number(btn.dataset.requestId || 0);
+    if (!id) return;
+
+    if (action === "approve") {
+      await api(`/api/admin/profile-signup/requests/${id}/approve`, { method: "POST" });
+      showStatus(els.signupRequestsStatus, "Oprettelsen er accepteret.", "ok");
+      await loadUsers();
+      await loadFolders();
+      return;
+    }
+
+    if (action === "cancel") {
+      if (!window.confirm("Vil du annullere oprettelsen?")) return;
+      await api(`/api/admin/profile-signup/requests/${id}/cancel`, { method: "POST" });
+      showStatus(els.signupRequestsStatus, "Oprettelsen er annulleret.", "ok");
+      await loadSignupRequests();
+    }
+  }
+
+  async function onSignupLinksTableClick(event) {
+    const btn = event.target.closest("[data-signup-link-action]");
+    if (!btn) return;
+    const action = String(btn.dataset.signupLinkAction || "");
+    const id = Number(btn.dataset.linkId || 0);
+    const item = state.signupLinks.find((entry) => Number(entry.id || 0) === id);
+    if (!id || !item) return;
+
+    if (action === "copy") {
+      const link = String(item.link || "");
+      if (!link) return;
+      try {
+        await navigator.clipboard.writeText(link);
+        showStatus(els.signupLinksStatus, "Link kopieret.", "ok");
+      } catch {
+        showStatus(els.signupLinksStatus, "Kunne ikke kopiere link automatisk.", "error");
+      }
+      return;
+    }
+
+    if (action === "delete") {
+      if (!window.confirm("Vil du fjerne oprettelseslinket?")) return;
+      await api(`/api/admin/profile-signup/links/${id}`, { method: "DELETE" });
+      showStatus(els.signupLinksStatus, "Oprettelseslink fjernet.", "ok");
+      await loadSignupLinks();
+    }
   }
 
   function resetCreateUserModal() {
@@ -12899,6 +13056,27 @@
       els.usersTableBody.addEventListener("click", (event) => {
         onUsersTableClick(event).catch((err) => {
           showStatus(els.userStatus, err.message || "Kunne ikke slette bruger", "error");
+        });
+      });
+    }
+    if (els.createSignupLinkBtn) {
+      els.createSignupLinkBtn.addEventListener("click", () => {
+        createSignupLink().catch((err) => {
+          showStatus(els.signupLinksStatus, err.message || "Kunne ikke generere oprettelseslink", "error");
+        });
+      });
+    }
+    if (els.signupRequestsTableBody) {
+      els.signupRequestsTableBody.addEventListener("click", (event) => {
+        onSignupRequestsTableClick(event).catch((err) => {
+          showStatus(els.signupRequestsStatus, err.message || "Kunne ikke behandle oprettelsen", "error");
+        });
+      });
+    }
+    if (els.signupLinksTableBody) {
+      els.signupLinksTableBody.addEventListener("click", (event) => {
+        onSignupLinksTableClick(event).catch((err) => {
+          showStatus(els.signupLinksStatus, err.message || "Kunne ikke ændre oprettelseslink", "error");
         });
       });
     }

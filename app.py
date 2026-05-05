@@ -776,6 +776,18 @@ def last_name_to_initial(raw: str, required: bool = True) -> str:
     raise ValueError("Efternavn skal indeholde mindst et bogstav.")
 
 
+def normalize_last_initial(raw: str, required: bool = True) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        if required:
+            raise ValueError("Efternavn skal indeholde mindst et bogstav.")
+        return ""
+    for ch in value:
+        if ch.isalpha():
+            return ch.upper()[0]
+    raise ValueError("Efternavn skal indeholde mindst et bogstav.")
+
+
 def user_display_name(first_name: str, last_initial: str, fallback: str = "") -> str:
     name = normalize_person_name(first_name, "Navn", required=False)
     initial = str(last_initial or "").strip().upper()[:1]
@@ -7901,6 +7913,38 @@ def init_db() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS profile_signup_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_hash TEXT UNIQUE NOT NULL,
+                token_plain TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                created_by_user_id INTEGER,
+                created_by TEXT,
+                created_at TEXT NOT NULL,
+                used_at TEXT,
+                used_request_id INTEGER,
+                FOREIGN KEY(created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_profile_signup_links_created ON profile_signup_links(created_at DESC, id DESC);
+
+            CREATE TABLE IF NOT EXISTS profile_signup_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                link_id INTEGER NOT NULL UNIQUE,
+                username TEXT NOT NULL,
+                first_name TEXT NOT NULL,
+                last_name TEXT NOT NULL DEFAULT '',
+                last_initial TEXT NOT NULL DEFAULT '',
+                password_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                decided_by_user_id INTEGER,
+                decided_by TEXT,
+                decided_at TEXT,
+                FOREIGN KEY(link_id) REFERENCES profile_signup_links(id) ON DELETE CASCADE,
+                FOREIGN KEY(decided_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_profile_signup_requests_status ON profile_signup_requests(status, created_at DESC, id DESC);
+
             CREATE TABLE IF NOT EXISTS folders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 folder_path TEXT UNIQUE NOT NULL,
@@ -9363,22 +9407,22 @@ def _home_folder_is_in_use(conn: sqlite3.Connection, home_folder: str) -> bool:
     return False
 
 
-def create_user(
+def create_user_with_password_hash(
     username: str,
-    password: str,
+    password_hash: str,
     role: str = "user",
     first_name: str = "",
-    last_name: str = "",
+    last_initial: str = "",
     require_name: bool = False,
 ) -> int:
     clean_username = normalize_username(username)
     clean_first_name = normalize_person_name(first_name, "Navn", required=require_name)
-    clean_last_initial = last_name_to_initial(last_name, required=require_name)
-    if len(str(password or "")) < 4:
-        raise ValueError("Password skal være mindst 4 tegn.")
+    clean_last_initial = normalize_last_initial(last_initial, required=require_name)
+    pwd_hash = str(password_hash or "").strip()
+    if not pwd_hash:
+        raise ValueError("Password mangler.")
 
     role_norm = "admin" if str(role or "").strip().lower() == "admin" else "user"
-    pwd_hash = generate_password_hash(password)
 
     with closing(get_conn()) as conn:
         base_slug = username_to_folder_slug(clean_username)
@@ -9397,6 +9441,27 @@ def create_user(
 
     ensure_user_home_folder(user_id, clean_username, home_folder)
     return user_id
+
+
+def create_user(
+    username: str,
+    password: str,
+    role: str = "user",
+    first_name: str = "",
+    last_name: str = "",
+    require_name: bool = False,
+) -> int:
+    clean_last_initial = last_name_to_initial(last_name, required=require_name)
+    if len(str(password or "")) < 4:
+        raise ValueError("Password skal være mindst 4 tegn.")
+    return create_user_with_password_hash(
+        username,
+        generate_password_hash(password),
+        role=role,
+        first_name=first_name,
+        last_initial=clean_last_initial,
+        require_name=require_name,
+    )
 
 
 def fetch_user_by_username(username: str) -> Optional[User]:
@@ -10867,6 +10932,78 @@ def build_share_url(token: str, use_external_base_url: bool = False) -> str:
     return f"{base}/s/{token}"
 
 
+def build_profile_signup_url(token: str) -> str:
+    base = str(get_setting("external_base_url", "") or "").strip().rstrip("/")
+    if not base:
+        base = request.host_url.rstrip("/")
+    return f"{base}/opret/{str(token or '').strip()}"
+
+
+def _profile_signup_link_is_active(row: sqlite3.Row) -> bool:
+    if row is None:
+        return False
+    if bool(int(row["revoked"] or 0)):
+        return False
+    if str(row["used_at"] or "").strip():
+        return False
+    return True
+
+
+def _profile_signup_link_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    token = str(row["token_plain"] or "").strip()
+    revoked = bool(int(row["revoked"] or 0))
+    used_at = str(row["used_at"] or "")
+    if revoked:
+        status = "revoked"
+        status_label = "Fjernet"
+    elif used_at:
+        status = "used"
+        status_label = "Brugt"
+    else:
+        status = "active"
+        status_label = "Aktiv"
+    return {
+        "id": int(row["id"]),
+        "link": build_profile_signup_url(token) if token and status == "active" else "",
+        "status": status,
+        "status_label": status_label,
+        "created_by": str(row["created_by"] or ""),
+        "created_at": str(row["created_at"] or ""),
+        "used_at": used_at,
+    }
+
+
+def _profile_signup_request_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "link_id": int(row["link_id"] or 0),
+        "username": str(row["username"] or ""),
+        "first_name": str(row["first_name"] or ""),
+        "last_name": str(row["last_name"] or ""),
+        "last_initial": str(row["last_initial"] or ""),
+        "display_name": user_display_name(row["first_name"], row["last_initial"], row["username"]),
+        "status": str(row["status"] or "pending"),
+        "created_at": str(row["created_at"] or ""),
+    }
+
+
+def _resolve_active_profile_signup_link(token: str) -> Optional[sqlite3.Row]:
+    digest = token_digest(token)
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM profile_signup_links
+            WHERE token_hash=? OR token_plain=?
+            LIMIT 1
+            """,
+            (digest, str(token or "")),
+        ).fetchone()
+    if row is None or not _profile_signup_link_is_active(row):
+        return None
+    return row
+
+
 _run_startup_preflight()
 
 app = Flask(__name__)
@@ -11075,6 +11212,120 @@ def login():
             error = "Forkert brugernavn eller kode."
 
     return render_template("login.html", error=error, created=created)
+
+
+@app.route("/opret/<token>", methods=["GET", "POST"])
+def profile_signup(token: str):
+    if users_count() == 0:
+        return redirect(url_for("setup"))
+
+    link_row = _resolve_active_profile_signup_link(token)
+    if link_row is None:
+        return render_template(
+            "profile_signup.html",
+            valid=False,
+            submitted=False,
+            error="Oprettelseslinket er ugyldigt, brugt eller fjernet.",
+        ), 404
+
+    error = ""
+    if request.method == "POST":
+        first_name = str(request.form.get("first_name") or "").strip()
+        last_name = str(request.form.get("last_name") or "").strip()
+        username = str(request.form.get("username") or "").strip()
+        password = str(request.form.get("password") or "")
+        password2 = str(request.form.get("password2") or "")
+
+        if password != password2:
+            error = "Adgangskoderne matcher ikke."
+        else:
+            try:
+                clean_username = normalize_username(username)
+                clean_first_name = normalize_person_name(first_name, "Navn", required=True)
+                clean_last_name = normalize_person_name(last_name, "Efternavn", required=True)
+                clean_last_initial = last_name_to_initial(clean_last_name, required=True)
+                if len(password) < 4:
+                    raise ValueError("Password skal være mindst 4 tegn.")
+                pwd_hash = generate_password_hash(password)
+                now = now_iso()
+
+                with closing(get_conn()) as conn:
+                    existing_user = conn.execute(
+                        "SELECT id FROM users WHERE lower(username)=lower(?) LIMIT 1",
+                        (clean_username,),
+                    ).fetchone()
+                    if existing_user is not None:
+                        raise ValueError("Brugernavnet findes allerede.")
+
+                    existing_pending = conn.execute(
+                        """
+                        SELECT id
+                        FROM profile_signup_requests
+                        WHERE status='pending' AND lower(username)=lower(?)
+                        LIMIT 1
+                        """,
+                        (clean_username,),
+                    ).fetchone()
+                    if existing_pending is not None:
+                        raise ValueError("Der afventer allerede en oprettelse med dette brugernavn.")
+
+                    current_link = conn.execute(
+                        """
+                        SELECT *
+                        FROM profile_signup_links
+                        WHERE id=? AND revoked=0 AND (used_at IS NULL OR TRIM(used_at)='')
+                        LIMIT 1
+                        """,
+                        (int(link_row["id"]),),
+                    ).fetchone()
+                    if current_link is None:
+                        raise ValueError("Oprettelseslinket er allerede brugt eller fjernet.")
+
+                    cur = conn.execute(
+                        """
+                        INSERT INTO profile_signup_requests(
+                            link_id, username, first_name, last_name, last_initial,
+                            password_hash, status, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                        """,
+                        (
+                            int(link_row["id"]),
+                            clean_username,
+                            clean_first_name,
+                            clean_last_name,
+                            clean_last_initial,
+                            pwd_hash,
+                            now,
+                        ),
+                    )
+                    request_id = int(cur.lastrowid)
+                    conn.execute(
+                        """
+                        UPDATE profile_signup_links
+                        SET used_at=?, used_request_id=?
+                        WHERE id=?
+                        """,
+                        (now, request_id, int(link_row["id"])),
+                    )
+                    conn.commit()
+
+                log_activity(
+                    kind="user",
+                    action="signup-request",
+                    message=f"Ny brugeroprettelse afventer godkendelse: {clean_username}",
+                    level="info",
+                    target=clean_username,
+                    actor="oprettelseslink",
+                )
+                return render_template("profile_signup.html", valid=True, submitted=True, error="")
+            except sqlite3.IntegrityError:
+                error = "Oprettelseslinket er allerede brugt."
+            except ValueError as exc:
+                error = str(exc)
+            except Exception as exc:
+                error = f"Kunne ikke sende oprettelsen: {exc}"
+
+    return render_template("profile_signup.html", valid=True, submitted=False, error=error)
 
 
 @app.route("/logout")
@@ -13873,6 +14124,240 @@ def api_tracking_share_refresh(token: str):
             actor="tracking-share",
         )
         return jsonify({"ok": False, "error": f"Kunne ikke opdatere tracking: {exc}"}), 500
+
+
+@app.route("/api/admin/profile-signup/links", methods=["GET", "POST"])
+@login_required
+def api_admin_profile_signup_links():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    if request.method == "GET":
+        with closing(get_conn()) as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM profile_signup_links
+                WHERE revoked=0
+                ORDER BY id DESC
+                """
+            ).fetchall()
+        return jsonify({"ok": True, "items": [_profile_signup_link_row_to_dict(row) for row in rows]})
+
+    now = now_iso()
+    for _ in range(5):
+        token = secrets.token_urlsafe(24)
+        try:
+            with closing(get_conn()) as conn:
+                cur = conn.execute(
+                    """
+                    INSERT INTO profile_signup_links(
+                        token_hash, token_plain, revoked,
+                        created_by_user_id, created_by, created_at
+                    ) VALUES (?, ?, 0, ?, ?, ?)
+                    """,
+                    (
+                        token_digest(token),
+                        token,
+                        int(current_user.id),
+                        str(current_user.username or ""),
+                        now,
+                    ),
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM profile_signup_links WHERE id=?",
+                    (int(cur.lastrowid),),
+                ).fetchone()
+            log_activity(
+                kind="user",
+                action="signup-link-create",
+                message="Oprettelseslink genereret",
+                level="info",
+                actor=str(current_user.username or ""),
+                target=str(int(row["id"]) if row is not None else ""),
+            )
+            return jsonify({"ok": True, "item": _profile_signup_link_row_to_dict(row)})
+        except sqlite3.IntegrityError:
+            continue
+    return jsonify({"ok": False, "error": "Kunne ikke oprette unikt link"}), 500
+
+
+@app.route("/api/admin/profile-signup/links/<int:link_id>", methods=["DELETE"])
+@login_required
+def api_admin_profile_signup_link_delete(link_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT id FROM profile_signup_links WHERE id=? AND revoked=0",
+            (int(link_id),),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Link findes ikke"}), 404
+        conn.execute(
+            "UPDATE profile_signup_links SET revoked=1 WHERE id=?",
+            (int(link_id),),
+        )
+        conn.commit()
+
+    log_activity(
+        kind="user",
+        action="signup-link-revoke",
+        message=f"Oprettelseslink fjernet: {int(link_id)}",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=str(int(link_id)),
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/profile-signup/requests", methods=["GET"])
+@login_required
+def api_admin_profile_signup_requests():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM profile_signup_requests
+            WHERE status='pending'
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return jsonify({"ok": True, "items": [_profile_signup_request_row_to_dict(row) for row in rows]})
+
+
+@app.route("/api/admin/profile-signup/requests/<int:request_id>/approve", methods=["POST"])
+@login_required
+def api_admin_profile_signup_request_approve(request_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    now = now_iso()
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT * FROM profile_signup_requests WHERE id=? AND status='pending'",
+            (int(request_id),),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Oprettelsen findes ikke eller er allerede behandlet"}), 404
+
+        username = normalize_username(str(row["username"] or ""))
+        existing_user = conn.execute(
+            "SELECT id FROM users WHERE lower(username)=lower(?) LIMIT 1",
+            (username,),
+        ).fetchone()
+        if existing_user is not None:
+            return jsonify({"ok": False, "error": "Brugernavnet findes allerede"}), 409
+
+        conn.execute(
+            """
+            UPDATE profile_signup_requests
+            SET status='approved', decided_by_user_id=?, decided_by=?, decided_at=?
+            WHERE id=?
+            """,
+            (int(current_user.id), str(current_user.username or ""), now, int(request_id)),
+        )
+        conn.commit()
+
+    try:
+        user_id = create_user_with_password_hash(
+            username,
+            str(row["password_hash"] or ""),
+            role="user",
+            first_name=str(row["first_name"] or ""),
+            last_initial=str(row["last_initial"] or ""),
+            require_name=True,
+        )
+    except sqlite3.IntegrityError:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "UPDATE profile_signup_requests SET status='pending', decided_by_user_id=NULL, decided_by=NULL, decided_at=NULL WHERE id=?",
+                (int(request_id),),
+            )
+            conn.commit()
+        return jsonify({"ok": False, "error": "Brugernavnet findes allerede"}), 409
+    except Exception as exc:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "UPDATE profile_signup_requests SET status='pending', decided_by_user_id=NULL, decided_by=NULL, decided_at=NULL WHERE id=?",
+                (int(request_id),),
+            )
+            conn.commit()
+        return jsonify({"ok": False, "error": f"Kunne ikke godkende oprettelsen: {exc}"}), 500
+
+    user = get_user_by_id(user_id)
+    with closing(get_conn()) as conn:
+        conn.execute(
+            "UPDATE profile_signup_requests SET password_hash='' WHERE id=? AND status='approved'",
+            (int(request_id),),
+        )
+        conn.commit()
+
+    log_activity(
+        kind="user",
+        action="signup-request-approve",
+        message=f"Brugeroprettelse godkendt: {username}",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=username,
+    )
+    return jsonify(
+        {
+            "ok": True,
+            "item": {
+                "id": int(user_id),
+                "username": str(user.username if user else username),
+                "first_name": str(user.first_name if user else row["first_name"]),
+                "last_initial": str(user.last_initial if user else row["last_initial"]),
+                "display_name": user_display_name(
+                    user.first_name if user else row["first_name"],
+                    user.last_initial if user else row["last_initial"],
+                    user.username if user else username,
+                ),
+                "role": str(user.role if user else "user"),
+                "home_folder": str(user.home_folder if user else ""),
+            },
+        }
+    )
+
+
+@app.route("/api/admin/profile-signup/requests/<int:request_id>/cancel", methods=["POST"])
+@login_required
+def api_admin_profile_signup_request_cancel(request_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT * FROM profile_signup_requests WHERE id=? AND status='pending'",
+            (int(request_id),),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Oprettelsen findes ikke eller er allerede behandlet"}), 404
+        conn.execute(
+            """
+            UPDATE profile_signup_requests
+            SET status='cancelled', password_hash='', decided_by_user_id=?, decided_by=?, decided_at=?
+            WHERE id=?
+            """,
+            (int(current_user.id), str(current_user.username or ""), now_iso(), int(request_id)),
+        )
+        conn.commit()
+
+    username = str(row["username"] or "")
+    log_activity(
+        kind="user",
+        action="signup-request-cancel",
+        message=f"Brugeroprettelse annulleret: {username}",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=username,
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/users", methods=["GET", "POST"])

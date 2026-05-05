@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Opret profil - Fjord3D{% endblock %}
+{% block body %}
+<div class="center-screen">
+  <div class="login-card signup-card">
+    <img class="auth-logo" src="{{ url_for('static', filename='logos/logos/fjord3D-logo-horizontal-transparent.png', v=app_build) }}" alt="Fjord3D">
+    {% if submitted %}
+      <h1>Oprettelse sendt</h1>
+      <div class="status ok">Din oprettelse afventer godkendelse.</div>
+      <p class="hint">Du kan logge ind, når en administrator har godkendt profilen.</p>
+    {% elif not valid %}
+      <h1>Linket kan ikke bruges</h1>
+      <div class="status error">{{ error }}</div>
+    {% else %}
+      <h1>Opret profil</h1>
+      <p class="hint">Udfyld felterne herunder. Profilen oprettes først, når den er godkendt.</p>
+      {% if error %}<div class="status error">{{ error }}</div>{% endif %}
+      <form class="signup-form" method="post">
+        <div class="signup-name-grid">
+          <div>
+            <label for="first_name">Navn</label>
+            <input id="first_name" name="first_name" type="text" autocomplete="given-name" required>
+          </div>
+          <div>
+            <label for="last_name">Efternavn</label>
+            <input id="last_name" name="last_name" type="text" autocomplete="family-name" required>
+          </div>
+        </div>
+
+        <label for="username">Brugernavn</label>
+        <input id="username" name="username" type="text" autocomplete="username" required>
+
+        <label for="password">Adgangskode</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" required>
+
+        <label for="password2">Gentag adgangskode</label>
+        <input id="password2" name="password2" type="password" autocomplete="new-password" required>
+
+        <button class="btn primary" type="submit">Send til godkendelse</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

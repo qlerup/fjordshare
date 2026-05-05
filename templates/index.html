@@ -270,6 +270,44 @@
             <tbody id="usersTableBody"></tbody>
           </table>
         </div>
+
+        <div class="panel">
+          <h3>Oprettelser afventer godkendelse</h3>
+          <div id="signupRequestsStatus" class="status hidden"></div>
+          <table class="table compact">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Navn</th>
+                <th>Efternavn</th>
+                <th>Brugernavn</th>
+                <th>Sendt</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody id="signupRequestsTableBody"></tbody>
+          </table>
+        </div>
+
+        <div class="panel">
+          <div class="toolbar users-panel-toolbar">
+            <h3>Opret-links</h3>
+            <button id="createSignupLinkBtn" class="btn primary" type="button">Generer link</button>
+          </div>
+          <div id="signupLinksStatus" class="status hidden"></div>
+          <table class="table compact signup-links-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Oprettet</th>
+                <th>Link</th>
+                <th>Handling</th>
+              </tr>
+            </thead>
+            <tbody id="signupLinksTableBody"></tbody>
+          </table>
+        </div>
       </div>
 
       <div id="settings-panel-sms" class="settings-subpanel hidden">
