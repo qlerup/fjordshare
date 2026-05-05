@@ -1191,9 +1191,17 @@
         </div>
         <div class="app-onboarding-nav-group">
           <div class="app-onboarding-nav-group-title">Arbejdsflow</div>
-          <button class="app-onboarding-nav-item" data-guide-panel="upload" type="button">
+          <button class="app-onboarding-nav-item" data-guide-panel="upload-overview" type="button">
             <span class="app-onboarding-nav-label">Filer og mapper</span>
-            <span class="app-onboarding-nav-meta">Upload og organisering</span>
+            <span class="app-onboarding-nav-meta">Overblik over upload og mappehåndtering</span>
+          </button>
+          <button class="app-onboarding-nav-item app-onboarding-nav-item-sub" data-guide-panel="upload" type="button">
+            <span class="app-onboarding-nav-label">Upload filer</span>
+            <span class="app-onboarding-nav-meta">Upload .step, .3mf og .stl filer</span>
+          </button>
+          <button class="app-onboarding-nav-item app-onboarding-nav-item-sub" data-guide-panel="upload-create-folder" type="button">
+            <span class="app-onboarding-nav-label">Opret mappe</span>
+            <span class="app-onboarding-nav-meta">Lav en ny mappe i den aktive visning</span>
           </button>
           <button class="app-onboarding-nav-item" data-guide-panel="file-info" type="button">
             <span class="app-onboarding-nav-label">Filinformation</span>
@@ -1239,8 +1247,18 @@
             <p>Denne video viser hvordan du bruger Profil-menuen i Fjord3D:</p>
             <ul>
               <li>Åbn Profil nederst i venstre side for at se dine personlige indstillinger.</li>
-              <li>Her kan du sla automatisk guide til eller fra ved login.</li>
+              <li>Her kan du slå automatisk guide til eller fra ved login.</li>
               <li>Du kan altid starte guiden igen via knappen Vis guide.</li>
+            </ul>
+          </div>
+        </section>
+        <section class="app-onboarding-panel hidden" data-guide-panel="upload-overview">
+          <div class="app-onboarding-guide-head">Filer og mapper</div>
+          <div class="app-onboarding-guide-text">
+            <p>Her arbejder du med struktur og filer i dit projekt.</p>
+            <ul>
+              <li>Brug Upload filer til at sende modeller ind i den aktive mappe.</li>
+              <li>Brug Opret mappe til at organisere filer i en tydelig struktur.</li>
             </ul>
           </div>
         </section>
@@ -1251,6 +1269,23 @@
             <ul>
               <li>Du kan bruge både upload-knappen og drag-and-drop.</li>
               <li>Hold filerne samlet i den rigtige mappe, så projektet er let at finde senere.</li>
+            </ul>
+          </div>
+        </section>
+        <section class="app-onboarding-panel hidden" data-guide-panel="upload-create-folder">
+          <div class="app-onboarding-guide-head">Opret mappe</div>
+          <img
+            class="app-onboarding-guide-gif"
+            src="{{ url_for('static', filename='guide-gifs/opret-mappe.gif', v=app_build) }}"
+            alt="Viser hvordan man opretter en mappe i Fjord3D"
+            data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
+          >
+          <div class="app-onboarding-guide-text">
+            <p>Du kan oprette en ny mappe direkte i din aktive mappevisning.</p>
+            <ul>
+              <li>Skriv mappenavn i feltet Ny mappe.</li>
+              <li>Klik derefter på knappen Opret mappe.</li>
+              <li>Mappen oprettes i den mappe du står i nu.</li>
             </ul>
           </div>
         </section>
