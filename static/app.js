@@ -112,16 +112,22 @@
     sidebarNav: document.getElementById("sidebarNav"),
     profileFooterBtn: document.getElementById("profileFooterBtn"),
     tabFiles: document.getElementById("tab-files"),
-    tabProfile: document.getElementById("tab-profile"),
     tabPrintReady: document.getElementById("tab-print-ready"),
     tabSettings: document.getElementById("tab-settings"),
     tabTracking: document.getElementById("tab-tracking"),
+    profileModal: document.getElementById("profileModal"),
+    profilePasswordForm: document.getElementById("profilePasswordForm"),
+    profileModalCancelBtn: document.getElementById("profileModalCancelBtn"),
     profileSmsEnabledChk: document.getElementById("profileSmsEnabledChk"),
     profileSmsCountrySelect: document.getElementById("profileSmsCountrySelect"),
     profileSmsPhoneInput: document.getElementById("profileSmsPhoneInput"),
     profileSmsE164Preview: document.getElementById("profileSmsE164Preview"),
     profileSmsSaveBtn: document.getElementById("profileSmsSaveBtn"),
     profileSmsStatus: document.getElementById("profileSmsStatus"),
+    profileCurrentPwdInput: document.getElementById("profileCurrentPwdInput"),
+    profileNewPwdInput: document.getElementById("profileNewPwdInput"),
+    profileChangePwdBtn: document.getElementById("profileChangePwdBtn"),
+    profilePwdStatus: document.getElementById("profilePwdStatus"),
     settingsTabs: document.getElementById("settingsTabs"),
     settingsTabSelect: document.getElementById("settingsTabSelect"),
     settingsPanelShares: document.getElementById("settings-panel-shares"),
@@ -355,7 +361,6 @@
     openCreateUserModalBtn: document.getElementById("openCreateUserModalBtn"),
     createUserModal: document.getElementById("createUserModal"),
     createUserForm: document.getElementById("createUserForm"),
-    createUserModalCloseBtn: document.getElementById("createUserModalCloseBtn"),
     createUserModalCancelBtn: document.getElementById("createUserModalCancelBtn"),
     createUserFirstName: document.getElementById("createUserFirstName"),
     createUserLastName: document.getElementById("createUserLastName"),
@@ -610,7 +615,7 @@
   }
 
   async function loadMyProfile() {
-    if (!els.tabProfile) return;
+    if (!els.profileSmsEnabledChk && !els.profileSmsCountrySelect && !els.profileSmsPhoneInput) return;
     try {
       setProfileSmsFormState({ busy: true });
       const data = await api("/api/me/profile");
@@ -638,6 +643,30 @@
     } catch (err) {
       showStatus(els.profilePwdStatus, err.message || "Kunne ikke skifte adgangskode", "error");
     }
+  }
+
+  function resetProfilePasswordForm(clearPasswords = true) {
+    if (clearPasswords) {
+      if (els.profileCurrentPwdInput) els.profileCurrentPwdInput.value = "";
+      if (els.profileNewPwdInput) els.profileNewPwdInput.value = "";
+    }
+    showStatus(els.profilePwdStatus, "");
+  }
+
+  function openProfileModal() {
+    if (!els.profileModal) return;
+    resetProfilePasswordForm(true);
+    els.profileModal.classList.remove("hidden");
+    if (els.profileFooterBtn) els.profileFooterBtn.classList.add("active");
+    window.setTimeout(() => {
+      if (els.profileCurrentPwdInput) els.profileCurrentPwdInput.focus();
+    }, 0);
+  }
+
+  function closeProfileModal() {
+    if (els.profileModal) els.profileModal.classList.add("hidden");
+    if (els.profileFooterBtn) els.profileFooterBtn.classList.remove("active");
+    resetProfilePasswordForm(true);
   }
 
   async function maybeShowAppOnboarding() {
@@ -1548,7 +1577,6 @@
     const target = String(tab || "files");
     const map = {
       files: els.tabFiles,
-      profile: els.tabProfile,
       "print-ready": els.tabPrintReady,
       settings: els.tabSettings,
       tracking: els.tabTracking,
@@ -1559,9 +1587,7 @@
     });
     const navButtons = Array.from((els.sidebarNav && els.sidebarNav.querySelectorAll(".nav-item")) || []);
     navButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === target));
-    if (els.profileFooterBtn) {
-      els.profileFooterBtn.classList.toggle("active", target === "profile");
-    }
+    if (els.profileFooterBtn && target !== "profile") els.profileFooterBtn.classList.remove("active");
     if (els.contentHeader) {
       els.contentHeader.classList.toggle("hidden", target === "files");
     }
@@ -11524,9 +11550,6 @@
         if (!btn) return;
         const tab = btn.dataset.tab;
         setTab(tab);
-        if (tab === "profile") {
-          await loadMyProfile();
-        }
         if (tab === "print-ready") {
           await loadPrintReadyProjects();
         }
@@ -11545,10 +11568,7 @@
     }
     if (els.profileFooterBtn) {
       els.profileFooterBtn.addEventListener("click", () => {
-        setTab("profile");
-        loadMyProfile().catch((err) => {
-          showStatus(els.profileSmsStatus, err.message || "Kunne ikke hente profil", "error");
-        });
+        openProfileModal();
       });
     }
 
@@ -11618,16 +11638,22 @@
       });
     }
 
-    // Change password bindings
-    if (!els.profileChangePwdBtn) els.profileChangePwdBtn = document.getElementById("profileChangePwdBtn");
-    if (!els.profileCurrentPwdInput) els.profileCurrentPwdInput = document.getElementById("profileCurrentPwdInput");
-    if (!els.profileNewPwdInput) els.profileNewPwdInput = document.getElementById("profileNewPwdInput");
-    if (!els.profilePwdStatus) els.profilePwdStatus = document.getElementById("profilePwdStatus");
-    if (els.profileChangePwdBtn) {
-      els.profileChangePwdBtn.addEventListener("click", () => {
+    if (els.profilePasswordForm) {
+      els.profilePasswordForm.addEventListener("submit", (event) => {
+        event.preventDefault();
         changeMyPassword().catch((err) => {
           showStatus(els.profilePwdStatus, err.message || "Kunne ikke skifte adgangskode", "error");
         });
+      });
+    }
+    if (els.profileModalCancelBtn) {
+      els.profileModalCancelBtn.addEventListener("click", closeProfileModal);
+    }
+    if (els.profileModal) {
+      els.profileModal.addEventListener("click", (event) => {
+        if (event.target === els.profileModal || event.target.classList.contains("modal-backdrop")) {
+          closeProfileModal();
+        }
       });
     }
 
@@ -12476,6 +12502,11 @@
         closePrintReadyModal();
         return;
       }
+      const profileModalOpen = !!(els.profileModal && !els.profileModal.classList.contains("hidden"));
+      if (profileModalOpen) {
+        closeProfileModal();
+        return;
+      }
       const createUserModalOpen = !!(els.createUserModal && !els.createUserModal.classList.contains("hidden"));
       if (createUserModalOpen) {
         closeCreateUserModal();
@@ -12846,9 +12877,6 @@
     if (els.openCreateUserModalBtn) {
       els.openCreateUserModalBtn.addEventListener("click", openCreateUserModal);
     }
-    if (els.createUserModalCloseBtn) {
-      els.createUserModalCloseBtn.addEventListener("click", closeCreateUserModal);
-    }
     if (els.createUserModalCancelBtn) {
       els.createUserModalCancelBtn.addEventListener("click", closeCreateUserModal);
     }
@@ -13108,8 +13136,7 @@
           await loadFiles();
         } catch (_) {}
       } else if (action === "profile") {
-        setTab("profile");
-        loadMyProfile().catch(() => {});
+        openProfileModal();
       } else if (action === "settings") {
         if (state.role === "admin") {
           setTab("settings");

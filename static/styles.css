@@ -2926,6 +2926,35 @@ input[type="checkbox"] {
   margin-top: 14px;
 }
 
+.modal-card.profile-modal-card {
+  width: min(520px, calc(100vw - 24px));
+}
+
+.modal-card.profile-modal-card form {
+  display: grid;
+  gap: 14px;
+}
+
+.profile-modal-head {
+  display: grid;
+  gap: 4px;
+}
+
+.profile-modal-head h3,
+.profile-password-section h4 {
+  margin: 0;
+}
+
+.profile-password-section {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-password-grid {
+  display: grid;
+  gap: 10px;
+}
+
 .sms-confirm-details {
   display: grid;
   gap: 12px;
