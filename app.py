@@ -1173,9 +1173,26 @@ def _extract_zip_upload(
     base_abs.mkdir(parents=True, exist_ok=True)
     ensure_folder_record(base)
 
+    zip_name_source = str(original_zip_name or zip_path.name or "")
+    zip_folder_base = sanitize_folder_segment(Path(zip_name_source).stem, fallback="zip-upload")
+    zip_extract_root = normalize_folder_path(f"{base}/{zip_folder_base}") if base else zip_folder_base
+    _, zip_extract_root_abs = folder_abs_path(zip_extract_root)
+    suffix_idx = 1
+    while zip_extract_root_abs.exists():
+        zip_folder_candidate = sanitize_folder_segment(
+            f"{zip_folder_base}_{suffix_idx}",
+            fallback=f"{zip_folder_base}_{suffix_idx}",
+        )
+        zip_extract_root = normalize_folder_path(f"{base}/{zip_folder_candidate}") if base else zip_folder_candidate
+        _, zip_extract_root_abs = folder_abs_path(zip_extract_root)
+        suffix_idx += 1
+
+    zip_extract_root_abs.mkdir(parents=True, exist_ok=True)
+    ensure_folder_record(zip_extract_root)
+
     extracted = 0
     first_row: Optional[sqlite3.Row] = None
-    created_folders: set[str] = set()
+    created_folders: set[str] = {zip_extract_root}
 
     def _zip_name_key(raw: str) -> str:
         value = str(raw or "").strip().lower().replace("\\", "/")
@@ -1193,7 +1210,7 @@ def _extract_zip_upload(
             raise ValueError(f"ZIP indeholder for mange elementer (maks {ZIP_UPLOAD_MAX_FILES})")
 
         wrapper_prefix = ""
-        zip_key = _zip_name_key(original_zip_name)
+        zip_key = _zip_name_key(zip_name_source)
         if zip_key:
             first_parts: set[str] = set()
             has_root_files = False
@@ -1250,7 +1267,7 @@ def _extract_zip_upload(
             if info.is_dir():
                 try:
                     inner_dir = normalize_folder_path("/".join(parts))
-                    target_folder = normalize_folder_path(f"{base}/{inner_dir}") if inner_dir else base
+                    target_folder = normalize_folder_path(f"{zip_extract_root}/{inner_dir}") if inner_dir else zip_extract_root
                 except ValueError:
                     continue
                 if target_folder and target_folder not in created_folders:
@@ -1268,7 +1285,7 @@ def _extract_zip_upload(
 
             try:
                 inner_dir = normalize_folder_path("/".join(parts[:-1])) if len(parts) > 1 else ""
-                target_folder = normalize_folder_path(f"{base}/{inner_dir}") if inner_dir else base
+                target_folder = normalize_folder_path(f"{zip_extract_root}/{inner_dir}") if inner_dir else zip_extract_root
             except ValueError:
                 continue
             _, target_abs = folder_abs_path(target_folder)
