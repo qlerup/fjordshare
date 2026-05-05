@@ -289,36 +289,16 @@
 
       <div id="settings-panel-users" class="settings-subpanel hidden">
         <div class="panel">
-          <h3>Opret bruger</h3>
-          <div class="form-grid">
-            <div>
-              <label for="createUserUsername">Brugernavn</label>
-              <input id="createUserUsername" class="input" type="text">
-            </div>
-            <div>
-              <label for="createUserPassword">Kode</label>
-              <input id="createUserPassword" class="input" type="password">
-            </div>
-            <div>
-              <label for="createUserRole">Rolle</label>
-              <select id="createUserRole" class="select">
-                <option value="user">Bruger</option>
-                <option value="admin">Admin</option>
-              </select>
-            </div>
-            <div class="end">
-              <button id="createUserBtn" class="btn primary">Opret</button>
-            </div>
+          <div class="toolbar users-panel-toolbar">
+            <h3>Brugere</h3>
+            <button id="openCreateUserModalBtn" class="btn primary" type="button">Tilføj</button>
           </div>
           <div id="userStatus" class="status hidden"></div>
-        </div>
-
-        <div class="panel">
-          <h3>Brugere</h3>
           <table class="table">
             <thead>
               <tr>
                 <th>ID</th>
+                <th>Navn</th>
                 <th>Brugernavn</th>
                 <th>Rolle</th>
                 <th>Hjemmemappe</th>
@@ -631,6 +611,52 @@
       <button id="smsOnboardingSendCodeBtn" class="btn primary" type="button">Send kode</button>
       <button id="smsOnboardingVerifyBtn" class="btn primary hidden" type="button">Aktivér SMS</button>
     </div>
+  </div>
+</div>
+
+<div id="createUserModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card create-user-modal-card">
+    <form id="createUserForm">
+      <div class="toolbar">
+        <h3>Tilføj bruger</h3>
+        <button id="createUserModalCloseBtn" class="btn" type="button">Luk</button>
+      </div>
+      <div class="form-grid">
+        <div>
+          <label for="createUserFirstName">Navn</label>
+          <input id="createUserFirstName" class="input" type="text" autocomplete="given-name" required>
+        </div>
+        <div>
+          <label for="createUserLastName">Efternavn</label>
+          <input id="createUserLastName" class="input" type="text" autocomplete="family-name" required>
+        </div>
+        <div>
+          <label for="createUserUsername">Brugernavn</label>
+          <input id="createUserUsername" class="input" type="text" autocomplete="username" required>
+        </div>
+        <div>
+          <label for="createUserPassword">Kode</label>
+          <input id="createUserPassword" class="input" type="password" autocomplete="new-password" required>
+        </div>
+        <div>
+          <label for="createUserPassword2">Gentag kode</label>
+          <input id="createUserPassword2" class="input" type="password" autocomplete="new-password" required>
+        </div>
+        <div>
+          <label for="createUserRole">Rolle</label>
+          <select id="createUserRole" class="select">
+            <option value="user">Bruger</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <div id="createUserModalStatus" class="status hidden"></div>
+      <div class="toolbar end">
+        <button id="createUserModalCancelBtn" class="btn" type="button">Annuller</button>
+        <button id="createUserBtn" class="btn primary" type="submit">Tilføj</button>
+      </div>
+    </form>
   </div>
 </div>
 

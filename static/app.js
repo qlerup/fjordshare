@@ -352,10 +352,19 @@
     smsResetTokenBtn: document.getElementById("smsResetTokenBtn"),
     smsSaveBtn: document.getElementById("smsSaveBtn"),
     smsStatus: document.getElementById("smsStatus"),
+    openCreateUserModalBtn: document.getElementById("openCreateUserModalBtn"),
+    createUserModal: document.getElementById("createUserModal"),
+    createUserForm: document.getElementById("createUserForm"),
+    createUserModalCloseBtn: document.getElementById("createUserModalCloseBtn"),
+    createUserModalCancelBtn: document.getElementById("createUserModalCancelBtn"),
+    createUserFirstName: document.getElementById("createUserFirstName"),
+    createUserLastName: document.getElementById("createUserLastName"),
     createUserUsername: document.getElementById("createUserUsername"),
     createUserPassword: document.getElementById("createUserPassword"),
+    createUserPassword2: document.getElementById("createUserPassword2"),
     createUserRole: document.getElementById("createUserRole"),
     createUserBtn: document.getElementById("createUserBtn"),
+    createUserModalStatus: document.getElementById("createUserModalStatus"),
     userStatus: document.getElementById("userStatus"),
     usersTableBody: document.getElementById("usersTableBody"),
     trackingNumberInput: document.getElementById("trackingNumberInput"),
@@ -8663,16 +8672,18 @@
   function renderUsers() {
     if (!els.usersTableBody) return;
     if (!state.users.length) {
-      els.usersTableBody.innerHTML = `<tr><td colspan="5" class="hint">Ingen brugere.</td></tr>`;
+      els.usersTableBody.innerHTML = `<tr><td colspan="6" class="hint">Ingen brugere.</td></tr>`;
       return;
     }
     els.usersTableBody.innerHTML = state.users
       .map((u) => {
         const id = Number(u.id || 0);
         const canDelete = u.username !== state.username;
+        const name = String(u.display_name || u.first_name || "").trim() || "-";
         return `
           <tr>
             <td>${id}</td>
+            <td>${esc(name)}</td>
             <td>${esc(u.username)}</td>
             <td>${esc(u.role)}</td>
             <td>${esc(u.home_folder || "-")}</td>
@@ -8685,17 +8696,47 @@
       .join("");
   }
 
-  async function createUser() {
-    const username = String((els.createUserUsername && els.createUserUsername.value) || "").trim();
-    const password = String((els.createUserPassword && els.createUserPassword.value) || "");
-    const role = String((els.createUserRole && els.createUserRole.value) || "user");
-    if (!username || !password) {
-      showStatus(els.userStatus, "Udfyld brugernavn og kode.", "error");
-      return;
-    }
-    await api("/api/admin/users", { method: "POST", body: { username, password, role } });
+  function resetCreateUserModal() {
+    if (els.createUserFirstName) els.createUserFirstName.value = "";
+    if (els.createUserLastName) els.createUserLastName.value = "";
     if (els.createUserUsername) els.createUserUsername.value = "";
     if (els.createUserPassword) els.createUserPassword.value = "";
+    if (els.createUserPassword2) els.createUserPassword2.value = "";
+    if (els.createUserRole) els.createUserRole.value = "user";
+    showStatus(els.createUserModalStatus, "");
+  }
+
+  function openCreateUserModal() {
+    if (!els.createUserModal) return;
+    resetCreateUserModal();
+    els.createUserModal.classList.remove("hidden");
+    window.setTimeout(() => {
+      if (els.createUserFirstName) els.createUserFirstName.focus();
+    }, 0);
+  }
+
+  function closeCreateUserModal() {
+    if (els.createUserModal) els.createUserModal.classList.add("hidden");
+    resetCreateUserModal();
+  }
+
+  async function createUser() {
+    const firstName = String((els.createUserFirstName && els.createUserFirstName.value) || "").trim();
+    const lastName = String((els.createUserLastName && els.createUserLastName.value) || "").trim();
+    const username = String((els.createUserUsername && els.createUserUsername.value) || "").trim();
+    const password = String((els.createUserPassword && els.createUserPassword.value) || "");
+    const password2 = String((els.createUserPassword2 && els.createUserPassword2.value) || "");
+    const role = String((els.createUserRole && els.createUserRole.value) || "user");
+    if (!firstName || !lastName || !username || !password || !password2) {
+      showStatus(els.createUserModalStatus, "Udfyld navn, efternavn, brugernavn og kodefelter.", "error");
+      return;
+    }
+    if (password !== password2) {
+      showStatus(els.createUserModalStatus, "Adgangskoderne matcher ikke.", "error");
+      return;
+    }
+    await api("/api/admin/users", { method: "POST", body: { first_name: firstName, last_name: lastName, username, password, password2, role } });
+    closeCreateUserModal();
     showStatus(els.userStatus, "Bruger oprettet.", "ok");
     await loadUsers();
     await loadFolders();
@@ -12435,6 +12476,11 @@
         closePrintReadyModal();
         return;
       }
+      const createUserModalOpen = !!(els.createUserModal && !els.createUserModal.classList.contains("hidden"));
+      if (createUserModalOpen) {
+        closeCreateUserModal();
+        return;
+      }
       const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
       if (shareModalOpen) {
         closeShareModal();
@@ -12797,11 +12843,28 @@
       els.smsTestRecipientInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
     }
 
-    if (els.createUserBtn) {
-      els.createUserBtn.addEventListener("click", () => {
+    if (els.openCreateUserModalBtn) {
+      els.openCreateUserModalBtn.addEventListener("click", openCreateUserModal);
+    }
+    if (els.createUserModalCloseBtn) {
+      els.createUserModalCloseBtn.addEventListener("click", closeCreateUserModal);
+    }
+    if (els.createUserModalCancelBtn) {
+      els.createUserModalCancelBtn.addEventListener("click", closeCreateUserModal);
+    }
+    if (els.createUserForm) {
+      els.createUserForm.addEventListener("submit", (event) => {
+        event.preventDefault();
         createUser().catch((err) => {
-          showStatus(els.userStatus, err.message || "Kunne ikke oprette bruger", "error");
+          showStatus(els.createUserModalStatus, err.message || "Kunne ikke oprette bruger", "error");
         });
+      });
+    }
+    if (els.createUserModal) {
+      els.createUserModal.addEventListener("click", (event) => {
+        if (event.target === els.createUserModal || event.target.classList.contains("modal-backdrop")) {
+          closeCreateUserModal();
+        }
       });
     }
     if (els.usersTableBody) {

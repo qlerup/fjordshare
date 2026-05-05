@@ -8,6 +8,12 @@
     <p class="hint">Opret den første admin-konto.</p>
     {% if error %}<div class="status error">{{ error }}</div>{% endif %}
 
+    <label for="first_name">Navn</label>
+    <input id="first_name" name="first_name" type="text" autocomplete="given-name" required>
+
+    <label for="last_name">Efternavn</label>
+    <input id="last_name" name="last_name" type="text" autocomplete="family-name" required>
+
     <label for="username">Admin brugernavn</label>
     <input id="username" name="username" type="text" autocomplete="username" required>
 

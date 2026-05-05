@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "C:\Users\K3DD3\Desktop\fjordlens_synology_github_ready\fjordshare\app.py", line 30, in <module>
+    from flask import (
+    ...<9 lines>...
+    )
+ModuleNotFoundError: No module named 'flask'

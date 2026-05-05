@@ -753,6 +753,39 @@ def normalize_username(raw: str) -> str:
     return value
 
 
+def normalize_person_name(raw: str, label: str = "Navn", required: bool = True) -> str:
+    value = re.sub(r"\s+", " ", str(raw or "").strip())
+    if not value:
+        if required:
+            raise ValueError(f"{label} er påkrævet.")
+        return ""
+    if len(value) > 80:
+        raise ValueError(f"{label} må højst være 80 tegn.")
+    if any(ord(ch) < 32 or ch in {"\x00", "/", "\\", ":", "*", "?", "\"", "<", ">", "|"} for ch in value):
+        raise ValueError(f"{label} indeholder ugyldige tegn.")
+    return value
+
+
+def last_name_to_initial(raw: str, required: bool = True) -> str:
+    value = normalize_person_name(raw, "Efternavn", required=required)
+    if not value:
+        return ""
+    for ch in value:
+        if ch.isalpha():
+            return ch.upper()[0]
+    raise ValueError("Efternavn skal indeholde mindst et bogstav.")
+
+
+def user_display_name(first_name: str, last_initial: str, fallback: str = "") -> str:
+    name = normalize_person_name(first_name, "Navn", required=False)
+    initial = str(last_initial or "").strip().upper()[:1]
+    if name and initial:
+        return f"{name} {initial}."
+    if name:
+        return name
+    return str(fallback or "").strip()
+
+
 def normalize_folder_path(raw: str) -> str:
     text = str(raw or "").replace("\\", "/").strip()
     while "//" in text:
@@ -7842,6 +7875,8 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
+                first_name TEXT NOT NULL DEFAULT '',
+                last_initial TEXT NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 home_folder TEXT UNIQUE NOT NULL,
@@ -8098,6 +8133,12 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_kind ON folders(folder_kind)")
 
         user_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "first_name" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN first_name TEXT NOT NULL DEFAULT ''")
+            user_cols.append("first_name")
+        if "last_initial" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN last_initial TEXT NOT NULL DEFAULT ''")
+            user_cols.append("last_initial")
         if "sms_enabled" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN sms_enabled INTEGER NOT NULL DEFAULT 0")
         if "sms_phone_country_code" not in user_cols:
@@ -8170,6 +8211,8 @@ def init_db() -> None:
 class User(UserMixin):
     id: int
     username: str
+    first_name: str
+    last_initial: str
     role: str
     home_folder: str
 
@@ -8181,9 +8224,14 @@ class User(UserMixin):
 def row_to_user(row: Optional[sqlite3.Row]) -> Optional[User]:
     if row is None:
         return None
+    keys = set(row.keys())
+    first_name = str(row["first_name"] or "") if "first_name" in keys else ""
+    last_initial = str(row["last_initial"] or "") if "last_initial" in keys else ""
     return User(
         id=int(row["id"]),
         username=str(row["username"]),
+        first_name=first_name,
+        last_initial=last_initial,
         role=str(row["role"] or "user"),
         home_folder=normalize_folder_path(str(row["home_folder"] or "")),
     )
@@ -9315,8 +9363,17 @@ def _home_folder_is_in_use(conn: sqlite3.Connection, home_folder: str) -> bool:
     return False
 
 
-def create_user(username: str, password: str, role: str = "user") -> int:
+def create_user(
+    username: str,
+    password: str,
+    role: str = "user",
+    first_name: str = "",
+    last_name: str = "",
+    require_name: bool = False,
+) -> int:
     clean_username = normalize_username(username)
+    clean_first_name = normalize_person_name(first_name, "Navn", required=require_name)
+    clean_last_initial = last_name_to_initial(last_name, required=require_name)
     if len(str(password or "")) < 4:
         raise ValueError("Password skal være mindst 4 tegn.")
 
@@ -9332,8 +9389,8 @@ def create_user(username: str, password: str, role: str = "user") -> int:
             home_folder = normalize_folder_path(f"users/{base_slug}-{suffix}")
 
         cur = conn.execute(
-            "INSERT INTO users(username, password_hash, role, home_folder, created_at) VALUES(?,?,?,?,?)",
-            (clean_username, pwd_hash, role_norm, home_folder, now_iso()),
+            "INSERT INTO users(username, first_name, last_initial, password_hash, role, home_folder, created_at) VALUES(?,?,?,?,?,?,?)",
+            (clean_username, clean_first_name, clean_last_initial, pwd_hash, role_norm, home_folder, now_iso()),
         )
         conn.commit()
         user_id = int(cur.lastrowid)
@@ -9345,7 +9402,7 @@ def create_user(username: str, password: str, role: str = "user") -> int:
 def fetch_user_by_username(username: str) -> Optional[User]:
     with closing(get_conn()) as conn:
         row = conn.execute(
-            "SELECT id, username, role, home_folder FROM users WHERE username=?",
+            "SELECT id, username, first_name, last_initial, role, home_folder FROM users WHERE username=?",
             (str(username or "").strip(),),
         ).fetchone()
     return row_to_user(row)
@@ -9354,7 +9411,7 @@ def fetch_user_by_username(username: str) -> Optional[User]:
 def get_user_by_id(user_id: int) -> Optional[User]:
     with closing(get_conn()) as conn:
         row = conn.execute(
-            "SELECT id, username, role, home_folder FROM users WHERE id=?",
+            "SELECT id, username, first_name, last_initial, role, home_folder FROM users WHERE id=?",
             (int(user_id),),
         ).fetchone()
     return row_to_user(row)
@@ -10959,16 +11016,18 @@ def setup():
 
     error = ""
     if request.method == "POST":
+        first_name = str(request.form.get("first_name") or "").strip()
+        last_name = str(request.form.get("last_name") or "").strip()
         username = str(request.form.get("username") or "").strip()
         password = str(request.form.get("password") or "")
         password2 = str(request.form.get("password2") or "")
-        if not username or not password:
-            error = "Brugernavn og adgangskode er påkrævet."
+        if not first_name or not last_name or not username or not password:
+            error = "Navn, efternavn, brugernavn og adgangskode er påkrævet."
         elif password != password2:
             error = "Adgangskoderne matcher ikke."
         else:
             try:
-                create_user(username, password, role="admin")
+                create_user(username, password, role="admin", first_name=first_name, last_name=last_name, require_name=True)
                 return redirect(url_for("login", created="1"))
             except sqlite3.IntegrityError:
                 error = "Brugernavnet findes allerede."
@@ -11114,6 +11173,9 @@ def api_me():
             "user": {
                 "id": int(current_user.id),
                 "username": str(current_user.username),
+                "first_name": str(current_user.first_name or ""),
+                "last_initial": str(current_user.last_initial or ""),
+                "display_name": user_display_name(current_user.first_name, current_user.last_initial, current_user.username),
                 "role": str(current_user.role),
                 "home_folder": normalize_folder_path(str(current_user.home_folder or "")),
                 "daily_folder": daily_folder,
@@ -13822,7 +13884,7 @@ def api_admin_users():
     if request.method == "GET":
         with closing(get_conn()) as conn:
             rows = conn.execute(
-                "SELECT id, username, role, home_folder, created_at FROM users ORDER BY id"
+                "SELECT id, username, first_name, last_initial, role, home_folder, created_at FROM users ORDER BY id"
             ).fetchall()
         return jsonify(
             {
@@ -13831,6 +13893,9 @@ def api_admin_users():
                     {
                         "id": int(r["id"]),
                         "username": str(r["username"]),
+                        "first_name": str(r["first_name"] or ""),
+                        "last_initial": str(r["last_initial"] or ""),
+                        "display_name": user_display_name(r["first_name"], r["last_initial"], r["username"]),
                         "role": str(r["role"] or "user"),
                         "home_folder": str(r["home_folder"] or ""),
                         "created_at": str(r["created_at"] or ""),
@@ -13841,12 +13906,18 @@ def api_admin_users():
         )
 
     body = request.get_json(silent=True) or {}
+    first_name = str(body.get("first_name") or "").strip()
+    last_name = str(body.get("last_name") or "").strip()
     username = str(body.get("username") or "").strip()
     password = str(body.get("password") or "")
+    password2 = str(body.get("password2") or "")
     role = str(body.get("role") or "user").strip().lower()
 
+    if password != password2:
+        return jsonify({"ok": False, "error": "Adgangskoderne matcher ikke"}), 400
+
     try:
-        user_id = create_user(username, password, role)
+        user_id = create_user(username, password, role, first_name=first_name, last_name=last_name, require_name=True)
         user = get_user_by_id(user_id)
         return jsonify(
             {
@@ -13854,6 +13925,13 @@ def api_admin_users():
                 "item": {
                     "id": int(user_id),
                     "username": str(user.username if user else username),
+                    "first_name": str(user.first_name if user else first_name),
+                    "last_initial": str(user.last_initial if user else last_name_to_initial(last_name)),
+                    "display_name": user_display_name(
+                        user.first_name if user else first_name,
+                        user.last_initial if user else last_name_to_initial(last_name),
+                        user.username if user else username,
+                    ),
                     "role": str(user.role if user else role),
                     "home_folder": str(user.home_folder if user else ""),
                 },

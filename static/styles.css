@@ -1739,8 +1739,27 @@ input[type="checkbox"] {
   align-self: end;
 }
 
+#openCreateUserModalBtn,
 #createUserBtn {
   min-height: 38px;
+}
+
+.users-panel-toolbar {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.users-panel-toolbar h3 {
+  margin: 0;
+}
+
+.create-user-modal-card {
+  width: min(640px, calc(100vw - 24px));
+}
+
+.create-user-modal-card form {
+  display: grid;
+  gap: 10px;
 }
 
 .tracking-number-cell {
@@ -3395,7 +3414,7 @@ input[type="checkbox"] {
   }
 
   #trackingAddBtn,
-  #createUserBtn {
+  #openCreateUserModalBtn {
     width: fit-content;
   }
 
