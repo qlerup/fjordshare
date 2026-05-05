@@ -3147,22 +3147,6 @@ input[type="checkbox"] {
   box-shadow: 0 10px 18px rgba(8, 14, 30, 0.34);
 }
 
-.app-onboarding-nav-item-sub {
-  margin-left: 10px;
-  width: calc(100% - 10px);
-  position: relative;
-}
-
-.app-onboarding-nav-item-sub::before {
-  content: "";
-  position: absolute;
-  left: -10px;
-  top: 50%;
-  width: 7px;
-  height: 1px;
-  background: rgba(146, 163, 195, 0.72);
-}
-
 .app-onboarding-content {
   min-width: 0;
   overflow-x: hidden;
@@ -3228,13 +3212,6 @@ input[type="checkbox"] {
     white-space: normal;
   }
 
-  .app-onboarding-nav-item-sub {
-    margin-left: 0;
-  }
-
-  .app-onboarding-nav-item-sub::before {
-    display: none;
-  }
 }
 
 .app-onboarding-preferences {
