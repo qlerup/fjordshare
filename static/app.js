@@ -754,7 +754,7 @@
     showStatus(els.profilePwdStatus, "");
     showStatus(els.profileGuideStatus, "");
 
-    if (hasPasswordInput && !passwordReady) {
+    if (!guideChanged && hasPasswordInput && !passwordReady) {
       showStatus(els.profilePwdStatus, "Udfyld nuværende og ny kode for at gemme adgangskode.", "error");
       return;
     }
@@ -769,10 +769,11 @@
         await saveProfileGuidePreference();
       }
       if (hasPasswordInput) {
+        if (!passwordReady) {
+          showStatus(els.profilePwdStatus, "Guideindstillinger gemt. Udfyld begge kodefelter for at gemme adgangskode.", "error");
+          return;
+        }
         await changeMyPassword();
-      }
-      if (guideChanged && !hasPasswordInput) {
-        showStatus(els.profilePwdStatus, "Guideindstillinger gemt.", "ok");
       }
     } finally {
       setProfileGuideFormState({ busy: false });
