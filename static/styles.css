@@ -3084,6 +3084,42 @@ input[type="checkbox"] {
   color: #f6f9ff;
 }
 
+.app-onboarding-guide-block {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  padding: 12px;
+}
+
+.app-onboarding-guide-head {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #f6f9ff;
+}
+
+.app-onboarding-guide-gif {
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #0d1320;
+}
+
+.app-onboarding-guide-text p {
+  margin: 0;
+}
+
+.app-onboarding-guide-text ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  display: grid;
+  gap: 6px;
+}
+
 .app-onboarding-preferences {
   display: grid;
   gap: 8px;
