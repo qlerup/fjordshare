@@ -352,6 +352,7 @@
     appOnboardingModal: document.getElementById("appOnboardingModal"),
     appOnboardingNavItems: Array.from(document.querySelectorAll(".app-onboarding-nav-item[data-guide-panel]")),
     appOnboardingPanels: Array.from(document.querySelectorAll(".app-onboarding-panel[data-guide-panel]")),
+    appOnboardingGuideGifs: Array.from(document.querySelectorAll(".app-onboarding-guide-gif[data-fallback-src]")),
     appOnboardingEnabledChk: document.getElementById("appOnboardingEnabledChk"),
     appOnboardingDoneBtn: document.getElementById("appOnboardingDoneBtn"),
     appOnboardingStatus: document.getElementById("appOnboardingStatus"),
@@ -13742,6 +13743,16 @@
       els.appOnboardingNavItems.forEach((item) => {
         item.addEventListener("click", () => {
           setAppOnboardingPanel(String(item.dataset.guidePanel || ""));
+        });
+      });
+    }
+    if (els.appOnboardingGuideGifs && els.appOnboardingGuideGifs.length) {
+      els.appOnboardingGuideGifs.forEach((gif) => {
+        gif.addEventListener("error", () => {
+          const fallbackSrc = String(gif.dataset.fallbackSrc || "").trim();
+          if (!fallbackSrc || gif.dataset.fallbackApplied === "1") return;
+          gif.dataset.fallbackApplied = "1";
+          gif.src = fallbackSrc;
         });
       });
     }

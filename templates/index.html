@@ -1176,14 +1176,39 @@
     <div class="toolbar">
       <h3>Velkommen til Fjord3D</h3>
     </div>
-    <p class="hint">Vælg en guide i menuen til venstre for at se præcis det trin du har brug for.</p>
+    <p class="hint">Vælg en guide i menuen for at se præcis det trin du har brug for.</p>
     <div class="app-onboarding-layout">
       <nav class="app-onboarding-nav" aria-label="Guide menu">
-        <button class="app-onboarding-nav-item active" data-guide-panel="navigation" type="button">Navigation</button>
-        <button class="app-onboarding-nav-item" data-guide-panel="upload" type="button">Upload filer</button>
-        <button class="app-onboarding-nav-item" data-guide-panel="file-info" type="button">Tilføj info</button>
-        <button class="app-onboarding-nav-item" data-guide-panel="print-ready" type="button">Klar til print</button>
-        <button class="app-onboarding-nav-item" data-guide-panel="tracking" type="button">Tracking</button>
+        <div class="app-onboarding-nav-group">
+          <div class="app-onboarding-nav-group-title">Kom i gang</div>
+          <button class="app-onboarding-nav-item active" data-guide-panel="navigation" type="button">
+            <span class="app-onboarding-nav-label">Navigation</span>
+            <span class="app-onboarding-nav-meta">Overblik over appens vigtigste områder</span>
+          </button>
+          <button class="app-onboarding-nav-item app-onboarding-nav-item-sub" data-guide-panel="navigation-profile" type="button">
+            <span class="app-onboarding-nav-label">Profil</span>
+            <span class="app-onboarding-nav-meta">Profilmenu og guideindstillinger</span>
+          </button>
+        </div>
+        <div class="app-onboarding-nav-group">
+          <div class="app-onboarding-nav-group-title">Arbejdsflow</div>
+          <button class="app-onboarding-nav-item" data-guide-panel="upload" type="button">
+            <span class="app-onboarding-nav-label">Filer og mapper</span>
+            <span class="app-onboarding-nav-meta">Upload og organisering</span>
+          </button>
+          <button class="app-onboarding-nav-item" data-guide-panel="file-info" type="button">
+            <span class="app-onboarding-nav-label">Filinformation</span>
+            <span class="app-onboarding-nav-meta">Tilfoj antal, noter og billeder</span>
+          </button>
+          <button class="app-onboarding-nav-item" data-guide-panel="print-ready" type="button">
+            <span class="app-onboarding-nav-label">Send til print</span>
+            <span class="app-onboarding-nav-meta">Marker filer og afsend projekt</span>
+          </button>
+          <button class="app-onboarding-nav-item" data-guide-panel="tracking" type="button">
+            <span class="app-onboarding-nav-label">Tracking</span>
+            <span class="app-onboarding-nav-meta">Pakkeopfolgning efter produktion</span>
+          </button>
+        </div>
       </nav>
       <div class="app-onboarding-content">
         <section class="app-onboarding-panel" data-guide-panel="navigation">
@@ -1200,6 +1225,23 @@
               <li>I Mapper-visningen er hovedområdet din aktive mappe, hvor du kan uploade filer og mapper.</li>
               <li>Øverst til højre finder du hurtige handlinger som søgning og mapper-menu.</li>
               <li>Nederst i venstre side finder du Profil og Log ud.</li>
+            </ul>
+          </div>
+        </section>
+        <section class="app-onboarding-panel hidden" data-guide-panel="navigation-profile">
+          <div class="app-onboarding-guide-head">Profil</div>
+          <img
+            class="app-onboarding-guide-gif"
+            src="{{ url_for('static', filename='guide-gifs/profile.gif', v=app_build) }}"
+            alt="Viser profilmenu og guideindstillinger i Fjord3D"
+            data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
+          >
+          <div class="app-onboarding-guide-text">
+            <p>Denne video viser hvordan du bruger Profil-menuen i Fjord3D:</p>
+            <ul>
+              <li>Åbn Profil nederst i venstre side for at se dine personlige indstillinger.</li>
+              <li>Her kan du sla automatisk guide til eller fra ved login.</li>
+              <li>Du kan altid starte guiden igen via knappen Vis guide.</li>
             </ul>
           </div>
         </section>
