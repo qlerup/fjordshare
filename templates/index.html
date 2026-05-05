@@ -1302,6 +1302,12 @@
         </section>
         <section class="app-onboarding-panel hidden" data-guide-panel="print-ready">
           <div class="app-onboarding-guide-head">Klar til print</div>
+          <img
+            class="app-onboarding-guide-gif"
+            src="{{ url_for('static', filename='guide-gifs/send-projekt.gif', v=app_build) }}"
+            alt="Viser hvordan man sender et projekt til print i Fjord3D"
+            data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
+          >
           <div class="app-onboarding-guide-text">
             <p>Marker de relevante filer til projektet og send dem til produktion via Klar til print flowet.</p>
             <ul>
