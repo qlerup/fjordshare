@@ -9232,7 +9232,7 @@ def ensure_user_storage_ready(user: User) -> str:
 
 
 def _today_folder_segment() -> str:
-    return now_local().strftime("%Y-%m-%d")
+    return now_local().strftime("%d-%m-%Y")
 
 
 def _is_direct_child_folder(parent: str, child: str) -> bool:
