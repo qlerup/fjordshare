@@ -30,6 +30,7 @@
     threeModules: null,
     three: null,
     thumbPollTimer: null,
+    currentTab: "files",
     currentSettingsTab: "shares",
     currentInfoFileId: 0,
     currentFileAttachments: [],
@@ -114,6 +115,8 @@
     statShares: document.getElementById("statShares"),
     sidebarNav: document.getElementById("sidebarNav"),
     profileFooterBtn: document.getElementById("profileFooterBtn"),
+    mobileBottomNav: document.getElementById("mobileBottomNav"),
+    mobileSidebarBackdrop: document.getElementById("mobileSidebarBackdrop"),
     tabFiles: document.getElementById("tab-files"),
     tabPrintReady: document.getElementById("tab-print-ready"),
     tabSettings: document.getElementById("tab-settings"),
@@ -764,6 +767,7 @@
     setProfileGuideFormState({ busy: false });
     showStatus(els.profileGuideStatus, "");
     els.profileModal.classList.remove("hidden");
+    setMobileNavActive("profile");
     loadAppOnboardingPreference().catch(() => {
       // Keep profile usable even if onboarding preference cannot be loaded.
     });
@@ -778,6 +782,9 @@
     if (els.profileFooterBtn) els.profileFooterBtn.classList.remove("active");
     resetProfilePasswordForm(true);
     showStatus(els.profileGuideStatus, "");
+    if (!document.body.classList.contains("mobile-drawer-open")) {
+      setMobileNavActive(mobileActionForTab(state.currentTab));
+    }
   }
 
   async function maybeShowAppOnboarding() {
@@ -1696,8 +1703,46 @@
     return parts.join(" ");
   }
 
+  function mobileActionForTab(tab) {
+    const key = String(tab || "").toLowerCase();
+    if (key === "files") return "files";
+    if (key === "settings" && state.role === "admin") return "settings";
+    return "";
+  }
+
+  function setMobileNavActive(action = "") {
+    if (!els.mobileBottomNav) return;
+    const active = String(action || "").trim().toLowerCase();
+    const buttons = Array.from(els.mobileBottomNav.querySelectorAll(".mobile-nav-item"));
+    buttons.forEach((btn) => {
+      const btnAction = String(btn.dataset.mobileAction || "").trim().toLowerCase();
+      btn.classList.toggle("active", !!active && btnAction === active);
+    });
+  }
+
+  function openMobileDrawer() {
+    document.body.classList.add("mobile-drawer-open");
+    if (els.mobileSidebarBackdrop) {
+      els.mobileSidebarBackdrop.classList.remove("hidden");
+    }
+    setMobileNavActive("navigate");
+  }
+
+  function closeMobileDrawer() {
+    document.body.classList.remove("mobile-drawer-open");
+    if (els.mobileSidebarBackdrop) {
+      els.mobileSidebarBackdrop.classList.add("hidden");
+    }
+    if (els.profileModal && !els.profileModal.classList.contains("hidden")) {
+      setMobileNavActive("profile");
+      return;
+    }
+    setMobileNavActive(mobileActionForTab(state.currentTab));
+  }
+
   function setTab(tab) {
     const target = String(tab || "files");
+    state.currentTab = target;
     const map = {
       files: els.tabFiles,
       "print-ready": els.tabPrintReady,
@@ -1730,6 +1775,10 @@
     if (els.thumbTopStatus) {
       if (target !== "files") setThumbTopStatusVisible(false, false);
       else updateThumbTopStatus();
+    }
+    if (!document.body.classList.contains("mobile-drawer-open")
+      && !(els.profileModal && !els.profileModal.classList.contains("hidden"))) {
+      setMobileNavActive(mobileActionForTab(target));
     }
   }
 
@@ -12020,6 +12069,9 @@
     if (els.profileFooterBtn) {
       els.profileFooterBtn.addEventListener("click", () => {
         openProfileModal();
+        if (window.innerWidth <= 1000) {
+          closeMobileDrawer();
+        }
       });
     }
 
@@ -12027,9 +12079,7 @@
     if (els.sidebarNav) {
       els.sidebarNav.addEventListener("click", () => {
         if (window.innerWidth <= 1000) {
-          document.body.classList.remove("mobile-drawer-open");
-          const backdrop = document.getElementById("mobileSidebarBackdrop");
-          if (backdrop) backdrop.classList.add("hidden");
+          closeMobileDrawer();
         }
       });
     }
@@ -13670,8 +13720,8 @@
   }
 
   function bindMobileNav() {
-    const bottom = document.getElementById("mobileBottomNav");
-    const backdrop = document.getElementById("mobileSidebarBackdrop");
+    const bottom = els.mobileBottomNav;
+    const backdrop = els.mobileSidebarBackdrop;
     if (!bottom) return;
 
     bottom.addEventListener("click", async (event) => {
@@ -13679,8 +13729,11 @@
       if (!btn) return;
       const action = String(btn.dataset.mobileAction || "");
       if (action === "navigate") {
-        document.body.classList.toggle("mobile-drawer-open");
-        if (backdrop) backdrop.classList.toggle("hidden", !document.body.classList.contains("mobile-drawer-open"));
+        if (document.body.classList.contains("mobile-drawer-open")) {
+          closeMobileDrawer();
+        } else {
+          openMobileDrawer();
+        }
         return;
       }
       if (action === "files") {
@@ -13700,16 +13753,15 @@
         }
       }
       // Close drawer when a non-navigate action is taken
-      document.body.classList.remove("mobile-drawer-open");
-      if (backdrop) backdrop.classList.add("hidden");
+      closeMobileDrawer();
     });
 
     if (backdrop) {
-      backdrop.addEventListener("click", () => {
-        document.body.classList.remove("mobile-drawer-open");
-        backdrop.classList.add("hidden");
-      });
+      backdrop.addEventListener("click", closeMobileDrawer);
     }
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeMobileDrawer();
+    });
   }
 
   async function init() {

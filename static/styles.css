@@ -406,6 +406,11 @@ input[type="checkbox"] {
   padding: 6px;
   cursor: pointer;
   flex: 1 1 0;
+  transition: background .12s ease, border-color .12s ease;
+}
+.mobile-nav-item.active {
+  border-color: rgba(91, 140, 255, 0.45);
+  background: rgba(91, 140, 255, 0.12);
 }
 .mobile-nav-icon { font-size: 1rem; line-height: 1; }
 .mobile-nav-label { font-size: 0.7rem; line-height: 1; }
@@ -3391,34 +3396,38 @@ input[type="checkbox"] {
   }
 
   .sidebar {
-    position: static;
-    height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 82vw;
+    max-width: 300px;
+    height: 100dvh;
+    z-index: 10000;
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    background: var(--panel);
+    overflow-y: auto;
+    transform: translateX(-102%);
+    transition: transform .2s ease, box-shadow .2s ease;
+  }
+  body.mobile-drawer-open .sidebar {
+    transform: translateX(0);
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.45);
   }
 
   .main {
     padding-bottom: 80px;
   }
 
-  /* Hide inline user/footer strip; exposed via bottom nav -> Profil */
-  .sidebar-footer { display: none; }
-
-  /* Convert sidebar to drawer: hidden by default, shown when body has mobile-drawer-open */
-  .sidebar { display: none; }
-  body.mobile-drawer-open .sidebar {
-    display: block;
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    width: min(84vw, 340px);
-    max-width: 95vw;
-    z-index: 9998;
-    background: var(--panel);
-    border-right: 1px solid var(--border);
-    overflow: auto;
+  .sidebar-footer {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
   }
+  .sidebar-user { display: none; }
+
   #mobileSidebarBackdrop { display: none; }
   body.mobile-drawer-open #mobileSidebarBackdrop { display: block; }
 
