@@ -1264,6 +1264,12 @@
         </section>
         <section class="app-onboarding-panel hidden" data-guide-panel="upload">
           <div class="app-onboarding-guide-head">Upload filer</div>
+          <img
+            class="app-onboarding-guide-gif"
+            src="{{ url_for('static', filename='guide-gifs/opret-mappe.gif', v=app_build) }}"
+            alt="Viser upload af filer i Fjord3D"
+            data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
+          >
           <div class="app-onboarding-guide-text">
             <p>Gå til Mapper og upload dine .step, .3mf eller .stl filer i den mappe du arbejder i.</p>
             <ul>
