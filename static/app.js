@@ -945,7 +945,8 @@
 
   function canUploadFromCurrentView() {
     const filesVisible = !!(els.tabFiles && !els.tabFiles.classList.contains("hidden"));
-    return filesVisible && !state.selectMode;
+    const folder = currentFolder() || state.homeFolder || "";
+    return filesVisible && !state.selectMode && folderAllowsUserWrites(folder);
   }
 
   function showGlobalDropOverlay() {
@@ -953,16 +954,18 @@
     if (!els.uploadOverlay) return;
     const canUploadHere = canUploadFromCurrentView();
     const targetFolder = String(currentFolder() || state.homeFolder || "").trim();
+    const filesVisible = !!(els.tabFiles && !els.tabFiles.classList.contains("hidden"));
+    const writeAllowed = folderAllowsUserWrites(targetFolder);
     const titleEl = els.uploadOverlay.querySelector(".upload-title");
     if (titleEl) {
       titleEl.textContent = canUploadHere
         ? "Slip filer eller mapper for at uploade"
-        : "Upload er ikke aktiv her";
+        : (filesVisible && !writeAllowed ? "Åbn en datomappe for at uploade" : "Upload er ikke aktiv her");
     }
     if (els.uploadProgressText) {
       els.uploadProgressText.textContent = canUploadHere
         ? `Upload destination: ${targetFolder || "(ingen mappe valgt)"}`
-        : "Gå til Mapper for at uploade";
+        : (filesVisible && !writeAllowed ? "Upload er kun aktiv inde i datomapper." : "Gå til Mapper for at uploade");
     }
     if (els.uploadProgressBar) {
       els.uploadProgressBar.style.width = canUploadHere ? "100%" : "0%";
@@ -1675,10 +1678,41 @@
     return String((els.folderSelect && els.folderSelect.value) || state.currentFolder || "");
   }
 
+  function normalizeFolderPath(value) {
+    return String(value || "")
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean)
+      .join("/");
+  }
+
   function pathMatchesPrefix(path, prefix) {
     const value = String(path || "").trim();
     const base = String(prefix || "").trim();
     return !!base && (value === base || value.startsWith(`${base}/`));
+  }
+
+  function isDateFolderSegment(value) {
+    const segment = String(value || "").trim();
+    return /^\d{2}-\d{2}-\d{4}$/.test(segment) || /^\d{4}-\d{2}-\d{2}$/.test(segment);
+  }
+
+  function folderAllowsUserWrites(folderPath) {
+    if (state.role === "admin") return true;
+    const home = normalizeFolderPath(state.homeFolder);
+    const folder = normalizeFolderPath(folderPath);
+    if (!home || !folder || folder === home || !folder.startsWith(`${home}/`)) return false;
+    const relative = folder.slice(home.length + 1);
+    const daySegment = relative.split("/").filter(Boolean)[0] || "";
+    if (!isDateFolderSegment(daySegment)) return false;
+    const dayPath = `${home}/${daySegment}`;
+    const bootDaily = normalizeFolderPath(state.dailyFolder);
+    if (bootDaily && dayPath === bootDaily) return true;
+    return state.folders.some((item) => normalizeFolderPath(item && item.path) === dayPath);
+  }
+
+  function currentFolderAllowsUserWrites() {
+    return folderAllowsUserWrites(currentFolder() || state.homeFolder || "");
   }
 
   function isPrintReadySelectMode() {
@@ -2148,6 +2182,8 @@
   function updateSelectModeUi() {
     const on = !!state.selectMode;
     const printReadyMode = isPrintReadySelectMode();
+    const writeAllowed = currentFolderAllowsUserWrites();
+    const writeDisabled = on || !writeAllowed;
     if (els.mapperShell) els.mapperShell.classList.toggle("select-mode", on);
     if (els.mapperShell) els.mapperShell.classList.toggle("print-ready-select-mode", printReadyMode);
 
@@ -2195,10 +2231,10 @@
       els.mapperMenuSelect.textContent = on ? "Afslut vælg mode" : "Vælg mode";
     }
     if (els.mapperMenuUpload) {
-      els.mapperMenuUpload.disabled = on;
+      els.mapperMenuUpload.disabled = writeDisabled;
     }
     if (els.mapperMenuCreateFolder) {
-      els.mapperMenuCreateFolder.disabled = on;
+      els.mapperMenuCreateFolder.disabled = writeDisabled;
     }
     if (els.mapperMenuShare) {
       const hasShareSelection = selectedShareFoldersFromSelection().length > 0;
@@ -2216,7 +2252,19 @@
       els.folderUpBtn.classList.toggle("disabled", false);
     }
     if (els.mapperDropZone) {
-      els.mapperDropZone.classList.toggle("disabled", on);
+      els.mapperDropZone.classList.toggle("disabled", writeDisabled);
+    }
+    if (els.uploadBtn) {
+      els.uploadBtn.disabled = writeDisabled;
+    }
+    if (els.createFolderBtn) {
+      els.createFolderBtn.disabled = writeDisabled;
+    }
+    if (els.newFolderInput) {
+      els.newFolderInput.disabled = writeDisabled;
+    }
+    if (els.fileInput) {
+      els.fileInput.disabled = writeDisabled;
     }
   }
 
@@ -2253,14 +2301,18 @@
     const folder = currentFolder() || state.homeFolder || "";
     const isRoot = !!folder && !!state.homeFolder && folder === state.homeFolder;
     const folderLabel = isRoot ? `${folder} (rodmappe)` : (folder || "-");
+    const writeAllowed = currentFolderAllowsUserWrites();
     if (els.mapperDropZone) {
-      els.mapperDropZone.textContent = `Slip filer eller mapper her for at uploade til: ${folderLabel}`;
+      els.mapperDropZone.textContent = writeAllowed
+        ? `Slip filer eller mapper her for at uploade til: ${folderLabel}`
+        : "Åbn en datomappe for at uploade eller oprette mapper.";
     }
     if (els.folderUpBtn) {
       const parent = parentFolder(folder);
       const canGoUp = !!parent && state.folders.some((f) => String(f.path || "") === parent);
       els.folderUpBtn.disabled = !canGoUp;
     }
+    updateSelectModeUi();
   }
 
   function renderFolderBrowser() {
@@ -7875,6 +7927,10 @@
       showStatus(els.uploadStatus, "Vælg en mappe før upload.", "error");
       return;
     }
+    if (!folderAllowsUserWrites(base)) {
+      showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
+      return;
+    }
 
     const droppedItems = await collectDroppedFilesWithPaths(dataTransfer);
     if (!droppedItems.length) return;
@@ -7900,6 +7956,10 @@
     const fallbackFolder = String(currentFolder() || state.homeFolder || "").trim();
     if (!fallbackFolder) {
       showStatus(els.uploadStatus, "Vælg en mappe før upload.", "error");
+      return;
+    }
+    if (!folderAllowsUserWrites(fallbackFolder)) {
+      showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
       return;
     }
 
@@ -7935,6 +7995,10 @@
       .filter(Boolean);
 
     if (!list.length) return;
+    if (list.some((item) => !folderAllowsUserWrites(item.folder))) {
+      showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
+      return;
+    }
     const unsupported = list.filter((item) => !isSupportedPrimaryUpload(item.file));
     if (unsupported.length) {
       const message = unsupportedPrimaryUploadMessage(unsupported.map((item) => item.file));
@@ -8059,6 +8123,10 @@
       return;
     }
     const parent = currentFolder();
+    if (!folderAllowsUserWrites(parent)) {
+      showStatus(els.uploadStatus, "Mapper kan kun oprettes inde i en datomappe.", "error");
+      return;
+    }
     await api("/api/folders", {
       method: "POST",
       body: { parent, name },
@@ -11671,12 +11739,20 @@
 
     if (cmd === "upload") {
       if (state.selectMode) return;
+      if (!currentFolderAllowsUserWrites()) {
+        showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
+        return;
+      }
       if (els.fileInput) els.fileInput.click();
       return;
     }
 
     if (cmd === "create-folder") {
       if (state.selectMode) return;
+      if (!currentFolderAllowsUserWrites()) {
+        showStatus(els.uploadStatus, "Mapper kan kun oprettes inde i en datomappe.", "error");
+        return;
+      }
       const name = window.prompt("Nyt mappenavn:");
       if (!name) return;
       await createFolder(name);
@@ -11986,7 +12062,13 @@
     }
 
     if (els.uploadBtn && els.fileInput) {
-      els.uploadBtn.addEventListener("click", () => els.fileInput.click());
+      els.uploadBtn.addEventListener("click", () => {
+        if (!currentFolderAllowsUserWrites()) {
+          showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
+          return;
+        }
+        els.fileInput.click();
+      });
       els.fileInput.addEventListener("change", async () => {
         const files = Array.from(els.fileInput.files || []);
         await startUpload(files);
@@ -11998,14 +12080,20 @@
       const dropZone = els.mapperDropZone;
       dropZone.addEventListener("click", () => {
         if (state.selectMode) return;
+        if (!currentFolderAllowsUserWrites()) {
+          showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
+          return;
+        }
         if (els.fileInput) els.fileInput.click();
       });
       dropZone.addEventListener("dragenter", (event) => {
         event.preventDefault();
+        if (!currentFolderAllowsUserWrites()) return;
         dropZone.classList.add("dragover");
       });
       dropZone.addEventListener("dragover", (event) => {
         event.preventDefault();
+        if (!currentFolderAllowsUserWrites()) return;
         dropZone.classList.add("dragover");
       });
       dropZone.addEventListener("dragleave", () => {
@@ -12021,6 +12109,10 @@
         globalDropDepth = 0;
         hideGlobalDropOverlay();
         dropZone.classList.remove("dragover");
+        if (!currentFolderAllowsUserWrites()) {
+          showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
+          return;
+        }
         uploadDroppedDataTransfer(event.dataTransfer, currentFolder() || state.homeFolder).catch((err) => {
           showStatus(els.uploadStatus, err.message || "Upload via dropzone fejlede", "error");
         });
@@ -12085,7 +12177,12 @@
       }
 
       if (!canUploadFromCurrentView()) {
-        showStatus(els.uploadStatus, "Gå til Mapper-fanen for at uploade via drag og drop.", "error");
+        const filesVisible = !!(els.tabFiles && !els.tabFiles.classList.contains("hidden"));
+        showStatus(
+          els.uploadStatus,
+          filesVisible ? "Upload kan kun ske inde i en datomappe." : "Gå til Mapper-fanen for at uploade via drag og drop.",
+          "error"
+        );
         hideGlobalDropOverlay();
         return;
       }

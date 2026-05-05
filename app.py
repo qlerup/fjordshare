@@ -115,7 +115,7 @@ RANK_PERMISSION = {v: k for (k, v) in PERMISSION_RANK.items()}
 FOLDER_KIND_USER = "user"
 FOLDER_KIND_APP_DAILY = "app_daily"
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Copenhagen").strip() or "Europe/Copenhagen"
-DATE_FOLDER_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+DATE_FOLDER_RE = re.compile(r"^(?:\d{2}-\d{2}-\d{4}|\d{4}-\d{2}-\d{2})$")
 DEFAULT_SMS_COUNTRY_CODE = str(os.getenv("DEFAULT_SMS_COUNTRY_CODE", "+45")).strip() or "+45"
 SMS_SETTING_ENABLED_KEY = "sms_gateway_enabled"
 SMS_SETTING_TOKEN_KEY = "sms_gateway_token"  # legacy plaintext key
@@ -9380,21 +9380,42 @@ def prepare_user_daily_folders(user: User) -> str:
     return ensure_user_daily_upload_folder(user)
 
 
+def user_daily_folder_allows_writes(user: User, folder_path: str) -> bool:
+    home_folder = ensure_user_storage_ready(user)
+    folder = normalize_folder_path(str(folder_path or ""))
+    if not home_folder or folder == home_folder:
+        return False
+    if not folder.startswith(home_folder + "/"):
+        return False
+
+    relative = folder[len(home_folder) + 1 :]
+    day_segment = relative.split("/", 1)[0] if relative else ""
+    if not DATE_FOLDER_RE.match(day_segment):
+        return False
+
+    day_folder = normalize_folder_path(f"{home_folder}/{day_segment}")
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM folders
+            WHERE folder_path=?
+              AND (owner_user_id=? OR owner_user_id IS NULL)
+            LIMIT 1
+            """,
+            (day_folder, int(user.id)),
+        ).fetchone()
+    return row is not None
+
+
 def resolve_user_upload_folder(user: User, requested_folder: str, base_folder: str = "") -> str:
+    _ = base_folder
     home_folder = ensure_user_storage_ready(user)
     requested = normalize_folder_path(str(requested_folder or ""))
-    base = normalize_folder_path(str(base_folder or ""))
-    if base == home_folder:
-        daily_folder = ensure_user_daily_upload_folder(user)
-        if not requested or requested == home_folder:
-            return daily_folder
-        if requested.startswith(home_folder + "/"):
-            suffix = requested[len(home_folder) + 1 :]
-            if suffix:
-                return normalize_folder_path(f"{daily_folder}/{suffix}")
-        return daily_folder
     if not requested or requested == home_folder:
-        return ensure_user_daily_upload_folder(user)
+        raise ValueError("Upload kan kun ske inde i en datomappe.")
+    if not user_daily_folder_allows_writes(user, requested):
+        raise ValueError("Upload kan kun ske inde i en datomappe.")
     return requested
 
 
@@ -11736,6 +11757,8 @@ def api_folders_create():
 
         if not permission_allows(permission_for_user_folder(current_user, parent_path), "manage"):
             return jsonify({"ok": False, "error": "Du har ikke rettighed til at oprette mappe her"}), 403
+        if not current_user.is_admin and not user_daily_folder_allows_writes(current_user, parent_path):
+            return jsonify({"ok": False, "error": "Mapper kan kun oprettes inde i en datomappe."}), 403
 
         _, abs_folder = folder_abs_path(folder_path)
         abs_folder.mkdir(parents=True, exist_ok=True)
@@ -15161,6 +15184,8 @@ def api_upload_tus_create():
                 str(meta.get("folder") or ""),
                 str(meta.get("baseFolder") or ""),
             )
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 403, tus_headers()
         except Exception as exc:
             return jsonify({"ok": False, "error": f"Kunne ikke klargøre dagsmappe: {exc}"}), 500, tus_headers()
 
