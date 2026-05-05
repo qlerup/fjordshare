@@ -133,10 +133,9 @@
     profileSmsStatus: document.getElementById("profileSmsStatus"),
     profileCurrentPwdInput: document.getElementById("profileCurrentPwdInput"),
     profileNewPwdInput: document.getElementById("profileNewPwdInput"),
-    profileChangePwdBtn: document.getElementById("profileChangePwdBtn"),
+    profileSaveBtn: document.getElementById("profileSaveBtn"),
     profilePwdStatus: document.getElementById("profilePwdStatus"),
     profileGuideEnabledChk: document.getElementById("profileGuideEnabledChk"),
-    profileGuideSaveBtn: document.getElementById("profileGuideSaveBtn"),
     profileShowGuideBtn: document.getElementById("profileShowGuideBtn"),
     profileGuideStatus: document.getElementById("profileGuideStatus"),
     settingsTabs: document.getElementById("settingsTabs"),
@@ -687,9 +686,9 @@
     if (els.profileGuideEnabledChk) {
       els.profileGuideEnabledChk.disabled = busy;
     }
-    if (els.profileGuideSaveBtn) {
-      els.profileGuideSaveBtn.disabled = busy;
-      els.profileGuideSaveBtn.textContent = busy ? "Gemmer..." : "Gem guidevalg";
+    if (els.profileSaveBtn) {
+      els.profileSaveBtn.disabled = busy;
+      els.profileSaveBtn.textContent = busy ? "Gemmer..." : "Gem";
     }
     if (els.profileShowGuideBtn) {
       els.profileShowGuideBtn.classList.toggle("hidden", !enabled);
@@ -710,7 +709,7 @@
   }
 
   async function loadAppOnboardingPreference() {
-    if (!els.profileGuideEnabledChk && !els.profileGuideSaveBtn && !els.profileShowGuideBtn) return;
+    if (!els.profileGuideEnabledChk && !els.profileShowGuideBtn) return;
     setProfileGuideFormState({ busy: true });
     try {
       const data = await api("/api/me");
@@ -741,6 +740,42 @@
     } catch (err) {
       setProfileGuideFormState({ busy: false });
       showStatus(els.profileGuideStatus, err.message || "Kunne ikke gemme guide-indstillinger", "error");
+    }
+  }
+
+  async function saveProfileChanges() {
+    const currentPwd = (els.profileCurrentPwdInput && els.profileCurrentPwdInput.value) || "";
+    const newPwd = (els.profileNewPwdInput && els.profileNewPwdInput.value) || "";
+    const hasPasswordInput = !!currentPwd || !!newPwd;
+    const passwordReady = !!currentPwd && !!newPwd;
+    const enabled = !!(els.profileGuideEnabledChk && els.profileGuideEnabledChk.checked);
+    const guideChanged = enabled !== !!state.appOnboardingEnabled;
+
+    showStatus(els.profilePwdStatus, "");
+    showStatus(els.profileGuideStatus, "");
+
+    if (hasPasswordInput && !passwordReady) {
+      showStatus(els.profilePwdStatus, "Udfyld nuværende og ny kode for at gemme adgangskode.", "error");
+      return;
+    }
+    if (!guideChanged && !hasPasswordInput) {
+      showStatus(els.profilePwdStatus, "Ingen ændringer at gemme.", "");
+      return;
+    }
+
+    setProfileGuideFormState({ busy: true });
+    try {
+      if (guideChanged) {
+        await saveProfileGuidePreference();
+      }
+      if (hasPasswordInput) {
+        await changeMyPassword();
+      }
+      if (guideChanged && !hasPasswordInput) {
+        showStatus(els.profilePwdStatus, "Guideindstillinger gemt.", "ok");
+      }
+    } finally {
+      setProfileGuideFormState({ busy: false });
     }
   }
 
@@ -12185,8 +12220,8 @@
     if (els.profilePasswordForm) {
       els.profilePasswordForm.addEventListener("submit", (event) => {
         event.preventDefault();
-        changeMyPassword().catch((err) => {
-          showStatus(els.profilePwdStatus, err.message || "Kunne ikke skifte adgangskode", "error");
+        saveProfileChanges().catch((err) => {
+          showStatus(els.profilePwdStatus, err.message || "Kunne ikke gemme profil", "error");
         });
       });
     }
@@ -12204,13 +12239,6 @@
       els.profileGuideEnabledChk.addEventListener("change", () => {
         setProfileGuideFormState({ busy: false });
         showStatus(els.profileGuideStatus, "");
-      });
-    }
-    if (els.profileGuideSaveBtn) {
-      els.profileGuideSaveBtn.addEventListener("click", () => {
-        saveProfileGuidePreference().catch((err) => {
-          showStatus(els.profileGuideStatus, err.message || "Kunne ikke gemme guide-indstillinger", "error");
-        });
       });
     }
     if (els.profileShowGuideBtn) {
