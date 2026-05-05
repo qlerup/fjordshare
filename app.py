@@ -7932,7 +7932,6 @@ def init_db() -> None:
                 link_id INTEGER NOT NULL UNIQUE,
                 username TEXT NOT NULL,
                 first_name TEXT NOT NULL,
-                last_name TEXT NOT NULL DEFAULT '',
                 last_initial TEXT NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
@@ -8221,6 +8220,13 @@ def init_db() -> None:
         if "app_onboarding_seen_v1" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0")
         conn.execute("UPDATE users SET app_onboarding_seen_v1=COALESCE(app_onboarding_seen_v1, 0)")
+
+        signup_request_cols = [r[1] for r in conn.execute("PRAGMA table_info(profile_signup_requests)").fetchall()]
+        if "last_initial" not in signup_request_cols:
+            conn.execute("ALTER TABLE profile_signup_requests ADD COLUMN last_initial TEXT NOT NULL DEFAULT ''")
+            signup_request_cols.append("last_initial")
+        if "last_name" in signup_request_cols:
+            conn.execute("UPDATE profile_signup_requests SET last_name='' WHERE last_name IS NOT NULL AND TRIM(last_name)<>''")
 
         project_cols = [r[1] for r in conn.execute("PRAGMA table_info(print_ready_projects)").fetchall()]
         if "owner_home_folder" not in project_cols:
@@ -10979,7 +10985,6 @@ def _profile_signup_request_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "link_id": int(row["link_id"] or 0),
         "username": str(row["username"] or ""),
         "first_name": str(row["first_name"] or ""),
-        "last_name": str(row["last_name"] or ""),
         "last_initial": str(row["last_initial"] or ""),
         "display_name": user_display_name(row["first_name"], row["last_initial"], row["username"]),
         "status": str(row["status"] or "pending"),
@@ -11242,8 +11247,7 @@ def profile_signup(token: str):
             try:
                 clean_username = normalize_username(username)
                 clean_first_name = normalize_person_name(first_name, "Navn", required=True)
-                clean_last_name = normalize_person_name(last_name, "Efternavn", required=True)
-                clean_last_initial = last_name_to_initial(clean_last_name, required=True)
+                clean_last_initial = last_name_to_initial(last_name, required=True)
                 if len(password) < 4:
                     raise ValueError("Password skal være mindst 4 tegn.")
                 pwd_hash = generate_password_hash(password)
@@ -11284,15 +11288,14 @@ def profile_signup(token: str):
                     cur = conn.execute(
                         """
                         INSERT INTO profile_signup_requests(
-                            link_id, username, first_name, last_name, last_initial,
+                            link_id, username, first_name, last_initial,
                             password_hash, status, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                        ) VALUES (?, ?, ?, ?, ?, 'pending', ?)
                         """,
                         (
                             int(link_row["id"]),
                             clean_username,
                             clean_first_name,
-                            clean_last_name,
                             clean_last_initial,
                             pwd_hash,
                             now,

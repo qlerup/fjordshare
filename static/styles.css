@@ -95,6 +95,11 @@ a {
   gap: 10px;
 }
 
+.signup-login-link {
+  justify-self: start;
+  text-decoration: none;
+}
+
 label {
   font-size: 0.9rem;
   color: var(--muted);

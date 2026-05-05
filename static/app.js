@@ -8748,12 +8748,12 @@
       .map((item) => {
         const id = Number(item.id || 0);
         const firstName = String(item.first_name || "").trim() || "-";
-        const lastName = String(item.last_name || item.last_initial || "").trim() || "-";
+        const lastInitial = String(item.last_initial || "").trim() || "-";
         return `
           <tr>
             <td>${id}</td>
             <td>${esc(firstName)}</td>
-            <td>${esc(lastName)}</td>
+            <td>${esc(lastInitial)}</td>
             <td>${esc(item.username || "")}</td>
             <td>${esc(formatDate(item.created_at))}</td>
             <td>

@@ -8,6 +8,7 @@
       <h1>Oprettelse sendt</h1>
       <div class="status ok">Din oprettelse afventer godkendelse.</div>
       <p class="hint">Du kan logge ind, når en administrator har godkendt profilen.</p>
+      <a class="btn primary signup-login-link" href="{{ url_for('login') }}">Gå til login</a>
     {% elif not valid %}
       <h1>Linket kan ikke bruges</h1>
       <div class="status error">{{ error }}</div>
