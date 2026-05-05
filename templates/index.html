@@ -545,6 +545,19 @@
           </div>
         </div>
       </div>
+      <div class="profile-guide-section">
+        <h4>Guide</h4>
+        <label class="profile-guide-toggle" for="profileGuideEnabledChk">
+          <input id="profileGuideEnabledChk" type="checkbox">
+          <span>Vis guide automatisk ved login</span>
+        </label>
+        <p class="hint">Slå fra hvis du ikke ønsker, at guiden vises automatisk.</p>
+        <div class="toolbar">
+          <button id="profileGuideSaveBtn" class="btn" type="button">Gem guidevalg</button>
+          <button id="profileShowGuideBtn" class="btn primary hidden" type="button">Vis guide</button>
+        </div>
+        <div id="profileGuideStatus" class="status hidden"></div>
+      </div>
       <div id="profilePwdStatus" class="status hidden"></div>
       <div class="toolbar end">
         <button id="profileModalCancelBtn" class="btn" type="button">Annuller</button>
@@ -1172,8 +1185,9 @@
       <div><strong>3. Klar til print:</strong> Marker filer til projektet og send dem til produktion.</div>
       <div><strong>4. Tracking:</strong> Admin kan tilføje pakkenummer når projektet er færdigt.</div>
     </div>
+    <div id="appOnboardingStatus" class="status hidden"></div>
     <div class="toolbar end">
-      <button id="appOnboardingDontShowBtn" class="btn primary" type="button">Forstået</button>
+      <button id="appOnboardingDontShowBtn" class="btn" type="button">Slå guide fra</button>
     </div>
   </div>
 </div>

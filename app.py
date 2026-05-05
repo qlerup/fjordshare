@@ -7933,6 +7933,8 @@ def init_db() -> None:
                 sms_verification_expires_at TEXT,
                 sms_verification_country_code TEXT,
                 sms_verification_phone_number TEXT,
+                app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0,
+                app_onboarding_enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             );
 
@@ -8251,7 +8253,18 @@ def init_db() -> None:
         # Generic app onboarding flag (first-login guide)
         if "app_onboarding_seen_v1" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0")
+        if "app_onboarding_enabled" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN app_onboarding_enabled INTEGER NOT NULL DEFAULT 1")
+            # Preserve current behavior for existing users: if the old one-time guide
+            # was already seen, keep auto-show disabled until user opts in.
+            conn.execute(
+                """
+                UPDATE users
+                SET app_onboarding_enabled=CASE WHEN COALESCE(app_onboarding_seen_v1,0)=1 THEN 0 ELSE 1 END
+                """
+            )
         conn.execute("UPDATE users SET app_onboarding_seen_v1=COALESCE(app_onboarding_seen_v1, 0)")
+        conn.execute("UPDATE users SET app_onboarding_enabled=COALESCE(app_onboarding_enabled, 1)")
 
         signup_request_cols = [r[1] for r in conn.execute("PRAGMA table_info(profile_signup_requests)").fetchall()]
         if "last_initial" not in signup_request_cols:
@@ -8751,6 +8764,25 @@ def _load_user_sms_profile(user_id: int) -> dict[str, Any]:
         "sms_phone_e164": _sms_e164(country_code, phone_number),
         "sms_setup_prompted": bool(int(row["sms_setup_prompted"] or 0)) if row else False,
         "sms_phone_verified": bool(int(row["sms_phone_verified"] or 0)) if row else False,
+    }
+
+
+def _load_user_onboarding_profile(user_id: int) -> dict[str, bool]:
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                COALESCE(app_onboarding_seen_v1,0) AS seen,
+                COALESCE(app_onboarding_enabled,1) AS enabled
+            FROM users
+            WHERE id=?
+            """,
+            (int(user_id),),
+        ).fetchone()
+
+    return {
+        "app_onboarding_seen_v1": bool(int(row["seen"] or 0)) if row else False,
+        "app_onboarding_enabled": bool(int(row["enabled"] or 1)) if row else True,
     }
 
 
@@ -11458,6 +11490,27 @@ def api_me_onboarding_seen():
     return jsonify({"ok": True})
 
 
+@app.post("/api/me/onboarding/preferences")
+@login_required
+def api_me_onboarding_preferences():
+    body = request.get_json(silent=True) or {}
+    enabled = bool(parse_bool(body.get("enabled")))
+
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE users
+            SET app_onboarding_enabled=?,
+                app_onboarding_seen_v1=CASE WHEN ?=1 THEN 0 ELSE app_onboarding_seen_v1 END
+            WHERE id=?
+            """,
+            (1 if enabled else 0, 1 if enabled else 0, int(current_user.id)),
+        )
+        conn.commit()
+
+    return jsonify({"ok": True, "onboarding": _load_user_onboarding_profile(int(current_user.id))})
+
+
 @app.route("/api/me")
 @login_required
 def api_me():
@@ -11468,12 +11521,7 @@ def api_me():
         except Exception:
             daily_folder = ""
     sms_profile = _load_user_sms_profile(int(current_user.id))
-    with closing(get_conn()) as conn:
-        r = conn.execute(
-            "SELECT COALESCE(app_onboarding_seen_v1,0) AS seen FROM users WHERE id=?",
-            (int(current_user.id),),
-        ).fetchone()
-    app_onboarding_seen = bool(int(r["seen"]) if r else 0)
+    onboarding_profile = _load_user_onboarding_profile(int(current_user.id))
     return jsonify(
         {
             "ok": True,
@@ -11486,7 +11534,8 @@ def api_me():
                 "role": str(current_user.role),
                 "home_folder": normalize_folder_path(str(current_user.home_folder or "")),
                 "daily_folder": daily_folder,
-                "app_onboarding_seen_v1": app_onboarding_seen,
+                "app_onboarding_seen_v1": bool(onboarding_profile.get("app_onboarding_seen_v1")),
+                "app_onboarding_enabled": bool(onboarding_profile.get("app_onboarding_enabled")),
                 "sms_enabled": bool(sms_profile.get("sms_enabled")),
                 "sms_phone_country_code": str(sms_profile.get("sms_phone_country_code") or ""),
                 "sms_phone_number": str(sms_profile.get("sms_phone_number") or ""),
@@ -11503,6 +11552,7 @@ def api_me():
 def api_me_profile():
     if request.method == "GET":
         profile = _load_user_sms_profile(int(current_user.id))
+        profile.update(_load_user_onboarding_profile(int(current_user.id)))
         profile["sms_onboarding_required"] = (
             SMS_ONBOARDING_ENABLED
             and str(current_user.role or "").lower() != "admin"

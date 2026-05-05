@@ -100,6 +100,7 @@
     smsGatewayTokenPreview: "",
     smsGatewayTokenPreviewActive: false,
     appOnboardingSeenPersisted: false,
+    appOnboardingEnabled: true,
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
   };
@@ -130,6 +131,10 @@
     profileNewPwdInput: document.getElementById("profileNewPwdInput"),
     profileChangePwdBtn: document.getElementById("profileChangePwdBtn"),
     profilePwdStatus: document.getElementById("profilePwdStatus"),
+    profileGuideEnabledChk: document.getElementById("profileGuideEnabledChk"),
+    profileGuideSaveBtn: document.getElementById("profileGuideSaveBtn"),
+    profileShowGuideBtn: document.getElementById("profileShowGuideBtn"),
+    profileGuideStatus: document.getElementById("profileGuideStatus"),
     settingsTabs: document.getElementById("settingsTabs"),
     settingsTabSelect: document.getElementById("settingsTabSelect"),
     settingsPanelShares: document.getElementById("settings-panel-shares"),
@@ -343,6 +348,7 @@
     appOnboardingModal: document.getElementById("appOnboardingModal"),
     appOnboardingCloseBtn: document.getElementById("appOnboardingCloseBtn"),
     appOnboardingDontShowBtn: document.getElementById("appOnboardingDontShowBtn"),
+    appOnboardingStatus: document.getElementById("appOnboardingStatus"),
     printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
     printReadyStatus: document.getElementById("printReadyStatus"),
     printReadyAdminList: document.getElementById("printReadyAdminList"),
@@ -668,10 +674,99 @@
     showStatus(els.profilePwdStatus, "");
   }
 
+  function setProfileGuideFormState(options = {}) {
+    const busy = !!(options && options.busy);
+    const enabled = !!(els.profileGuideEnabledChk && els.profileGuideEnabledChk.checked);
+    if (els.profileGuideEnabledChk) {
+      els.profileGuideEnabledChk.disabled = busy;
+    }
+    if (els.profileGuideSaveBtn) {
+      els.profileGuideSaveBtn.disabled = busy;
+      els.profileGuideSaveBtn.textContent = busy ? "Gemmer..." : "Gem guidevalg";
+    }
+    if (els.profileShowGuideBtn) {
+      els.profileShowGuideBtn.classList.toggle("hidden", !enabled);
+      els.profileShowGuideBtn.disabled = busy || !enabled;
+    }
+  }
+
+  function applyAppOnboardingPreference(payload = {}) {
+    state.appOnboardingSeenPersisted = !!(payload && payload.app_onboarding_seen_v1);
+    state.appOnboardingEnabled = !(payload && payload.app_onboarding_enabled === false);
+    if (els.profileGuideEnabledChk) {
+      els.profileGuideEnabledChk.checked = !!state.appOnboardingEnabled;
+    }
+    setProfileGuideFormState({ busy: false });
+  }
+
+  async function loadAppOnboardingPreference() {
+    if (!els.profileGuideEnabledChk && !els.profileGuideSaveBtn && !els.profileShowGuideBtn) return;
+    setProfileGuideFormState({ busy: true });
+    try {
+      const data = await api("/api/me");
+      const user = (data && data.user) || {};
+      applyAppOnboardingPreference(user);
+      showStatus(els.profileGuideStatus, "");
+    } catch (err) {
+      setProfileGuideFormState({ busy: false });
+      showStatus(els.profileGuideStatus, err.message || "Kunne ikke hente guide-indstillinger", "error");
+    }
+  }
+
+  async function saveProfileGuidePreference() {
+    const enabled = !!(els.profileGuideEnabledChk && els.profileGuideEnabledChk.checked);
+    setProfileGuideFormState({ busy: true });
+    try {
+      const data = await api("/api/me/onboarding/preferences", {
+        method: "POST",
+        body: { enabled },
+      });
+      applyAppOnboardingPreference((data && data.onboarding) || { app_onboarding_enabled: enabled });
+      if (enabled) {
+        showStatus(els.profileGuideStatus, 'Guiden er slået til. Klik "Vis guide" for at starte den igen.', "ok");
+      } else {
+        dismissAppOnboarding();
+        showStatus(els.profileGuideStatus, "Guiden er slået fra. Den vises ikke automatisk ved login.", "ok");
+      }
+    } catch (err) {
+      setProfileGuideFormState({ busy: false });
+      showStatus(els.profileGuideStatus, err.message || "Kunne ikke gemme guide-indstillinger", "error");
+    }
+  }
+
+  function setAppOnboardingBusy(busy) {
+    const isBusy = !!busy;
+    if (els.appOnboardingCloseBtn) {
+      els.appOnboardingCloseBtn.disabled = isBusy;
+    }
+    if (els.appOnboardingDontShowBtn) {
+      els.appOnboardingDontShowBtn.disabled = isBusy;
+      els.appOnboardingDontShowBtn.textContent = isBusy ? "Gemmer..." : "Slå guide fra";
+    }
+  }
+
+  function openAppOnboarding(options = {}) {
+    if (!els.appOnboardingModal) return;
+    const force = !!(options && options.force);
+    const closeProfile = !!(options && options.closeProfile);
+    if (!force && !state.appOnboardingEnabled) return;
+    if (closeProfile) {
+      closeProfileModal();
+    }
+    showStatus(els.appOnboardingStatus, "");
+    setAppOnboardingBusy(false);
+    els.appOnboardingModal.classList.remove("hidden");
+  }
+
   function openProfileModal() {
     if (!els.profileModal) return;
     resetProfilePasswordForm(true);
+    setProfileGuideFormState({ busy: false });
+    showStatus(els.profileGuideStatus, "");
     els.profileModal.classList.remove("hidden");
+    loadAppOnboardingPreference().catch(() => {
+      // Keep profile usable even if onboarding preference cannot be loaded.
+    });
     if (els.profileFooterBtn) els.profileFooterBtn.classList.add("active");
     window.setTimeout(() => {
       if (els.profileCurrentPwdInput) els.profileCurrentPwdInput.focus();
@@ -682,37 +777,47 @@
     if (els.profileModal) els.profileModal.classList.add("hidden");
     if (els.profileFooterBtn) els.profileFooterBtn.classList.remove("active");
     resetProfilePasswordForm(true);
+    showStatus(els.profileGuideStatus, "");
   }
 
   async function maybeShowAppOnboarding() {
     try {
       const data = await api("/api/me");
       const user = (data && data.user) || {};
-      state.appOnboardingSeenPersisted = !!user.app_onboarding_seen_v1;
-      if (!state.appOnboardingSeenPersisted && els.appOnboardingModal) {
-        els.appOnboardingModal.classList.remove("hidden");
+      applyAppOnboardingPreference(user);
+      if (state.appOnboardingEnabled) {
+        openAppOnboarding({ force: true });
       }
     } catch (err) {
       // Ignore onboarding on error to not block UI
     }
   }
 
-  async function markAppOnboardingSeen() {
-    if (state.appOnboardingSeenPersisted) return;
-    state.appOnboardingSeenPersisted = true;
-    try {
-      await api("/api/me/onboarding/seen", { method: "POST" });
-    } catch (err) {
-      state.appOnboardingSeenPersisted = false;
-      throw err;
-    }
-  }
-
   function dismissAppOnboarding() {
     if (els.appOnboardingModal) els.appOnboardingModal.classList.add("hidden");
-    markAppOnboardingSeen().catch(() => {
-      // Ignore save errors; onboarding can be shown again later if needed.
-    });
+    showStatus(els.appOnboardingStatus, "");
+    setAppOnboardingBusy(false);
+  }
+
+  async function disableAppOnboardingFromModal() {
+    if (!state.appOnboardingEnabled) {
+      dismissAppOnboarding();
+      return;
+    }
+    setAppOnboardingBusy(true);
+    showStatus(els.appOnboardingStatus, "");
+    try {
+      const data = await api("/api/me/onboarding/preferences", {
+        method: "POST",
+        body: { enabled: false },
+      });
+      applyAppOnboardingPreference((data && data.onboarding) || { app_onboarding_enabled: false });
+      dismissAppOnboarding();
+      showStatus(els.profileGuideStatus, "Guiden er slået fra. Den vises ikke automatisk ved login.", "ok");
+    } catch (err) {
+      setAppOnboardingBusy(false);
+      showStatus(els.appOnboardingStatus, err.message || "Kunne ikke slå guiden fra", "error");
+    }
   }
 
   async function saveMyProfile() {
@@ -12002,6 +12107,33 @@
         }
       });
     }
+    if (els.profileGuideEnabledChk) {
+      els.profileGuideEnabledChk.addEventListener("change", () => {
+        setProfileGuideFormState({ busy: false });
+        showStatus(els.profileGuideStatus, "");
+      });
+    }
+    if (els.profileGuideSaveBtn) {
+      els.profileGuideSaveBtn.addEventListener("click", () => {
+        saveProfileGuidePreference().catch((err) => {
+          showStatus(els.profileGuideStatus, err.message || "Kunne ikke gemme guide-indstillinger", "error");
+        });
+      });
+    }
+    if (els.profileShowGuideBtn) {
+      els.profileShowGuideBtn.addEventListener("click", () => {
+        const enabledChecked = !!(els.profileGuideEnabledChk && els.profileGuideEnabledChk.checked);
+        if (!enabledChecked) return;
+        (async () => {
+          if (enabledChecked !== !!state.appOnboardingEnabled) {
+            await saveProfileGuidePreference();
+          }
+          openAppOnboarding({ force: true, closeProfile: true });
+        })().catch((err) => {
+          showStatus(els.profileGuideStatus, err.message || "Kunne ikke åbne guiden", "error");
+        });
+      });
+    }
 
     if (els.folderList) {
       els.folderList.addEventListener("click", async (event) => {
@@ -13528,7 +13660,9 @@
     }
     if (els.appOnboardingDontShowBtn) {
       els.appOnboardingDontShowBtn.addEventListener("click", () => {
-        dismissAppOnboarding();
+        disableAppOnboardingFromModal().catch((err) => {
+          showStatus(els.appOnboardingStatus, err.message || "Kunne ikke slå guiden fra", "error");
+        });
       });
     }
     bindSlicerUploadModalDropZone();

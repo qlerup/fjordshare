@@ -2998,6 +2998,28 @@ input[type="checkbox"] {
   gap: 10px;
 }
 
+.profile-guide-section {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.profile-guide-section h4 {
+  margin: 0;
+}
+
+.profile-guide-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+.profile-guide-toggle input {
+  margin: 0;
+}
+
 .profile-password-grid {
   display: grid;
   gap: 10px;
