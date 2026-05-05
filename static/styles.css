@@ -1753,13 +1753,23 @@ input[type="checkbox"] {
   margin: 0;
 }
 
-.create-user-modal-card {
-  width: min(640px, calc(100vw - 24px));
+.modal-card.create-user-modal-card {
+  width: min(560px, calc(100vw - 24px));
 }
 
-.create-user-modal-card form {
+.modal-card.create-user-modal-card form {
   display: grid;
   gap: 10px;
+}
+
+.create-user-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.create-user-wide {
+  grid-column: 1 / -1;
 }
 
 .tracking-number-cell {
@@ -3410,6 +3420,10 @@ input[type="checkbox"] {
 
   #tab-tracking .form-grid,
   #settings-panel-users .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .create-user-grid {
     grid-template-columns: 1fr;
   }
 
