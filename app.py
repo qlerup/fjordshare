@@ -143,8 +143,9 @@ THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", "
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
 THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
 THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
-PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl"}
-PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl"
+PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl"}
+PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {*PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS, ".zip"}
+PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".step, .3mf, .stl og .zip"
 THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "320")) or "320")
 THUMB_FAST_SIZE_PX = int(str(os.getenv("THUMB_FAST_SIZE_PX", "220")) or "220")
@@ -878,6 +879,11 @@ def _is_allowed_primary_3d_upload(filename: str) -> bool:
     return ext in PRIMARY_3D_UPLOAD_ALLOWED_EXTS
 
 
+def _is_allowed_primary_3d_model_upload(filename: str) -> bool:
+    ext = str(Path(str(filename or "")).suffix or "").lower()
+    return ext in PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS
+
+
 def _unsupported_primary_3d_upload_error(filename: str) -> str:
     name = str(filename or "Filen").strip() or "Filen"
     return f"{name} understøttes ikke. Upload kun {PRIMARY_3D_UPLOAD_ALLOWED_LABEL} filer."
@@ -1256,6 +1262,8 @@ def _extract_zip_upload(
 
             file_name = sanitize_filename(parts[-1])
             if not file_name:
+                continue
+            if not _is_allowed_primary_3d_model_upload(file_name):
                 continue
 
             try:

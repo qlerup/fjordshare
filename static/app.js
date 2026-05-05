@@ -504,8 +504,8 @@
     el.textContent = message;
   }
 
-  const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".step", ".3mf", ".stl"]);
-  const PRIMARY_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl";
+  const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".step", ".3mf", ".stl", ".zip"]);
+  const PRIMARY_UPLOAD_ALLOWED_LABEL = ".step, .3mf, .stl og .zip";
 
   function fileExt(filename) {
     const name = String(filename || "").trim().toLowerCase();
