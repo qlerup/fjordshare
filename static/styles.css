@@ -1777,9 +1777,14 @@ input[type="checkbox"] {
   width: min(560px, calc(100vw - 24px));
 }
 
-.modal-card.create-user-modal-card form {
+.modal-card.create-user-modal-card form,
+.modal-card.non-user-folder-modal-card form {
   display: grid;
   gap: 10px;
+}
+
+.modal-card.non-user-folder-modal-card {
+  width: min(520px, calc(100vw - 24px));
 }
 
 .create-user-grid {
@@ -1790,6 +1795,16 @@ input[type="checkbox"] {
 
 .create-user-wide {
   grid-column: 1 / -1;
+}
+
+.non-user-folder-preview {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 10px 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .signup-links-table {

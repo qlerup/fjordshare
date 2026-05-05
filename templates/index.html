@@ -689,6 +689,33 @@
   </div>
 </div>
 
+<div id="nonUserFolderModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card non-user-folder-modal-card">
+    <form id="nonUserFolderForm">
+      <div class="toolbar">
+        <h3>Opret mappe</h3>
+      </div>
+      <div class="create-user-grid">
+        <div>
+          <label for="nonUserFolderFirstName">Fornavn</label>
+          <input id="nonUserFolderFirstName" class="input" type="text" autocomplete="given-name" required>
+        </div>
+        <div>
+          <label for="nonUserFolderLastName">Efternavn</label>
+          <input id="nonUserFolderLastName" class="input" type="text" autocomplete="family-name" required>
+        </div>
+      </div>
+      <div id="nonUserFolderPreview" class="non-user-folder-preview">Ikke bruger mappe</div>
+      <div id="nonUserFolderStatus" class="status hidden"></div>
+      <div class="toolbar end">
+        <button id="nonUserFolderCancelBtn" class="btn" type="button">Annuller</button>
+        <button id="nonUserFolderCreateBtn" class="btn primary" type="submit">Opret mappe</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="shareModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card share-modal-card">

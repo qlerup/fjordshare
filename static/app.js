@@ -372,6 +372,14 @@
     createUserRole: document.getElementById("createUserRole"),
     createUserBtn: document.getElementById("createUserBtn"),
     createUserModalStatus: document.getElementById("createUserModalStatus"),
+    nonUserFolderModal: document.getElementById("nonUserFolderModal"),
+    nonUserFolderForm: document.getElementById("nonUserFolderForm"),
+    nonUserFolderFirstName: document.getElementById("nonUserFolderFirstName"),
+    nonUserFolderLastName: document.getElementById("nonUserFolderLastName"),
+    nonUserFolderPreview: document.getElementById("nonUserFolderPreview"),
+    nonUserFolderStatus: document.getElementById("nonUserFolderStatus"),
+    nonUserFolderCancelBtn: document.getElementById("nonUserFolderCancelBtn"),
+    nonUserFolderCreateBtn: document.getElementById("nonUserFolderCreateBtn"),
     userStatus: document.getElementById("userStatus"),
     usersTableBody: document.getElementById("usersTableBody"),
     signupRequestsStatus: document.getElementById("signupRequestsStatus"),
@@ -1713,6 +1721,16 @@
 
   function currentFolderAllowsUserWrites() {
     return folderAllowsUserWrites(currentFolder() || state.homeFolder || "");
+  }
+
+  function adminUsersRootFolderPath() {
+    const home = normalizeFolderPath(state.homeFolder);
+    return normalizeFolderPath(parentFolder(home) || "users");
+  }
+
+  function isAdminUsersRootFolder() {
+    const folder = normalizeFolderPath(currentFolder() || state.homeFolder || "");
+    return state.role === "admin" && !!folder && folder === adminUsersRootFolderPath();
   }
 
   function isPrintReadySelectMode() {
@@ -8116,8 +8134,99 @@
     }
   }
 
+  function cleanFolderNamePart(value) {
+    return String(value || "")
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function lastNameInitial(value) {
+    const chars = Array.from(cleanFolderNamePart(value));
+    return chars.length ? chars[0].toLocaleUpperCase("da-DK") : "";
+  }
+
+  function nonUserFolderBaseName() {
+    const firstName = cleanFolderNamePart(els.nonUserFolderFirstName && els.nonUserFolderFirstName.value);
+    const initial = lastNameInitial(els.nonUserFolderLastName && els.nonUserFolderLastName.value);
+    if (!firstName || !initial) return "";
+    return `Ikke bruger mappe (${firstName} ${initial})`;
+  }
+
+  function uniqueChildFolderName(parent, baseName) {
+    const cleanParent = normalizeFolderPath(parent);
+    const existing = new Set(
+      state.folders
+        .map((item) => normalizeFolderPath(item && item.path))
+        .filter(Boolean)
+    );
+    let candidate = String(baseName || "").trim();
+    if (!candidate) return "";
+    let idx = 2;
+    while (existing.has(normalizeFolderPath(`${cleanParent}/${candidate}`))) {
+      candidate = `${baseName}-${idx}`;
+      idx += 1;
+    }
+    return candidate;
+  }
+
+  function updateNonUserFolderPreview() {
+    if (!els.nonUserFolderPreview) return;
+    const baseName = nonUserFolderBaseName();
+    const parent = currentFolder() || state.homeFolder || "";
+    const folderName = baseName ? uniqueChildFolderName(parent, baseName) : "Ikke bruger mappe";
+    els.nonUserFolderPreview.textContent = folderName;
+  }
+
+  function resetNonUserFolderModal() {
+    if (els.nonUserFolderFirstName) els.nonUserFolderFirstName.value = "";
+    if (els.nonUserFolderLastName) els.nonUserFolderLastName.value = "";
+    if (els.nonUserFolderCreateBtn) els.nonUserFolderCreateBtn.disabled = false;
+    showStatus(els.nonUserFolderStatus, "");
+    updateNonUserFolderPreview();
+  }
+
+  function openNonUserFolderModal() {
+    if (!els.nonUserFolderModal) return;
+    resetNonUserFolderModal();
+    els.nonUserFolderModal.classList.remove("hidden");
+    window.setTimeout(() => {
+      if (els.nonUserFolderFirstName) els.nonUserFolderFirstName.focus();
+    }, 0);
+  }
+
+  function closeNonUserFolderModal() {
+    if (els.nonUserFolderModal) els.nonUserFolderModal.classList.add("hidden");
+    resetNonUserFolderModal();
+  }
+
+  async function createNonUserFolder() {
+    if (!isAdminUsersRootFolder()) {
+      showStatus(els.nonUserFolderStatus, "Åbn brugernes rodmappe først.", "error");
+      return;
+    }
+    const baseName = nonUserFolderBaseName();
+    if (!baseName) {
+      showStatus(els.nonUserFolderStatus, "Udfyld fornavn og efternavn.", "error");
+      return;
+    }
+    const parent = currentFolder() || state.homeFolder || "";
+    const folderName = uniqueChildFolderName(parent, baseName);
+    if (els.nonUserFolderCreateBtn) els.nonUserFolderCreateBtn.disabled = true;
+    try {
+      await createFolder(folderName);
+      closeNonUserFolderModal();
+    } finally {
+      if (els.nonUserFolderCreateBtn) els.nonUserFolderCreateBtn.disabled = false;
+    }
+  }
+
   async function createFolder(nameOverride = "") {
     const name = String(nameOverride || (els.newFolderInput && els.newFolderInput.value) || "").trim();
+    if (!name && isAdminUsersRootFolder()) {
+      openNonUserFolderModal();
+      return;
+    }
     if (!name) {
       showStatus(els.uploadStatus, "Skriv et mappenavn først.", "error");
       return;
@@ -11753,6 +11862,10 @@
         showStatus(els.uploadStatus, "Mapper kan kun oprettes inde i en datomappe.", "error");
         return;
       }
+      if (isAdminUsersRootFolder()) {
+        openNonUserFolderModal();
+        return;
+      }
       const name = window.prompt("Nyt mappenavn:");
       if (!name) return;
       await createFolder(name);
@@ -12766,6 +12879,11 @@
         closeCreateUserModal();
         return;
       }
+      const nonUserFolderModalOpen = !!(els.nonUserFolderModal && !els.nonUserFolderModal.classList.contains("hidden"));
+      if (nonUserFolderModalOpen) {
+        closeNonUserFolderModal();
+        return;
+      }
       const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
       if (shareModalOpen) {
         closeShareModal();
@@ -13146,6 +13264,36 @@
       els.createUserModal.addEventListener("click", (event) => {
         if (event.target === els.createUserModal || event.target.classList.contains("modal-backdrop")) {
           closeCreateUserModal();
+        }
+      });
+    }
+    if (els.nonUserFolderCancelBtn) {
+      els.nonUserFolderCancelBtn.addEventListener("click", closeNonUserFolderModal);
+    }
+    if (els.nonUserFolderFirstName) {
+      els.nonUserFolderFirstName.addEventListener("input", () => {
+        showStatus(els.nonUserFolderStatus, "");
+        updateNonUserFolderPreview();
+      });
+    }
+    if (els.nonUserFolderLastName) {
+      els.nonUserFolderLastName.addEventListener("input", () => {
+        showStatus(els.nonUserFolderStatus, "");
+        updateNonUserFolderPreview();
+      });
+    }
+    if (els.nonUserFolderForm) {
+      els.nonUserFolderForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        createNonUserFolder().catch((err) => {
+          showStatus(els.nonUserFolderStatus, err.message || "Kunne ikke oprette mappe", "error");
+        });
+      });
+    }
+    if (els.nonUserFolderModal) {
+      els.nonUserFolderModal.addEventListener("click", (event) => {
+        if (event.target === els.nonUserFolderModal || event.target.classList.contains("modal-backdrop")) {
+          closeNonUserFolderModal();
         }
       });
     }
