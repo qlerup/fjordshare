@@ -102,6 +102,7 @@
     smsGatewayTokenPreviewActive: false,
     appOnboardingSeenPersisted: false,
     appOnboardingEnabled: true,
+    appOnboardingPanelKey: "navigation",
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
   };
@@ -349,6 +350,8 @@
     smsOnboardingSendCodeBtn: document.getElementById("smsOnboardingSendCodeBtn"),
     smsOnboardingVerifyBtn: document.getElementById("smsOnboardingVerifyBtn"),
     appOnboardingModal: document.getElementById("appOnboardingModal"),
+    appOnboardingNavItems: Array.from(document.querySelectorAll(".app-onboarding-nav-item[data-guide-panel]")),
+    appOnboardingPanels: Array.from(document.querySelectorAll(".app-onboarding-panel[data-guide-panel]")),
     appOnboardingEnabledChk: document.getElementById("appOnboardingEnabledChk"),
     appOnboardingDoneBtn: document.getElementById("appOnboardingDoneBtn"),
     appOnboardingStatus: document.getElementById("appOnboardingStatus"),
@@ -751,6 +754,33 @@
     }
   }
 
+  function setAppOnboardingPanel(panelKey = "") {
+    const panels = Array.isArray(els.appOnboardingPanels) ? els.appOnboardingPanels : [];
+    const navItems = Array.isArray(els.appOnboardingNavItems) ? els.appOnboardingNavItems : [];
+    if (!panels.length) return;
+
+    const requested = String(panelKey || state.appOnboardingPanelKey || "").trim().toLowerCase();
+    const firstKey = String((panels[0] && panels[0].dataset && panels[0].dataset.guidePanel) || "navigation").trim().toLowerCase();
+    const exists = (key) => panels.some(
+      (panel) => String((panel.dataset && panel.dataset.guidePanel) || "").trim().toLowerCase() === key,
+    );
+
+    const next = requested && exists(requested) ? requested : firstKey;
+    state.appOnboardingPanelKey = next;
+
+    panels.forEach((panel) => {
+      const key = String((panel.dataset && panel.dataset.guidePanel) || "").trim().toLowerCase();
+      panel.classList.toggle("hidden", key !== next);
+    });
+
+    navItems.forEach((item) => {
+      const key = String((item.dataset && item.dataset.guidePanel) || "").trim().toLowerCase();
+      const active = key === next;
+      item.classList.toggle("active", active);
+      item.setAttribute("aria-current", active ? "true" : "false");
+    });
+  }
+
   function openAppOnboarding(options = {}) {
     if (!els.appOnboardingModal) return;
     const force = !!(options && options.force);
@@ -762,6 +792,7 @@
     if (els.appOnboardingEnabledChk) {
       els.appOnboardingEnabledChk.checked = !!state.appOnboardingEnabled;
     }
+    setAppOnboardingPanel("navigation");
     showStatus(els.appOnboardingStatus, "");
     setAppOnboardingBusy(false);
     els.appOnboardingModal.classList.remove("hidden");
@@ -13707,6 +13738,13 @@
       });
     }
     // App onboarding modal elements/bindings
+    if (els.appOnboardingNavItems && els.appOnboardingNavItems.length) {
+      els.appOnboardingNavItems.forEach((item) => {
+        item.addEventListener("click", () => {
+          setAppOnboardingPanel(String(item.dataset.guidePanel || ""));
+        });
+      });
+    }
     if (els.appOnboardingDoneBtn) {
       els.appOnboardingDoneBtn.addEventListener("click", () => {
         completeAppOnboardingFromModal().catch((err) => {

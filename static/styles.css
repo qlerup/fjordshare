@@ -3071,20 +3071,45 @@ input[type="checkbox"] {
   padding: 18px;
 }
 
-.app-onboarding-steps {
+.app-onboarding-layout {
   display: grid;
-  gap: 10px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.app-onboarding-nav {
+  display: grid;
+  gap: 6px;
+}
+
+.app-onboarding-nav-item {
   border: 1px solid var(--border);
-  border-radius: 10px;
   background: var(--panel-2);
-  padding: 12px;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 10px;
+  text-align: left;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
 }
 
-.app-onboarding-steps strong {
-  color: #f6f9ff;
+.app-onboarding-nav-item:hover {
+  border-color: rgba(255, 255, 255, 0.12);
 }
 
-.app-onboarding-guide-block {
+.app-onboarding-nav-item.active {
+  border-color: rgba(91, 140, 255, 0.45);
+  background: rgba(91, 140, 255, 0.12);
+}
+
+.app-onboarding-content {
+  min-width: 0;
+}
+
+.app-onboarding-panel {
   display: grid;
   gap: 10px;
   border: 1px solid var(--border);
@@ -3101,8 +3126,8 @@ input[type="checkbox"] {
 
 .app-onboarding-guide-gif {
   width: 100%;
-  max-height: 260px;
-  object-fit: cover;
+  max-height: 300px;
+  object-fit: contain;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: #0d1320;
@@ -3118,6 +3143,24 @@ input[type="checkbox"] {
   color: var(--muted);
   display: grid;
   gap: 6px;
+}
+
+@media (max-width: 860px) {
+  .app-onboarding-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .app-onboarding-nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .app-onboarding-nav-item {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
 }
 
 .app-onboarding-preferences {

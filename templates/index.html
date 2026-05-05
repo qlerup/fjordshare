@@ -1176,29 +1176,74 @@
     <div class="toolbar">
       <h3>Velkommen til Fjord3D</h3>
     </div>
-    <p class="hint">Kort guide til førstegangsbrugere.</p>
-    <div class="app-onboarding-guide-block">
-      <div class="app-onboarding-guide-head">Guide 1: Navigation</div>
-      <img
-        class="app-onboarding-guide-gif"
-        src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
-        alt="Viser standard navigation i Fjord3D"
-      >
-      <div class="app-onboarding-guide-text">
-        <p>I denne guide vises den normale navigation i appen:</p>
-        <ul>
-          <li>Venstre menu bruges til at skifte mellem Mapper, Projekter klar til print og Tracking.</li>
-          <li>I Mapper-visningen er hovedområdet din aktive mappe, hvor du kan uploade filer og mapper.</li>
-          <li>Øverst til højre finder du hurtig handlinger som søgning og mapper-menu.</li>
-          <li>Nederst i venstre side finder du Profil og Log ud.</li>
-        </ul>
+    <p class="hint">Vælg en guide i menuen til venstre for at se præcis det trin du har brug for.</p>
+    <div class="app-onboarding-layout">
+      <nav class="app-onboarding-nav" aria-label="Guide menu">
+        <button class="app-onboarding-nav-item active" data-guide-panel="navigation" type="button">Navigation</button>
+        <button class="app-onboarding-nav-item" data-guide-panel="upload" type="button">Upload filer</button>
+        <button class="app-onboarding-nav-item" data-guide-panel="file-info" type="button">Tilføj info</button>
+        <button class="app-onboarding-nav-item" data-guide-panel="print-ready" type="button">Klar til print</button>
+        <button class="app-onboarding-nav-item" data-guide-panel="tracking" type="button">Tracking</button>
+      </nav>
+      <div class="app-onboarding-content">
+        <section class="app-onboarding-panel" data-guide-panel="navigation">
+          <div class="app-onboarding-guide-head">Navigation</div>
+          <img
+            class="app-onboarding-guide-gif"
+            src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
+            alt="Viser standard navigation i Fjord3D"
+          >
+          <div class="app-onboarding-guide-text">
+            <p>Denne video viser den almindelige navigation i Fjord3D:</p>
+            <ul>
+              <li>Venstre menu bruges til at skifte mellem Mapper, Projekter klar til print og Tracking.</li>
+              <li>I Mapper-visningen er hovedområdet din aktive mappe, hvor du kan uploade filer og mapper.</li>
+              <li>Øverst til højre finder du hurtige handlinger som søgning og mapper-menu.</li>
+              <li>Nederst i venstre side finder du Profil og Log ud.</li>
+            </ul>
+          </div>
+        </section>
+        <section class="app-onboarding-panel hidden" data-guide-panel="upload">
+          <div class="app-onboarding-guide-head">Upload filer</div>
+          <div class="app-onboarding-guide-text">
+            <p>Gå til Mapper og upload dine .step, .3mf eller .stl filer i den mappe du arbejder i.</p>
+            <ul>
+              <li>Du kan bruge både upload-knappen og drag-and-drop.</li>
+              <li>Hold filerne samlet i den rigtige mappe, så projektet er let at finde senere.</li>
+            </ul>
+          </div>
+        </section>
+        <section class="app-onboarding-panel hidden" data-guide-panel="file-info">
+          <div class="app-onboarding-guide-head">Tilføj info</div>
+          <div class="app-onboarding-guide-text">
+            <p>Åbn en fil og udfyld bemærkninger, antal og vedhæftede billeder, så produktionen har alle detaljer.</p>
+            <ul>
+              <li>Brug bemærkninger til specielle ønsker.</li>
+              <li>Sæt korrekt antal, så ordren bliver produceret rigtigt første gang.</li>
+            </ul>
+          </div>
+        </section>
+        <section class="app-onboarding-panel hidden" data-guide-panel="print-ready">
+          <div class="app-onboarding-guide-head">Klar til print</div>
+          <div class="app-onboarding-guide-text">
+            <p>Marker de relevante filer til projektet og send dem til produktion via Klar til print flowet.</p>
+            <ul>
+              <li>Kontrollér filvalget inden du sender.</li>
+              <li>Når projektet er sendt, kan admin følge og afslutte det.</li>
+            </ul>
+          </div>
+        </section>
+        <section class="app-onboarding-panel hidden" data-guide-panel="tracking">
+          <div class="app-onboarding-guide-head">Tracking</div>
+          <div class="app-onboarding-guide-text">
+            <p>Når projektet er færdigt, kan admin tilføje pakkenummer, så kunden kan følge forsendelsen.</p>
+            <ul>
+              <li>Tracking bruges til at skabe overblik efter produktion.</li>
+              <li>Opdateringer vises i tracking-sektionen.</li>
+            </ul>
+          </div>
+        </section>
       </div>
-    </div>
-    <div class="app-onboarding-steps">
-      <div><strong>1. Upload filer:</strong> Gå til Mapper og upload .step, .3mf eller .stl.</div>
-      <div><strong>2. Tilføj info:</strong> Åbn en fil og udfyld bemærkning, antal og billeder.</div>
-      <div><strong>3. Klar til print:</strong> Marker filer til projektet og send dem til produktion.</div>
-      <div><strong>4. Tracking:</strong> Admin kan tilføje pakkenummer når projektet er færdigt.</div>
     </div>
     <div class="app-onboarding-preferences">
       <label class="app-onboarding-toggle" for="appOnboardingEnabledChk">
