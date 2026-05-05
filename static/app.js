@@ -349,8 +349,8 @@
     smsOnboardingSendCodeBtn: document.getElementById("smsOnboardingSendCodeBtn"),
     smsOnboardingVerifyBtn: document.getElementById("smsOnboardingVerifyBtn"),
     appOnboardingModal: document.getElementById("appOnboardingModal"),
-    appOnboardingCloseBtn: document.getElementById("appOnboardingCloseBtn"),
-    appOnboardingDontShowBtn: document.getElementById("appOnboardingDontShowBtn"),
+    appOnboardingEnabledChk: document.getElementById("appOnboardingEnabledChk"),
+    appOnboardingDoneBtn: document.getElementById("appOnboardingDoneBtn"),
     appOnboardingStatus: document.getElementById("appOnboardingStatus"),
     printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
     printReadyStatus: document.getElementById("printReadyStatus"),
@@ -699,6 +699,9 @@
     if (els.profileGuideEnabledChk) {
       els.profileGuideEnabledChk.checked = !!state.appOnboardingEnabled;
     }
+    if (els.appOnboardingEnabledChk) {
+      els.appOnboardingEnabledChk.checked = !!state.appOnboardingEnabled;
+    }
     setProfileGuideFormState({ busy: false });
   }
 
@@ -739,12 +742,12 @@
 
   function setAppOnboardingBusy(busy) {
     const isBusy = !!busy;
-    if (els.appOnboardingCloseBtn) {
-      els.appOnboardingCloseBtn.disabled = isBusy;
+    if (els.appOnboardingEnabledChk) {
+      els.appOnboardingEnabledChk.disabled = isBusy;
     }
-    if (els.appOnboardingDontShowBtn) {
-      els.appOnboardingDontShowBtn.disabled = isBusy;
-      els.appOnboardingDontShowBtn.textContent = isBusy ? "Gemmer..." : "Slå guide fra";
+    if (els.appOnboardingDoneBtn) {
+      els.appOnboardingDoneBtn.disabled = isBusy;
+      els.appOnboardingDoneBtn.textContent = isBusy ? "Gemmer..." : "Færdig";
     }
   }
 
@@ -755,6 +758,9 @@
     if (!force && !state.appOnboardingEnabled) return;
     if (closeProfile) {
       closeProfileModal();
+    }
+    if (els.appOnboardingEnabledChk) {
+      els.appOnboardingEnabledChk.checked = !!state.appOnboardingEnabled;
     }
     showStatus(els.appOnboardingStatus, "");
     setAppOnboardingBusy(false);
@@ -806,8 +812,9 @@
     setAppOnboardingBusy(false);
   }
 
-  async function disableAppOnboardingFromModal() {
-    if (!state.appOnboardingEnabled) {
+  async function completeAppOnboardingFromModal() {
+    const enabled = !!(els.appOnboardingEnabledChk && els.appOnboardingEnabledChk.checked);
+    if (enabled === !!state.appOnboardingEnabled) {
       dismissAppOnboarding();
       return;
     }
@@ -816,14 +823,18 @@
     try {
       const data = await api("/api/me/onboarding/preferences", {
         method: "POST",
-        body: { enabled: false },
+        body: { enabled },
       });
-      applyAppOnboardingPreference((data && data.onboarding) || { app_onboarding_enabled: false });
+      applyAppOnboardingPreference((data && data.onboarding) || { app_onboarding_enabled: enabled });
       dismissAppOnboarding();
-      showStatus(els.profileGuideStatus, "Guiden er slået fra. Den vises ikke automatisk ved login.", "ok");
+      if (enabled) {
+        showStatus(els.profileGuideStatus, 'Guiden er slået til. Klik "Vis guide" for at starte den igen.', "ok");
+      } else {
+        showStatus(els.profileGuideStatus, "Guiden er slået fra. Den vises ikke automatisk ved login.", "ok");
+      }
     } catch (err) {
       setAppOnboardingBusy(false);
-      showStatus(els.appOnboardingStatus, err.message || "Kunne ikke slå guiden fra", "error");
+      showStatus(els.appOnboardingStatus, err.message || "Kunne ikke gemme guidevalg", "error");
     }
   }
 
@@ -13696,22 +13707,10 @@
       });
     }
     // App onboarding modal elements/bindings
-    if (els.appOnboardingModal) {
-      els.appOnboardingModal.addEventListener("click", (event) => {
-        if (event.target === els.appOnboardingModal || event.target.classList.contains("modal-backdrop")) {
-          dismissAppOnboarding();
-        }
-      });
-    }
-    if (els.appOnboardingCloseBtn) {
-      els.appOnboardingCloseBtn.addEventListener("click", () => {
-        dismissAppOnboarding();
-      });
-    }
-    if (els.appOnboardingDontShowBtn) {
-      els.appOnboardingDontShowBtn.addEventListener("click", () => {
-        disableAppOnboardingFromModal().catch((err) => {
-          showStatus(els.appOnboardingStatus, err.message || "Kunne ikke slå guiden fra", "error");
+    if (els.appOnboardingDoneBtn) {
+      els.appOnboardingDoneBtn.addEventListener("click", () => {
+        completeAppOnboardingFromModal().catch((err) => {
+          showStatus(els.appOnboardingStatus, err.message || "Kunne ikke gemme guidevalg", "error");
         });
       });
     }

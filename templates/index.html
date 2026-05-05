@@ -194,7 +194,6 @@
       <div class="panel">
         <div class="settings-header">
           <h3>Indstillinger</h3>
-          <p class="hint">Delinger, DNS, brugere, SMS og slicer-profiler</p>
         </div>
         <nav id="settingsTabs" class="tabs">
           <button class="tab-btn active" data-settings-tab="shares">Delinger</button>
@@ -1176,7 +1175,6 @@
   <div class="modal-card app-onboarding-card">
     <div class="toolbar">
       <h3>Velkommen til Fjord3D</h3>
-      <button id="appOnboardingCloseBtn" class="btn" type="button">Luk</button>
     </div>
     <p class="hint">Kort guide til førstegangsbrugere.</p>
     <div class="app-onboarding-steps">
@@ -1185,9 +1183,15 @@
       <div><strong>3. Klar til print:</strong> Marker filer til projektet og send dem til produktion.</div>
       <div><strong>4. Tracking:</strong> Admin kan tilføje pakkenummer når projektet er færdigt.</div>
     </div>
+    <div class="app-onboarding-preferences">
+      <label class="app-onboarding-toggle" for="appOnboardingEnabledChk">
+        <input id="appOnboardingEnabledChk" type="checkbox">
+        <span>Vis guide automatisk ved login</span>
+      </label>
+    </div>
     <div id="appOnboardingStatus" class="status hidden"></div>
     <div class="toolbar end">
-      <button id="appOnboardingDontShowBtn" class="btn" type="button">Slå guide fra</button>
+      <button id="appOnboardingDoneBtn" class="btn primary" type="button">Færdig</button>
     </div>
   </div>
 </div>
