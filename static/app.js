@@ -2528,8 +2528,8 @@
       els.mapperSelectPrintReadyBtn.classList.toggle("hidden", !showPrintReadyBtn);
       els.mapperSelectPrintReadyBtn.disabled = printReadyMode && count <= 0;
       els.mapperSelectPrintReadyBtn.textContent = printReadyMode
-        ? (count > 0 ? `Filer valgt / Projekt klar til print (${count})` : "Filer valgt / Projekt klar til print")
-        : "Vælg filer til projektet";
+        ? (count > 0 ? `Send valgte filer til print (${count})` : "Send valgte filer til print")
+        : "Vælg filer til print";
     }
     if (els.mapperSelectClearBtn) {
       els.mapperSelectClearBtn.classList.toggle("hidden", !printReadyMode);
