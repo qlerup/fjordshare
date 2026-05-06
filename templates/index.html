@@ -1449,6 +1449,24 @@
   </div>
 </div>
 
+<section id="newUploadsOverlay" class="new-uploads-overlay hidden" aria-live="polite">
+  <button
+    id="newUploadsOverlayToggle"
+    class="new-uploads-overlay-toggle"
+    type="button"
+    aria-expanded="false"
+    aria-controls="newUploadsOverlayBody"
+  >
+    <span class="new-uploads-overlay-pill"><span id="newUploadsOverlayCount">0</span> nye</span>
+    <span id="newUploadsOverlayLabel" class="new-uploads-overlay-label">Nye uploadede filer, ikke set</span>
+    <span id="newUploadsOverlayChevron" class="new-uploads-overlay-chevron" aria-hidden="true">▾</span>
+  </button>
+  <div id="newUploadsOverlayBody" class="new-uploads-overlay-body hidden">
+    <div id="newUploadsOverlayMeta" class="new-uploads-overlay-meta">Seneste uploads</div>
+    <ul id="newUploadsOverlayList" class="new-uploads-overlay-list"></ul>
+  </div>
+</section>
+
 <section id="uploadMonitor" class="upload-monitor hidden" aria-live="polite">
   <header class="upload-monitor-head">
     <strong>Uploads</strong>

@@ -9,6 +9,24 @@
   const SLICE_ACTIONS_DISABLED = String((boot && boot.dataset.slicingDisabled) || "0").trim() === "1";
   const SLICE_DISABLED_TITLE = "Slicing er midlertidigt slået fra";
   const SMS_ONBOARDING_LOGIN_PROMPT_ENABLED = false;
+  const UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY = "fjordshare.unseenUploadsOverlayExpanded.v1";
+
+  function readPersistedUnseenUploadsOverlayExpanded() {
+    try {
+      return window.localStorage.getItem(UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY) === "1";
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function persistUnseenUploadsOverlayExpanded(expanded) {
+    try {
+      window.localStorage.setItem(UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY, expanded ? "1" : "0");
+    } catch (_err) {
+      // Ignore storage access errors (e.g. privacy mode restrictions).
+    }
+  }
+
   const state = {
     username: (boot && boot.dataset.username) || "",
     role: ((boot && boot.dataset.role) || "user").toLowerCase(),
@@ -92,6 +110,11 @@
     folderPreviewRequestToken: 0,
     folderUnseenCounts: Object.create(null),
     fileSeenInFlight: new Set(),
+    unseenUploadsTotal: 0,
+    unseenUploads: [],
+    unseenUploadsExpanded: readPersistedUnseenUploadsOverlayExpanded(),
+    unseenUploadsRequestToken: 0,
+    newUploadsDwellTimer: null,
     modelPreviewLoadToken: 0,
     modelModalCloseGuardUntil: 0,
     currentPrintReadyProjectId: 0,
@@ -168,6 +191,14 @@
     uploadMonitorSummary: document.getElementById("uploadMonitorSummary"),
     uploadMonitorCurrent: document.getElementById("uploadMonitorCurrent"),
     uploadMonitorList: document.getElementById("uploadMonitorList"),
+    newUploadsOverlay: document.getElementById("newUploadsOverlay"),
+    newUploadsOverlayToggle: document.getElementById("newUploadsOverlayToggle"),
+    newUploadsOverlayCount: document.getElementById("newUploadsOverlayCount"),
+    newUploadsOverlayLabel: document.getElementById("newUploadsOverlayLabel"),
+    newUploadsOverlayChevron: document.getElementById("newUploadsOverlayChevron"),
+    newUploadsOverlayBody: document.getElementById("newUploadsOverlayBody"),
+    newUploadsOverlayMeta: document.getElementById("newUploadsOverlayMeta"),
+    newUploadsOverlayList: document.getElementById("newUploadsOverlayList"),
     folderList: document.getElementById("folderList"),
     fileGrid: document.getElementById("fileGrid"),
     folderUpBtn: document.getElementById("folderUpBtn"),
@@ -1536,6 +1567,12 @@
     return d.toLocaleString();
   }
 
+  function formatDateDa(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "-";
+    return d.toLocaleString("da-DK");
+  }
+
   const SCALE_UP_UNITS = new Set(["%", "mm", "cm", "m"]);
 
   function scaleUpUnit(value) {
@@ -1994,6 +2031,11 @@
       if (target !== "files") setThumbTopStatusVisible(false, false);
       else updateThumbTopStatus();
     }
+    if (target !== "files") {
+      clearNewUploadsDwellTimer();
+    } else {
+      scheduleNewUploadsDwellSeen();
+    }
     if (!document.body.classList.contains("mobile-drawer-open")
       && !(els.profileModal && !els.profileModal.classList.contains("hidden"))) {
       setMobileNavActive(mobileActionForTab(target));
@@ -2041,7 +2083,13 @@
       if (isAdmin) node.classList.remove("hidden");
       else node.classList.add("hidden");
     });
-    if (!isAdmin) setTab("files");
+    if (!isAdmin) {
+      setTab("files");
+      clearNewUploadsDwellTimer();
+      state.unseenUploadsTotal = 0;
+      state.unseenUploads = [];
+    }
+    renderUnseenUploadsOverlay();
     updateStats();
   }
 
@@ -2705,6 +2753,43 @@
     return out;
   }
 
+  function isFilesTabVisible() {
+    return !!(els.tabFiles && !els.tabFiles.classList.contains("hidden"));
+  }
+
+  function clearNewUploadsDwellTimer() {
+    if (!state.newUploadsDwellTimer) return;
+    window.clearTimeout(state.newUploadsDwellTimer);
+    state.newUploadsDwellTimer = null;
+  }
+
+  function scheduleNewUploadsDwellSeen() {
+    clearNewUploadsDwellTimer();
+    if (state.role !== "admin" || !isFilesTabVisible()) return;
+
+    const folder = normalizeFolderPath(currentFolder() || state.homeFolder || "");
+    if (!folder) return;
+
+    const unseenIds = Array.from(state.files || [])
+      .map((file) => (file && file.is_new ? Number(file.id || 0) : 0))
+      .filter((id) => id > 0);
+    if (!unseenIds.length) return;
+
+    state.newUploadsDwellTimer = window.setTimeout(() => {
+      state.newUploadsDwellTimer = null;
+      if (!isFilesTabVisible()) return;
+      const activeFolder = normalizeFolderPath(currentFolder() || state.homeFolder || "");
+      if (!activeFolder || activeFolder !== folder) return;
+
+      const liveIds = Array.from(state.files || [])
+        .map((file) => (file && file.is_new ? Number(file.id || 0) : 0))
+        .filter((id) => id > 0);
+      if (!liveIds.length) return;
+
+      markFilesSeen(liveIds).catch(() => {});
+    }, 5000);
+  }
+
   function decrementFolderUnseenCounts(folderPath, amount = 1) {
     const delta = Number(amount || 0);
     if (!Number.isFinite(delta) || delta <= 0) return;
@@ -2719,6 +2804,195 @@
       if (next > 0) map[path] = next;
       else delete map[path];
     }
+  }
+
+  function setUnseenUploadsExpanded(expanded) {
+    state.unseenUploadsExpanded = !!expanded;
+    persistUnseenUploadsOverlayExpanded(state.unseenUploadsExpanded);
+    if (els.newUploadsOverlay) {
+      els.newUploadsOverlay.classList.toggle("expanded", state.unseenUploadsExpanded);
+    }
+    if (els.newUploadsOverlayBody) {
+      els.newUploadsOverlayBody.classList.toggle("hidden", !state.unseenUploadsExpanded);
+    }
+    if (els.newUploadsOverlayToggle) {
+      els.newUploadsOverlayToggle.setAttribute("aria-expanded", state.unseenUploadsExpanded ? "true" : "false");
+    }
+    if (els.newUploadsOverlayChevron) {
+      els.newUploadsOverlayChevron.textContent = state.unseenUploadsExpanded ? "▴" : "▾";
+    }
+  }
+
+  function renderUnseenUploadsOverlay() {
+    if (!els.newUploadsOverlay) return;
+
+    const total = Math.max(0, Math.floor(Number(state.unseenUploadsTotal || 0)));
+    const items = Array.isArray(state.unseenUploads) ? state.unseenUploads : [];
+    const shouldShow = state.role === "admin" && total > 0;
+
+    if (!shouldShow) {
+      els.newUploadsOverlay.classList.add("hidden");
+      if (els.newUploadsOverlayList) els.newUploadsOverlayList.innerHTML = "";
+      setUnseenUploadsExpanded(state.unseenUploadsExpanded);
+      return;
+    }
+
+    els.newUploadsOverlay.classList.remove("hidden");
+    if (els.newUploadsOverlayCount) {
+      els.newUploadsOverlayCount.textContent = String(total);
+    }
+    if (els.newUploadsOverlayLabel) {
+      els.newUploadsOverlayLabel.textContent = total === 1
+        ? "Ny uploadet fil (ikke set)"
+        : "Nye uploadede filer (ikke set)";
+    }
+    if (els.newUploadsOverlayMeta) {
+      const shown = items.length;
+      els.newUploadsOverlayMeta.textContent = shown > 0
+        ? `Viser ${shown} seneste af ${total} nye uploads`
+        : `${total} nye uploads`;
+    }
+    if (els.newUploadsOverlayList) {
+      if (!items.length) {
+        els.newUploadsOverlayList.innerHTML = '<li class="new-uploads-overlay-empty">Ingen detaljer tilgængelige lige nu.</li>';
+      } else {
+        els.newUploadsOverlayList.innerHTML = items
+          .map((item) => {
+            const filename = String((item && item.filename) || "Fil");
+            const folderPathRaw = String((item && item.folder_path) || "");
+            const folderPath = folderPathRaw || "-";
+            const uploadedBy = String((item && item.uploaded_by) || "Ukendt");
+            const uploadedAt = formatDateDa(item && item.uploaded_at ? item.uploaded_at : "");
+            const thumbUrl = String((item && item.thumb_url) || "").trim();
+            const contentUrl = String((item && item.content_url) || "").trim();
+            const mimeType = String((item && item.mime_type) || "").toLowerCase();
+            const extLabel = String((item && item.ext) || "")
+              .replace(".", "")
+              .toUpperCase()
+              .slice(0, 4) || "FIL";
+            const imageSrc = thumbUrl || (mimeType.startsWith("image/") ? contentUrl : "");
+            const thumbHtml = imageSrc
+              ? `<img class="new-uploads-overlay-thumb-img" src="${esc(imageSrc)}" alt="${esc(filename)}" loading="lazy" decoding="async">`
+              : `<div class="new-uploads-overlay-thumb-placeholder">${esc(extLabel)}</div>`;
+
+            return `
+              <li class="new-uploads-overlay-item" data-file-id="${Number(item && item.id ? item.id : 0)}" data-folder-path="${esc(folderPathRaw)}" role="button" tabindex="0" aria-label="Åbn ${esc(filename)} i mappe ${esc(folderPath)}">
+                <div class="new-uploads-overlay-thumb">${thumbHtml}</div>
+                <div class="new-uploads-overlay-details">
+                  <div class="new-uploads-overlay-file" title="${esc(filename)}">${esc(filename)}</div>
+                  <div class="new-uploads-overlay-sub">${esc(uploadedBy)} · ${esc(uploadedAt)}</div>
+                  <div class="new-uploads-overlay-sub path" title="${esc(folderPath)}">${esc(folderPath)}</div>
+                </div>
+              </li>
+            `;
+          })
+          .join("");
+      }
+    }
+
+    setUnseenUploadsExpanded(state.unseenUploadsExpanded);
+  }
+
+  async function loadUnseenUploadsSummary(limit = 12) {
+    if (state.role !== "admin") {
+      state.unseenUploadsRequestToken = Number((state.unseenUploadsRequestToken || 0) + 1);
+      state.unseenUploadsTotal = 0;
+      state.unseenUploads = [];
+      renderUnseenUploadsOverlay();
+      return;
+    }
+
+    const safeLimit = Math.max(1, Math.min(40, Number(limit || 12) || 12));
+    const requestToken = Number((state.unseenUploadsRequestToken || 0) + 1);
+    state.unseenUploadsRequestToken = requestToken;
+    const data = await api(`/api/files/unseen-summary?limit=${safeLimit}`);
+    if (requestToken !== state.unseenUploadsRequestToken) return;
+    state.unseenUploadsTotal = Math.max(0, Math.floor(Number(data && data.total ? data.total : 0)));
+    state.unseenUploads = Array.isArray(data && data.items) ? data.items : [];
+    renderUnseenUploadsOverlay();
+  }
+
+  async function openUnseenUploadItem(fileId, folderPath) {
+    if (state.role !== "admin") return;
+
+    const id = Number(fileId || 0);
+    const targetFolder = normalizeFolderPath(folderPath || "");
+
+    setTab("files");
+
+    if (targetFolder) {
+      let hasFolder = state.folders.some((entry) => normalizeFolderPath(entry && entry.path) === targetFolder);
+      if (!hasFolder) {
+        await loadFolders();
+        hasFolder = state.folders.some((entry) => normalizeFolderPath(entry && entry.path) === targetFolder);
+      }
+
+      if (hasFolder) {
+        state.currentFolder = targetFolder;
+        if (els.folderSelect) {
+          els.folderSelect.value = targetFolder;
+        }
+      }
+    }
+
+    await loadFiles();
+
+    if (!id) return;
+    const file = fileById(id);
+    if (!file) {
+      showStatus(els.uploadStatus, "Filen findes ikke længere i den valgte mappe.", "error");
+      return;
+    }
+    await openFileInfoDrawer(id);
+  }
+
+  function applySeenIdsLocally(seenIds = []) {
+    const ids = Array.from(new Set(Array.from(seenIds || []).map((value) => Number(value || 0)).filter((value) => value > 0)));
+    if (!ids.length) return false;
+
+    const idSet = new Set(ids);
+    const knownFolders = new Map();
+    Array.from(state.files || []).forEach((file) => {
+      const id = Number(file && file.id ? file.id : 0);
+      if (!id) return;
+      knownFolders.set(id, String(file.folder_path || ""));
+    });
+    Array.from(state.unseenUploads || []).forEach((item) => {
+      const id = Number(item && item.id ? item.id : 0);
+      if (!id) return;
+      if (!knownFolders.has(id)) knownFolders.set(id, String(item.folder_path || ""));
+    });
+
+    let changed = false;
+
+    for (const file of Array.from(state.files || [])) {
+      const id = Number(file && file.id ? file.id : 0);
+      if (!idSet.has(id) || !file || !file.is_new) continue;
+      file.is_new = false;
+      changed = true;
+    }
+
+    const prevTotal = Math.max(0, Math.floor(Number(state.unseenUploadsTotal || 0)));
+    const nextTotal = Math.max(0, prevTotal - ids.length);
+    if (nextTotal !== prevTotal) {
+      state.unseenUploadsTotal = nextTotal;
+      changed = true;
+    }
+
+    if (Array.isArray(state.unseenUploads) && state.unseenUploads.length) {
+      const beforeLen = state.unseenUploads.length;
+      state.unseenUploads = state.unseenUploads.filter((item) => !idSet.has(Number(item && item.id ? item.id : 0)));
+      if (state.unseenUploads.length !== beforeLen) changed = true;
+    }
+
+    for (const id of ids) {
+      const folderPath = knownFolders.get(id);
+      if (!folderPath) continue;
+      decrementFolderUnseenCounts(folderPath, 1);
+      changed = true;
+    }
+
+    return changed;
   }
 
   async function markFilesSeen(fileIds = []) {
@@ -2738,22 +3012,18 @@
 
       const seenIds = Array.isArray(data && data.seen_ids)
         ? data.seen_ids.map((value) => Number(value || 0)).filter((value) => value > 0)
-        : wanted;
+        : [];
       if (!seenIds.length) return;
 
-      let changed = false;
-      for (const id of seenIds) {
-        const file = fileById(id);
-        if (!file || !file.is_new) continue;
-        file.is_new = false;
-        decrementFolderUnseenCounts(String(file.folder_path || ""), 1);
-        changed = true;
-      }
+      const changed = applySeenIdsLocally(seenIds);
 
       if (changed) {
         renderFiles();
         renderFolderBrowser();
+        renderUnseenUploadsOverlay();
       }
+
+      loadUnseenUploadsSummary().catch(() => {});
     } catch (_err) {
       // Ignore transient errors; badges refresh on next data reload.
     } finally {
@@ -2917,6 +3187,13 @@
       }
     });
     state.folderUnseenCounts = unseenMap;
+    if (state.role === "admin") {
+      loadUnseenUploadsSummary().catch(() => {});
+    } else {
+      state.unseenUploadsTotal = 0;
+      state.unseenUploads = [];
+      renderUnseenUploadsOverlay();
+    }
 
     const options = state.folders.map((f) => f.path);
     if (!state.currentFolder) {
@@ -7542,10 +7819,6 @@
     renderFileAttachments([]);
     showStatus(els.fileInfoAttachStatus, "");
 
-    if (state.role === "admin" && file.is_new) {
-      markFilesSeen([state.currentInfoFileId]).catch(() => {});
-    }
-
     if (state.infoDrawerHideTimer) {
       clearTimeout(state.infoDrawerHideTimer);
       state.infoDrawerHideTimer = null;
@@ -8045,6 +8318,7 @@
   }
 
   async function loadFiles() {
+    clearNewUploadsDwellTimer();
     const folder = currentFolder() || state.homeFolder || "";
     state.currentFolder = folder;
     if (els.folderSelect && folder) {
@@ -8057,6 +8331,10 @@
     renderFiles();
     renderFolderBrowser();
     updateFolderUiState();
+    scheduleNewUploadsDwellSeen();
+    if (state.role === "admin") {
+      loadUnseenUploadsSummary().catch(() => {});
+    }
   }
 
   function makeClientUploadId() {
@@ -12948,6 +13226,41 @@
     if (els.createFolderBtn) {
       els.createFolderBtn.addEventListener("click", async () => {
         await createFolder();
+      });
+    }
+
+    if (els.newUploadsOverlayToggle) {
+      els.newUploadsOverlayToggle.addEventListener("click", () => {
+        setUnseenUploadsExpanded(!state.unseenUploadsExpanded);
+      });
+    }
+
+    if (els.newUploadsOverlayList) {
+      const onOpenUnseenOverlayItem = async (target) => {
+        const item = target && target.closest
+          ? target.closest(".new-uploads-overlay-item[data-file-id]")
+          : null;
+        if (!item) return;
+
+        const fileId = Number(item.dataset.fileId || 0);
+        const folderPath = String(item.dataset.folderPath || "");
+        if (!fileId && !folderPath) return;
+
+        await openUnseenUploadItem(fileId, folderPath);
+      };
+
+      els.newUploadsOverlayList.addEventListener("click", (event) => {
+        onOpenUnseenOverlayItem(event.target).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke åbne upload", "error");
+        });
+      });
+
+      els.newUploadsOverlayList.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onOpenUnseenOverlayItem(event.target).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke åbne upload", "error");
+        });
       });
     }
 

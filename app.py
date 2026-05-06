@@ -9905,6 +9905,9 @@ def _mark_files_seen_for_user(conn: sqlite3.Connection, user: User, file_ids: It
     if not allowed_ids:
         return []
 
+    already_seen_ids = _seen_file_ids_for_user(conn, int(user.id), allowed_ids)
+    newly_seen_ids = set(int(file_id) for file_id in allowed_ids if int(file_id) not in already_seen_ids)
+
     stamp = now_iso()
     conn.executemany(
         """
@@ -9915,7 +9918,56 @@ def _mark_files_seen_for_user(conn: sqlite3.Connection, user: User, file_ids: It
         [(int(user.id), int(file_id), stamp) for file_id in sorted(allowed_ids)],
     )
 
-    return [file_id for file_id in wanted_ids if file_id in allowed_ids]
+    return [file_id for file_id in wanted_ids if file_id in newly_seen_ids]
+
+
+def _unseen_total_count_for_user(conn: sqlite3.Connection, user: User) -> int:
+    if not user.is_admin:
+        return 0
+
+    actor = _normalize_actor_identity(user.username)
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM files f
+        LEFT JOIN user_file_seen s ON s.user_id=? AND s.file_id=f.id
+        WHERE s.file_id IS NULL
+          AND lower(trim(COALESCE(f.uploaded_by, ''))) != ?
+        """,
+        (int(user.id), actor),
+    ).fetchone()
+    return int(row["c"] or 0) if row else 0
+
+
+def _unseen_file_rows_for_user(conn: sqlite3.Connection, user: User, limit: int = 12) -> list[sqlite3.Row]:
+    if not user.is_admin:
+        return []
+
+    try:
+        safe_limit = int(limit)
+    except Exception:
+        safe_limit = 12
+    safe_limit = max(1, min(100, safe_limit))
+
+    actor = _normalize_actor_identity(user.username)
+    rows = conn.execute(
+        """
+        SELECT f.*
+        FROM files f
+        LEFT JOIN user_file_seen s ON s.user_id=? AND s.file_id=f.id
+        WHERE s.file_id IS NULL
+          AND lower(trim(COALESCE(f.uploaded_by, ''))) != ?
+        ORDER BY f.uploaded_at DESC, f.id DESC
+        LIMIT ?
+        """,
+        (int(user.id), actor, safe_limit),
+    ).fetchall()
+
+    visible: list[sqlite3.Row] = []
+    for row in rows:
+        if user_can_access_file(user, row, "view"):
+            visible.append(row)
+    return visible
 
 
 def allocate_unique_target(folder_abs: Path, filename: str) -> Path:
@@ -12169,6 +12221,30 @@ def api_files_seen_batch():
         conn.commit()
 
     return jsonify({"ok": True, "seen_ids": seen_ids})
+
+
+@app.route("/api/files/unseen-summary", methods=["GET"])
+@login_required
+def api_files_unseen_summary():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan se nye uploads"}), 403
+
+    try:
+        requested_limit = int(str(request.args.get("limit") or "12"))
+    except Exception:
+        requested_limit = 12
+    limit = max(1, min(40, requested_limit))
+
+    with closing(get_conn()) as conn:
+        total = _unseen_total_count_for_user(conn, current_user)
+        rows = _unseen_file_rows_for_user(conn, current_user, limit=limit)
+
+    items = [
+        serialize_file_row(row, is_new=True)
+        for row in rows
+    ]
+
+    return jsonify({"ok": True, "total": int(total), "items": items})
 
 
 @app.route("/api/files/<int:file_id>/content", methods=["GET"])
