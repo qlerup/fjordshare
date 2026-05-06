@@ -7530,7 +7530,11 @@
   function renderFiles() {
     if (!els.fileGrid) return;
     if (!state.files.length) {
-      els.fileGrid.innerHTML = `<div class="panel"><p class="hint">Ingen filer i denne mappe endnu.</p></div>`;
+      const folder = currentFolder() || state.homeFolder || "";
+      const hasChildFolders = listDirectChildren(folder).length > 0;
+      els.fileGrid.innerHTML = hasChildFolders
+        ? ""
+        : `<div class="panel"><p class="hint">Ingen filer eller mapper i denne mappe endnu.</p></div>`;
       if (state.currentInfoFileId) {
         closeFileInfoDrawer();
       }
