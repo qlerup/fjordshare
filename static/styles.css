@@ -3786,7 +3786,61 @@ input[type="checkbox"] {
   }
 
   #settings-panel-shares .table {
-    min-width: 520px;
+    table-layout: fixed;
+    min-width: 0;
+  }
+
+  #settings-panel-shares .table th,
+  #settings-panel-shares .table td {
+    padding: 6px 3px;
+    font-size: 0.76rem;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  #settings-panel-shares .table thead th {
+    font-size: 0.68rem;
+    letter-spacing: 0;
+  }
+
+  #settings-panel-shares .table th:nth-child(1),
+  #settings-panel-shares .table td:nth-child(1) {
+    width: 15%;
+  }
+
+  #settings-panel-shares .table th:nth-child(2),
+  #settings-panel-shares .table td:nth-child(2) {
+    width: 19%;
+  }
+
+  #settings-panel-shares .table th:nth-child(3),
+  #settings-panel-shares .table td:nth-child(3) {
+    width: 19%;
+  }
+
+  #settings-panel-shares .table th:nth-child(4),
+  #settings-panel-shares .table td:nth-child(4) {
+    width: 14%;
+  }
+
+  #settings-panel-shares .table th:nth-child(5),
+  #settings-panel-shares .table td:nth-child(5) {
+    width: 12%;
+  }
+
+  #settings-panel-shares .table th:nth-child(6),
+  #settings-panel-shares .table td:nth-child(6) {
+    width: 21%;
+  }
+
+  #settings-panel-shares .table .toolbar {
+    gap: 4px;
+  }
+
+  #settings-panel-shares .table .btn {
+    width: 100%;
+    padding: 5px 4px;
+    font-size: 0.68rem;
   }
 
   #tab-tracking .form-grid,
