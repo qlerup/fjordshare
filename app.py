@@ -14606,6 +14606,21 @@ def api_admin_profile_signup_request_cancel(request_id: int):
     return jsonify({"ok": True})
 
 
+def serialize_admin_user_row(row: sqlite3.Row) -> dict[str, Any]:
+    user_id = int(row["id"])
+    return {
+        "id": user_id,
+        "username": str(row["username"]),
+        "first_name": str(row["first_name"] or ""),
+        "last_initial": str(row["last_initial"] or ""),
+        "display_name": user_display_name(row["first_name"], row["last_initial"], row["username"]),
+        "role": str(row["role"] or "user"),
+        "home_folder": str(row["home_folder"] or ""),
+        "created_at": str(row["created_at"] or ""),
+        "is_current_user": user_id == int(current_user.id),
+    }
+
+
 @app.route("/api/admin/users", methods=["GET", "POST"])
 @login_required
 def api_admin_users():
@@ -14620,19 +14635,7 @@ def api_admin_users():
         return jsonify(
             {
                 "ok": True,
-                "items": [
-                    {
-                        "id": int(r["id"]),
-                        "username": str(r["username"]),
-                        "first_name": str(r["first_name"] or ""),
-                        "last_initial": str(r["last_initial"] or ""),
-                        "display_name": user_display_name(r["first_name"], r["last_initial"], r["username"]),
-                        "role": str(r["role"] or "user"),
-                        "home_folder": str(r["home_folder"] or ""),
-                        "created_at": str(r["created_at"] or ""),
-                    }
-                    for r in rows
-                ],
+                "items": [serialize_admin_user_row(r) for r in rows],
             }
         )
 
@@ -14649,23 +14652,15 @@ def api_admin_users():
 
     try:
         user_id = create_user(username, password, role, first_name=first_name, last_name=last_name, require_name=True)
-        user = get_user_by_id(user_id)
+        with closing(get_conn()) as conn:
+            user_row = conn.execute(
+                "SELECT id, username, first_name, last_initial, role, home_folder, created_at FROM users WHERE id=?",
+                (int(user_id),),
+            ).fetchone()
         return jsonify(
             {
                 "ok": True,
-                "item": {
-                    "id": int(user_id),
-                    "username": str(user.username if user else username),
-                    "first_name": str(user.first_name if user else first_name),
-                    "last_initial": str(user.last_initial if user else last_name_to_initial(last_name)),
-                    "display_name": user_display_name(
-                        user.first_name if user else first_name,
-                        user.last_initial if user else last_name_to_initial(last_name),
-                        user.username if user else username,
-                    ),
-                    "role": str(user.role if user else role),
-                    "home_folder": str(user.home_folder if user else ""),
-                },
+                "item": serialize_admin_user_row(user_row) if user_row is not None else None,
             }
         )
     except sqlite3.IntegrityError:
@@ -14674,6 +14669,118 @@ def api_admin_users():
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         return jsonify({"ok": False, "error": f"Kunne ikke oprette bruger: {exc}"}), 500
+
+
+@app.route("/api/admin/users/<int:user_id>", methods=["PATCH"])
+@login_required
+def api_admin_users_update(user_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    body = request.get_json(silent=True) or {}
+    try:
+        first_name = normalize_person_name(str(body.get("first_name") or ""), "Navn", required=True)
+        last_initial = last_name_to_initial(str(body.get("last_name") or body.get("last_initial") or ""), required=True)
+        username = normalize_username(str(body.get("username") or ""))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    role = "admin" if str(body.get("role") or "user").strip().lower() == "admin" else "user"
+    if int(user_id) == int(current_user.id) and role != "admin":
+        return jsonify({"ok": False, "error": "Du kan ikke fjerne admin-rollen fra dig selv"}), 400
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT id, username FROM users WHERE id=?",
+            (int(user_id),),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Bruger findes ikke"}), 404
+
+        existing = conn.execute(
+            "SELECT id FROM users WHERE lower(username)=lower(?) AND id<>? LIMIT 1",
+            (username, int(user_id)),
+        ).fetchone()
+        if existing is not None:
+            return jsonify({"ok": False, "error": "Brugernavn findes allerede"}), 409
+
+        old_username = str(row["username"] or "").strip()
+        username_changed = old_username.lower() != username.lower()
+        conn.execute(
+            "UPDATE users SET username=?, first_name=?, last_initial=?, role=? WHERE id=?",
+            (username, first_name, last_initial, role, int(user_id)),
+        )
+
+        if username_changed and old_username:
+            username_match = (old_username,)
+            conn.execute(
+                """
+                UPDATE tracking_shipments
+                SET target_username=?
+                WHERE lower(trim(COALESCE(target_username, ''))) = lower(trim(?))
+                """,
+                (username, *username_match),
+            )
+            conn.execute(
+                """
+                UPDATE files
+                SET uploaded_by=?
+                WHERE lower(trim(COALESCE(uploaded_by, ''))) = lower(trim(?))
+                """,
+                (username, *username_match),
+            )
+            conn.execute(
+                """
+                UPDATE files
+                SET printed_by=?
+                WHERE lower(trim(COALESCE(printed_by, ''))) = lower(trim(?))
+                """,
+                (username, *username_match),
+            )
+            conn.execute(
+                """
+                UPDATE file_attachments
+                SET uploaded_by=?
+                WHERE lower(trim(COALESCE(uploaded_by, ''))) = lower(trim(?))
+                """,
+                (username, *username_match),
+            )
+            conn.execute(
+                "UPDATE print_ready_projects SET owner_username=? WHERE owner_user_id=?",
+                (username, int(user_id)),
+            )
+            conn.execute(
+                """
+                UPDATE print_ready_projects
+                SET created_by=?
+                WHERE lower(trim(COALESCE(created_by, ''))) = lower(trim(?))
+                """,
+                (username, *username_match),
+            )
+            conn.execute(
+                """
+                UPDATE zip_jobs
+                SET created_by=?
+                WHERE lower(trim(COALESCE(created_by, ''))) = lower(trim(?))
+                """,
+                (username, *username_match),
+            )
+
+        updated = conn.execute(
+            "SELECT id, username, first_name, last_initial, role, home_folder, created_at FROM users WHERE id=?",
+            (int(user_id),),
+        ).fetchone()
+        conn.commit()
+
+    log_activity(
+        kind="admin",
+        action="user-update",
+        message=f"Bruger opdateret: {username}",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=username,
+    )
+    return jsonify({"ok": True, "item": serialize_admin_user_row(updated) if updated is not None else None})
 
 
 @app.route("/api/admin/users/<int:user_id>", methods=["DELETE"])

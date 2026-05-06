@@ -25,6 +25,7 @@
     signupRequests: [],
     signupLinks: [],
     adminLogs: [],
+    editingUserId: 0,
     pendingMetadata: [],
     metadataIndex: 0,
     threeModules: null,
@@ -116,6 +117,7 @@
     statShares: document.getElementById("statShares"),
     sidebarNav: document.getElementById("sidebarNav"),
     profileFooterBtn: document.getElementById("profileFooterBtn"),
+    sidebarUsername: document.querySelector(".sidebar-user strong"),
     mobileBottomNav: document.getElementById("mobileBottomNav"),
     mobileSidebarBackdrop: document.getElementById("mobileSidebarBackdrop"),
     tabFiles: document.getElementById("tab-files"),
@@ -392,6 +394,16 @@
     createUserRole: document.getElementById("createUserRole"),
     createUserBtn: document.getElementById("createUserBtn"),
     createUserModalStatus: document.getElementById("createUserModalStatus"),
+    editUserModal: document.getElementById("editUserModal"),
+    editUserForm: document.getElementById("editUserForm"),
+    editUserModalCancelBtn: document.getElementById("editUserModalCancelBtn"),
+    editUserFirstName: document.getElementById("editUserFirstName"),
+    editUserLastName: document.getElementById("editUserLastName"),
+    editUserUsername: document.getElementById("editUserUsername"),
+    editUserRole: document.getElementById("editUserRole"),
+    editUserHomeFolderHint: document.getElementById("editUserHomeFolderHint"),
+    editUserSaveBtn: document.getElementById("editUserSaveBtn"),
+    editUserModalStatus: document.getElementById("editUserModalStatus"),
     nonUserFolderModal: document.getElementById("nonUserFolderModal"),
     nonUserFolderForm: document.getElementById("nonUserFolderForm"),
     nonUserFolderFirstName: document.getElementById("nonUserFolderFirstName"),
@@ -9215,6 +9227,11 @@
     if (state.role !== "admin" || !els.usersTableBody) return;
     const data = await api("/api/admin/users");
     state.users = Array.isArray(data.items) ? data.items : [];
+    const currentUser = state.users.find((user) => !!(user && user.is_current_user));
+    if (currentUser && currentUser.username) {
+      state.username = String(currentUser.username);
+      if (els.sidebarUsername) els.sidebarUsername.textContent = state.username;
+    }
     renderUsers();
     await loadSignupRequests();
     await loadSignupLinks();
@@ -9229,7 +9246,8 @@
     els.usersTableBody.innerHTML = state.users
       .map((u) => {
         const id = Number(u.id || 0);
-        const canDelete = u.username !== state.username;
+        const isCurrentUser = !!u.is_current_user || String(u.username || "") === state.username;
+        const canDelete = !isCurrentUser;
         const name = String(u.display_name || u.first_name || "").trim() || "-";
         return `
           <tr>
@@ -9239,7 +9257,10 @@
             <td>${esc(u.role)}</td>
             <td>${esc(u.home_folder || "-")}</td>
             <td>
-              ${canDelete ? `<button class="btn danger" data-user-action="delete" data-user-id="${id}">Slet</button>` : ""}
+              <div class="toolbar">
+                <button class="btn" data-user-action="edit" data-user-id="${id}">Rediger</button>
+                ${canDelete ? `<button class="btn danger" data-user-action="delete" data-user-id="${id}">Slet</button>` : ""}
+              </div>
             </td>
           </tr>
         `;
@@ -9419,6 +9440,45 @@
     resetCreateUserModal();
   }
 
+  function userById(id) {
+    const userId = Number(id || 0);
+    if (!userId) return null;
+    return state.users.find((user) => Number(user && user.id ? user.id : 0) === userId) || null;
+  }
+
+  function resetEditUserModal() {
+    state.editingUserId = 0;
+    if (els.editUserFirstName) els.editUserFirstName.value = "";
+    if (els.editUserLastName) els.editUserLastName.value = "";
+    if (els.editUserUsername) els.editUserUsername.value = "";
+    if (els.editUserRole) els.editUserRole.value = "user";
+    if (els.editUserHomeFolderHint) els.editUserHomeFolderHint.textContent = "";
+    showStatus(els.editUserModalStatus, "");
+  }
+
+  function openEditUserModal(userId) {
+    const user = userById(userId);
+    if (!user || !els.editUserModal) return;
+    state.editingUserId = Number(user.id || 0);
+    if (els.editUserFirstName) els.editUserFirstName.value = String(user.first_name || "");
+    if (els.editUserLastName) els.editUserLastName.value = String(user.last_initial || "");
+    if (els.editUserUsername) els.editUserUsername.value = String(user.username || "");
+    if (els.editUserRole) els.editUserRole.value = String(user.role || "user").toLowerCase() === "admin" ? "admin" : "user";
+    if (els.editUserHomeFolderHint) {
+      els.editUserHomeFolderHint.textContent = `Hjemmemappe: ${String(user.home_folder || "-")}`;
+    }
+    showStatus(els.editUserModalStatus, "");
+    els.editUserModal.classList.remove("hidden");
+    window.setTimeout(() => {
+      if (els.editUserFirstName) els.editUserFirstName.focus();
+    }, 0);
+  }
+
+  function closeEditUserModal() {
+    if (els.editUserModal) els.editUserModal.classList.add("hidden");
+    resetEditUserModal();
+  }
+
   async function createUser() {
     const firstName = String((els.createUserFirstName && els.createUserFirstName.value) || "").trim();
     const lastName = String((els.createUserLastName && els.createUserLastName.value) || "").trim();
@@ -9441,16 +9501,55 @@
     await loadFolders();
   }
 
+  async function updateUser() {
+    const id = Number(state.editingUserId || 0);
+    if (!id) return;
+    const firstName = String((els.editUserFirstName && els.editUserFirstName.value) || "").trim();
+    const lastName = String((els.editUserLastName && els.editUserLastName.value) || "").trim();
+    const username = String((els.editUserUsername && els.editUserUsername.value) || "").trim();
+    const role = String((els.editUserRole && els.editUserRole.value) || "user");
+    if (!firstName || !lastName || !username) {
+      showStatus(els.editUserModalStatus, "Udfyld navn, efternavn/initial og brugernavn.", "error");
+      return;
+    }
+    if (els.editUserSaveBtn) {
+      els.editUserSaveBtn.disabled = true;
+      els.editUserSaveBtn.textContent = "Gemmer...";
+    }
+    try {
+      await api(`/api/admin/users/${id}`, {
+        method: "PATCH",
+        body: { first_name: firstName, last_name: lastName, username, role },
+      });
+      closeEditUserModal();
+      showStatus(els.userStatus, "Bruger opdateret.", "ok");
+      await loadUsers();
+      await loadFolders();
+    } finally {
+      if (els.editUserSaveBtn) {
+        els.editUserSaveBtn.disabled = false;
+        els.editUserSaveBtn.textContent = "Gem ændringer";
+      }
+    }
+  }
+
   async function onUsersTableClick(event) {
-    const btn = event.target.closest("[data-user-action='delete']");
+    const btn = event.target.closest("[data-user-action]");
     if (!btn) return;
+    const action = String(btn.dataset.userAction || "");
     const id = Number(btn.dataset.userId || 0);
     if (!id) return;
-    if (!window.confirm("Vil du slette brugeren?")) return;
-    await api(`/api/admin/users/${id}`, { method: "DELETE" });
-    showStatus(els.userStatus, "Bruger slettet.", "ok");
-    await loadUsers();
-    await loadFolders();
+    if (action === "edit") {
+      openEditUserModal(id);
+      return;
+    }
+    if (action === "delete") {
+      if (!window.confirm("Vil du slette brugeren?")) return;
+      await api(`/api/admin/users/${id}`, { method: "DELETE" });
+      showStatus(els.userStatus, "Bruger slettet.", "ok");
+      await loadUsers();
+      await loadFolders();
+    }
   }
 
   const TRACKING_MONTH_NAMES = [
@@ -13253,6 +13352,11 @@
         closeCreateUserModal();
         return;
       }
+      const editUserModalOpen = !!(els.editUserModal && !els.editUserModal.classList.contains("hidden"));
+      if (editUserModalOpen) {
+        closeEditUserModal();
+        return;
+      }
       const nonUserFolderModalOpen = !!(els.nonUserFolderModal && !els.nonUserFolderModal.classList.contains("hidden"));
       if (nonUserFolderModalOpen) {
         closeNonUserFolderModal();
@@ -13663,6 +13767,24 @@
         }
       });
     }
+    if (els.editUserModalCancelBtn) {
+      els.editUserModalCancelBtn.addEventListener("click", closeEditUserModal);
+    }
+    if (els.editUserForm) {
+      els.editUserForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        updateUser().catch((err) => {
+          showStatus(els.editUserModalStatus, err.message || "Kunne ikke opdatere bruger", "error");
+        });
+      });
+    }
+    if (els.editUserModal) {
+      els.editUserModal.addEventListener("click", (event) => {
+        if (event.target === els.editUserModal || event.target.classList.contains("modal-backdrop")) {
+          closeEditUserModal();
+        }
+      });
+    }
     if (els.nonUserFolderCancelBtn) {
       els.nonUserFolderCancelBtn.addEventListener("click", closeNonUserFolderModal);
     }
@@ -13696,7 +13818,7 @@
     if (els.usersTableBody) {
       els.usersTableBody.addEventListener("click", (event) => {
         onUsersTableClick(event).catch((err) => {
-          showStatus(els.userStatus, err.message || "Kunne ikke slette bruger", "error");
+          showStatus(els.userStatus, err.message || "Kunne ikke behandle bruger", "error");
         });
       });
     }

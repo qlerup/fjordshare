@@ -715,6 +715,44 @@
   </div>
 </div>
 
+<div id="editUserModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card edit-user-modal-card">
+    <form id="editUserForm">
+      <div class="toolbar">
+        <h3>Rediger bruger</h3>
+      </div>
+      <p id="editUserHomeFolderHint" class="hint"></p>
+      <div class="create-user-grid">
+        <div>
+          <label for="editUserFirstName">Navn</label>
+          <input id="editUserFirstName" class="input" type="text" autocomplete="given-name" required>
+        </div>
+        <div>
+          <label for="editUserLastName">Efternavn / initial</label>
+          <input id="editUserLastName" class="input" type="text" autocomplete="family-name" required>
+        </div>
+        <div class="create-user-wide">
+          <label for="editUserUsername">Brugernavn</label>
+          <input id="editUserUsername" class="input" type="text" autocomplete="username" required>
+        </div>
+        <div class="create-user-wide">
+          <label for="editUserRole">Rolle</label>
+          <select id="editUserRole" class="select">
+            <option value="user">Bruger</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <div id="editUserModalStatus" class="status hidden"></div>
+      <div class="toolbar end">
+        <button id="editUserModalCancelBtn" class="btn" type="button">Annuller</button>
+        <button id="editUserSaveBtn" class="btn primary" type="submit">Gem ændringer</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div id="nonUserFolderModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card non-user-folder-modal-card">

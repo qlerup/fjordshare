@@ -1816,11 +1816,13 @@ input[type="checkbox"] {
   margin: 0;
 }
 
-.modal-card.create-user-modal-card {
+.modal-card.create-user-modal-card,
+.modal-card.edit-user-modal-card {
   width: min(560px, calc(100vw - 24px));
 }
 
 .modal-card.create-user-modal-card form,
+.modal-card.edit-user-modal-card form,
 .modal-card.non-user-folder-modal-card form {
   display: grid;
   gap: 10px;
