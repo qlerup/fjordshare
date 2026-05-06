@@ -8103,6 +8103,16 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_files_uploaded_at ON files(uploaded_at DESC);
             CREATE INDEX IF NOT EXISTS idx_files_upload_client_id ON files(upload_client_id);
 
+            CREATE TABLE IF NOT EXISTS user_file_seen (
+                user_id INTEGER NOT NULL,
+                file_id INTEGER NOT NULL,
+                seen_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, file_id),
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_file_seen_user_seen_at ON user_file_seen(user_id, seen_at DESC, file_id DESC);
+
             CREATE TABLE IF NOT EXISTS file_attachments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 file_id INTEGER NOT NULL,
@@ -9777,6 +9787,137 @@ def list_accessible_folders(user: User) -> list[dict]:
     return items
 
 
+def _normalize_actor_identity(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _same_actor_identity(left: Any, right: Any) -> bool:
+    a = _normalize_actor_identity(left)
+    b = _normalize_actor_identity(right)
+    return bool(a) and bool(b) and a == b
+
+
+def _normalize_unique_positive_ids(values: Iterable[Any]) -> list[int]:
+    out: list[int] = []
+    seen: set[int] = set()
+    for raw in values:
+        try:
+            value = int(raw)
+        except Exception:
+            continue
+        if value <= 0 or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _seen_file_ids_for_user(conn: sqlite3.Connection, user_id: int, file_ids: Iterable[Any]) -> set[int]:
+    wanted_ids = _normalize_unique_positive_ids(file_ids)
+    if not wanted_ids:
+        return set()
+
+    out: set[int] = set()
+    chunk_size = 800
+    for idx in range(0, len(wanted_ids), chunk_size):
+        chunk = wanted_ids[idx : idx + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT file_id FROM user_file_seen WHERE user_id=? AND file_id IN ({placeholders})",
+            (int(user_id), *chunk),
+        ).fetchall()
+        for row in rows:
+            try:
+                out.add(int(row["file_id"] or 0))
+            except Exception:
+                continue
+    return out
+
+
+def _unseen_file_ids_for_rows(conn: sqlite3.Connection, user: User, rows: list[sqlite3.Row]) -> set[int]:
+    if not user.is_admin:
+        return set()
+
+    actor_name = str(user.username or "")
+    candidate_ids: list[int] = []
+    for row in rows:
+        file_id = int(row["id"] or 0)
+        if file_id <= 0:
+            continue
+        if _same_actor_identity(row["uploaded_by"], actor_name):
+            continue
+        candidate_ids.append(file_id)
+
+    if not candidate_ids:
+        return set()
+
+    seen_ids = _seen_file_ids_for_user(conn, int(user.id), candidate_ids)
+    return {file_id for file_id in candidate_ids if file_id not in seen_ids}
+
+
+def _unseen_folder_counts_for_user(conn: sqlite3.Connection, user: User) -> dict[str, int]:
+    if not user.is_admin:
+        return {}
+
+    rows = conn.execute("SELECT id, folder_path, uploaded_by FROM files").fetchall()
+    if not rows:
+        return {}
+
+    unseen_ids = _unseen_file_ids_for_rows(conn, user, rows)
+    if not unseen_ids:
+        return {}
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        file_id = int(row["id"] or 0)
+        if file_id not in unseen_ids:
+            continue
+        folder = normalize_folder_path(str(row["folder_path"] or ""))
+        if not folder:
+            continue
+
+        lineage = _ancestor_paths(folder)
+        lineage.append(folder)
+        for path in lineage:
+            counts[path] = int(counts.get(path, 0)) + 1
+
+    return counts
+
+
+def _mark_files_seen_for_user(conn: sqlite3.Connection, user: User, file_ids: Iterable[Any]) -> list[int]:
+    wanted_ids = _normalize_unique_positive_ids(file_ids)
+    if not wanted_ids:
+        return []
+
+    allowed_ids: set[int] = set()
+    chunk_size = 800
+    for idx in range(0, len(wanted_ids), chunk_size):
+        chunk = wanted_ids[idx : idx + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT id, folder_path FROM files WHERE id IN ({placeholders})",
+            tuple(chunk),
+        ).fetchall()
+        for row in rows:
+            if user_can_access_file(user, row, "view"):
+                allowed_ids.add(int(row["id"] or 0))
+
+    if not allowed_ids:
+        return []
+
+    stamp = now_iso()
+    conn.executemany(
+        """
+        INSERT INTO user_file_seen(user_id, file_id, seen_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(user_id, file_id) DO UPDATE SET seen_at=excluded.seen_at
+        """,
+        [(int(user.id), int(file_id), stamp) for file_id in sorted(allowed_ids)],
+    )
+
+    return [file_id for file_id in wanted_ids if file_id in allowed_ids]
+
+
 def allocate_unique_target(folder_abs: Path, filename: str) -> Path:
     target = folder_abs / filename
     stem = Path(filename).stem
@@ -10168,6 +10309,7 @@ def serialize_file_row(
     row: sqlite3.Row,
     share_token: Optional[str] = None,
     slice_output_row: Optional[sqlite3.Row] = None,
+    is_new: bool = False,
 ) -> dict:
     ext = str(row["ext"] or "").lower()
     is_3d = ext in THREE_D_EXTENSIONS
@@ -10211,6 +10353,7 @@ def serialize_file_row(
         "file_size": int(row["file_size"] or 0),
         "uploaded_by": str(row["uploaded_by"] or ""),
         "uploaded_at": str(row["uploaded_at"] or ""),
+        "is_new": bool(is_new),
         "note": str(row["note"] or ""),
         "quantity": int(row["quantity"] or 1),
         "scale_up_enabled": bool(int(row["scale_up_enabled"] or 0)),
@@ -11901,7 +12044,11 @@ def api_me_sms_onboarding_verify():
 @login_required
 def api_folders_list():
     items = list_accessible_folders(current_user)
-    return jsonify({"ok": True, "items": items})
+    unseen_counts: dict[str, int] = {}
+    if current_user.is_admin:
+        with closing(get_conn()) as conn:
+            unseen_counts = _unseen_folder_counts_for_user(conn, current_user)
+    return jsonify({"ok": True, "items": items, "unseen_counts": unseen_counts})
 
 
 @app.route("/api/folders", methods=["POST"])
@@ -11975,26 +12122,53 @@ def api_files_list():
                 "SELECT * FROM files ORDER BY uploaded_at DESC, id DESC LIMIT 1000"
             ).fetchall()
 
-    accessible_rows: list[sqlite3.Row] = []
-    for row in rows:
-        if user_can_access_file(current_user, row, "view"):
-            accessible_rows.append(row)
+        accessible_rows: list[sqlite3.Row] = []
+        for row in rows:
+            if user_can_access_file(current_user, row, "view"):
+                accessible_rows.append(row)
+
+        unseen_file_ids = _unseen_file_ids_for_rows(conn, current_user, accessible_rows)
 
     items: list[dict] = []
     for row, slice_output_row in _pair_visible_file_rows_with_slice_output(accessible_rows):
+        file_id = int(row["id"] or 0)
         ext = str(row["ext"] or "").lower()
         thumb_status = str(row["thumb_status"] or "none").strip().lower()
         thumb_rel = str(row["thumb_rel"] or "").strip()
         if _supports_thumbnail_for_ext(ext) and thumb_status != "cancelled" and (not thumb_rel or thumb_status in {"queued", "error"}):
             try:
-                enqueue_thumbnail(int(row["id"]))
+                enqueue_thumbnail(file_id)
             except Exception:
                 pass
-        items.append(serialize_file_row(row, slice_output_row=slice_output_row))
+        items.append(
+            serialize_file_row(
+                row,
+                slice_output_row=slice_output_row,
+                is_new=file_id in unseen_file_ids,
+            )
+        )
 
     zip_jobs = list_zip_jobs_for_folder(folder)
 
     return jsonify({"ok": True, "folder": folder, "items": items, "zip_jobs": zip_jobs})
+
+
+@app.route("/api/files/seen-batch", methods=["POST"])
+@login_required
+def api_files_seen_batch():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan markere filer som set"}), 403
+
+    body = request.get_json(silent=True) or {}
+    file_ids = _parse_positive_int_list(body.get("file_ids"))
+    if not file_ids:
+        return jsonify({"ok": True, "seen_ids": []})
+
+    with closing(get_conn()) as conn:
+        seen_ids = _mark_files_seen_for_user(conn, current_user, file_ids)
+        conn.commit()
+
+    return jsonify({"ok": True, "seen_ids": seen_ids})
 
 
 @app.route("/api/files/<int:file_id>/content", methods=["GET"])

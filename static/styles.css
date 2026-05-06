@@ -1042,12 +1042,48 @@ input[type="checkbox"] {
   opacity: 0.86;
 }
 
+.folder-new-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(252, 165, 165, 0.72);
+  background: rgba(153, 27, 27, 0.92);
+  color: #ffecec;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+
+.mapper-shell.select-mode .folder-new-badge {
+  display: none;
+}
+
 .folder-tile-name {
   font-size: 1rem;
   font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.folder-tile-name .hover-scroll-text {
+  display: inline;
+  white-space: nowrap;
+}
+
+.folder-tile-name.marquee {
+  text-overflow: clip;
+}
+
+.folder-tile-name.marquee .hover-scroll-text {
+  display: inline-block;
+  will-change: transform;
 }
 
 .folder-tile-meta {
@@ -1249,6 +1285,25 @@ input[type="checkbox"] {
   border-color: rgba(255, 255, 255, 0.4);
 }
 
+.file-new-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(252, 165, 165, 0.72);
+  background: rgba(153, 27, 27, 0.92);
+  color: #ffecec;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.mapper-shell.select-mode .file-new-badge {
+  display: none;
+}
+
 .file-slice-badge {
   position: absolute;
   right: 8px;
@@ -1343,6 +1398,20 @@ input[type="checkbox"] {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
+}
+
+.file-caption .hover-scroll-text {
+  display: inline;
+  white-space: nowrap;
+}
+
+.file-caption.marquee {
+  text-overflow: clip;
+}
+
+.file-caption.marquee .hover-scroll-text {
+  display: inline-block;
+  will-change: transform;
 }
 
 .file-body {
@@ -3741,8 +3810,31 @@ input[type="checkbox"] {
   .content-header h1 { font-size: 1.7rem; }
   .mapper-shell .mapper-topbar h3 { font-size: 1.5rem; }
   .mapper-current-row {
-    justify-content: flex-end;
-    align-items: center;
+    justify-content: stretch;
+    align-items: stretch;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .mapper-current-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-items: stretch;
+  }
+  .mapper-select-summary {
+    flex: 1 1 100%;
+    white-space: normal;
+    text-align: center;
+  }
+  .mapper-current-actions > .btn {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.2;
+  }
+  .mapper-shell.select-mode .mapper-current-actions #mapperSelectPrintReadyBtn {
+    flex: 1 1 100%;
   }
   .folder-browser {
     grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));

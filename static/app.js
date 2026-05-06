@@ -90,6 +90,8 @@
     folderPreviewCache: Object.create(null),
     folderPreviewLoading: new Set(),
     folderPreviewRequestToken: 0,
+    folderUnseenCounts: Object.create(null),
+    fileSeenInFlight: new Set(),
     modelPreviewLoadToken: 0,
     modelModalCloseGuardUntil: 0,
     currentPrintReadyProjectId: 0,
@@ -522,6 +524,74 @@
     el.classList.remove("ok", "error");
     el.classList.add(kind === "ok" ? "ok" : "error");
     el.textContent = message;
+  }
+
+  function canUseHoverMarquee() {
+    return !!(window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 1001px)").matches);
+  }
+
+  function bindHoverMarqueeCards(rootEl, cardSelector, lineSelector) {
+    if (!rootEl) return;
+    const cards = Array.from(rootEl.querySelectorAll(cardSelector));
+    for (const card of cards) {
+      const lineEl = card.querySelector(lineSelector);
+      const inner = lineEl ? lineEl.querySelector(".hover-scroll-text") : null;
+      if (!lineEl || !inner) continue;
+
+      let rafId = 0;
+
+      const cancelMarquee = () => {
+        if (rafId) {
+          window.cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
+        lineEl.classList.remove("marquee");
+        inner.style.transform = "";
+      };
+
+      const startMarquee = () => {
+        if (!canUseHoverMarquee()) {
+          cancelMarquee();
+          return;
+        }
+
+        const prevDisplay = inner.style.display;
+        inner.style.display = "inline-block";
+        const delta = Math.max(0, inner.scrollWidth - lineEl.clientWidth);
+        inner.style.display = prevDisplay;
+
+        if (delta <= 4) {
+          cancelMarquee();
+          return;
+        }
+
+        cancelMarquee();
+        lineEl.classList.add("marquee");
+
+        let x = 0;
+        let lastTs = 0;
+        const speed = 58;
+
+        const step = (ts) => {
+          if (!lineEl.classList.contains("marquee") || !lineEl.isConnected) {
+            cancelMarquee();
+            return;
+          }
+          if (!lastTs) lastTs = ts;
+          const dt = Math.max(0, (ts - lastTs) / 1000);
+          lastTs = ts;
+          x -= speed * dt;
+          if (-x >= delta) x = 0;
+          inner.style.transform = `translateX(${x}px)`;
+          rafId = window.requestAnimationFrame(step);
+        };
+
+        rafId = window.requestAnimationFrame(step);
+      };
+
+      lineEl.addEventListener("mouseenter", startMarquee);
+      lineEl.addEventListener("mouseleave", cancelMarquee);
+    }
   }
 
   const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".step", ".3mf", ".stl", ".zip"]);
@@ -2611,10 +2681,84 @@
           path: childPath,
           name: nextPart,
           permission: String(item.permission || ""),
+          unseen_count: Number((state.folderUnseenCounts && state.folderUnseenCounts[childPath]) || 0),
         });
+      } else {
+        const existing = out.get(childPath);
+        const unseen = Number((state.folderUnseenCounts && state.folderUnseenCounts[childPath]) || 0);
+        if (existing && unseen > Number(existing.unseen_count || 0)) {
+          existing.unseen_count = unseen;
+        }
       }
     }
     return Array.from(out.values()).sort((a, b) => a.name.localeCompare(b.name, "da"));
+  }
+
+  function folderLineage(path) {
+    const normalized = normalizeFolderPath(path);
+    if (!normalized) return [];
+    const parts = normalized.split("/").filter(Boolean);
+    const out = [];
+    for (let i = 1; i <= parts.length; i += 1) {
+      out.push(parts.slice(0, i).join("/"));
+    }
+    return out;
+  }
+
+  function decrementFolderUnseenCounts(folderPath, amount = 1) {
+    const delta = Number(amount || 0);
+    if (!Number.isFinite(delta) || delta <= 0) return;
+    const map = state.folderUnseenCounts && typeof state.folderUnseenCounts === "object"
+      ? state.folderUnseenCounts
+      : null;
+    if (!map) return;
+
+    for (const path of folderLineage(folderPath)) {
+      const current = Number(map[path] || 0);
+      const next = Math.max(0, Math.floor(current - delta));
+      if (next > 0) map[path] = next;
+      else delete map[path];
+    }
+  }
+
+  async function markFilesSeen(fileIds = []) {
+    if (state.role !== "admin") return;
+
+    const wanted = Array.from(fileIds || [])
+      .map((value) => Number(value || 0))
+      .filter((value) => value > 0 && !state.fileSeenInFlight.has(value));
+    if (!wanted.length) return;
+
+    wanted.forEach((id) => state.fileSeenInFlight.add(id));
+    try {
+      const data = await api("/api/files/seen-batch", {
+        method: "POST",
+        body: { file_ids: wanted },
+      });
+
+      const seenIds = Array.isArray(data && data.seen_ids)
+        ? data.seen_ids.map((value) => Number(value || 0)).filter((value) => value > 0)
+        : wanted;
+      if (!seenIds.length) return;
+
+      let changed = false;
+      for (const id of seenIds) {
+        const file = fileById(id);
+        if (!file || !file.is_new) continue;
+        file.is_new = false;
+        decrementFolderUnseenCounts(String(file.folder_path || ""), 1);
+        changed = true;
+      }
+
+      if (changed) {
+        renderFiles();
+        renderFolderBrowser();
+      }
+    } catch (_err) {
+      // Ignore transient errors; badges refresh on next data reload.
+    } finally {
+      wanted.forEach((id) => state.fileSeenInFlight.delete(id));
+    }
   }
 
   function updateFolderUiState() {
@@ -2650,11 +2794,16 @@
         const perm = child.permission ? ` · ${esc(child.permission)}` : "";
         const isSelected = isFolderEffectivelySelected(String(child.path || ""));
         const previewHtml = folderTilePreviewHtml(child.path);
+        const unseenCount = Math.max(0, Number(child.unseen_count || 0));
+        const unseenBadge = state.role === "admin" && unseenCount > 0
+          ? `<span class="folder-new-badge" title="${unseenCount} nye filer">${unseenCount}</span>`
+          : "";
         return `
           <div class="folder-tile ${isSelected ? "selected" : ""}" data-folder="${esc(child.path)}" role="button" tabindex="0">
             <span class="select-mark ${isSelected ? "selected" : ""}"></span>
+            ${unseenBadge}
             <div class="folder-tile-preview">${previewHtml}</div>
-            <div class="folder-tile-name">${esc(child.name)}</div>
+            <div class="folder-tile-name" title="${esc(child.name)}"><span class="hover-scroll-text">${esc(child.name)}</span></div>
             <div class="folder-tile-meta">${esc(child.path)}${perm}</div>
             <div class="folder-tile-actions">
               <button class="btn small folder-tile-open" type="button" data-folder-open="${esc(child.path)}">Åbn</button>
@@ -2663,6 +2812,8 @@
         `;
       })
       .join("");
+
+    bindHoverMarqueeCards(els.folderList, ".folder-tile", ".folder-tile-name");
 
     ensureFolderTilePreviews(folder, children).catch(() => {});
   }
@@ -2754,6 +2905,18 @@
   async function loadFolders() {
     const data = await api("/api/folders");
     state.folders = Array.isArray(data.items) ? data.items : [];
+    const unseenRaw = data && data.unseen_counts && typeof data.unseen_counts === "object"
+      ? data.unseen_counts
+      : {};
+    const unseenMap = Object.create(null);
+    Object.entries(unseenRaw).forEach(([rawPath, rawCount]) => {
+      const path = normalizeFolderPath(rawPath);
+      const count = Math.max(0, Math.floor(Number(rawCount || 0)));
+      if (path && Number.isFinite(count) && count > 0) {
+        unseenMap[path] = count;
+      }
+    });
+    state.folderUnseenCounts = unseenMap;
 
     const options = state.folders.map((f) => f.path);
     if (!state.currentFolder) {
@@ -7379,6 +7542,10 @@
     renderFileAttachments([]);
     showStatus(els.fileInfoAttachStatus, "");
 
+    if (state.role === "admin" && file.is_new) {
+      markFilesSeen([state.currentInfoFileId]).catch(() => {});
+    }
+
     if (state.infoDrawerHideTimer) {
       clearTimeout(state.infoDrawerHideTimer);
       state.infoDrawerHideTimer = null;
@@ -7549,20 +7716,25 @@
         const id = Number(file.id || 0);
         const isSelected = isFileEffectivelySelected(file);
         const sliceBadge = sliceBadgeHtml(file);
+        const isNew = state.role === "admin" && !!file.is_new;
+        const newBadge = isNew ? '<span class="file-new-badge" title="Ny fil">Ny</span>' : "";
         return `
           <article class="file-card file-card-compact ${isSelected ? "selected" : ""}" data-file-id="${id}">
             <div class="file-preview">
               <span class="select-mark ${isSelected ? "selected" : ""}"></span>
+              ${newBadge}
               <button class="file-info-btn" data-action="open-info" data-file-id="${id}" aria-label="Vis fil-info">i</button>
               ${sliceBadge}
               ${filePreviewHtml(file)}
             </div>
-            <div class="file-caption" title="${esc(file.filename)}">${esc(file.filename)}</div>
+            <div class="file-caption" title="${esc(file.filename)}"><span class="hover-scroll-text">${esc(file.filename)}</span></div>
           </article>
         `;
       })
       .join("");
     els.fileGrid.innerHTML = html;
+
+    bindHoverMarqueeCards(els.fileGrid, ".file-card", ".file-caption");
 
     pruneSelections();
 
