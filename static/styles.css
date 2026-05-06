@@ -295,6 +295,35 @@ input[type="checkbox"] {
   font-weight: 600;
 }
 
+.nav-item-with-count {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nav-item-label {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-count-badge {
+  flex: 0 0 auto;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 175, 175, 0.7);
+  background: rgba(153, 27, 27, 0.9);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  padding: 0 6px;
+}
+
 .nav-item:hover {
   border-color: rgba(255, 255, 255, 0.04);
   background: rgba(255, 255, 255, 0.03);

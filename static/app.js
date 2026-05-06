@@ -141,6 +141,7 @@
     statFolders: document.getElementById("statFolders"),
     statShares: document.getElementById("statShares"),
     sidebarNav: document.getElementById("sidebarNav"),
+    printReadyNavBadge: document.getElementById("printReadyNavBadge"),
     profileFooterBtn: document.getElementById("profileFooterBtn"),
     sidebarUsername: document.querySelector(".sidebar-user strong"),
     mobileBottomNav: document.getElementById("mobileBottomNav"),
@@ -2051,6 +2052,42 @@
     }
   }
 
+  function normalizePrintReadyProjectStatus(statusValue) {
+    const status = String(statusValue || "ready").trim().toLowerCase();
+    return status || "ready";
+  }
+
+  function isFinalPrintReadyProjectStatus(statusValue) {
+    const status = normalizePrintReadyProjectStatus(statusValue);
+    return status === "completed" || status === "cancelled";
+  }
+
+  function countActivePrintReadyProjects(projects) {
+    return Array.from(projects || []).reduce((count, project) => {
+      if (!project || isFinalPrintReadyProjectStatus(project.status)) return count;
+      return count + 1;
+    }, 0);
+  }
+
+  function updatePrintReadyNavBadge() {
+    if (!els.printReadyNavBadge) return;
+    if (state.role !== "admin") {
+      els.printReadyNavBadge.textContent = "0";
+      els.printReadyNavBadge.classList.add("hidden");
+      return;
+    }
+
+    const count = countActivePrintReadyProjects(state.printReadyProjects);
+    if (count <= 0) {
+      els.printReadyNavBadge.textContent = "0";
+      els.printReadyNavBadge.classList.add("hidden");
+      return;
+    }
+
+    els.printReadyNavBadge.textContent = count > 99 ? "99+" : String(count);
+    els.printReadyNavBadge.classList.remove("hidden");
+  }
+
   function setSettingsTab(tab) {
     const target = String(tab || "shares");
     state.currentSettingsTab = target;
@@ -2090,6 +2127,7 @@
       state.unseenUploads = [];
     }
     renderUnseenUploadsOverlay();
+    updatePrintReadyNavBadge();
     updateStats();
   }
 
@@ -9272,6 +9310,7 @@
       showStatus(els.printReadyStatus, err.message || "Kunne ikke hente klar til print", "error");
     }
     renderPrintReadyProjects();
+    updatePrintReadyNavBadge();
   }
 
   function printReadyAttachmentHtml(attachments) {
@@ -9341,7 +9380,7 @@
   function renderPrintReadyProjectCard(project) {
     const isAdmin = state.role === "admin";
     const files = Array.isArray(project.files) ? project.files : [];
-    const projectStatus = String(project.status || "ready").trim().toLowerCase() || "ready";
+    const projectStatus = normalizePrintReadyProjectStatus(project.status);
     const isCompletedProject = projectStatus === "completed";
     const isCancelledProject = projectStatus === "cancelled";
     const isFinalProject = isCompletedProject || isCancelledProject;

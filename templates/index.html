@@ -16,7 +16,10 @@
 
     <nav id="sidebarNav" class="nav">
       <button class="nav-item active" data-tab="files">Mapper</button>
-      <button class="nav-item" data-tab="print-ready">Projekter klar til print</button>
+      <button class="nav-item nav-item-with-count" data-tab="print-ready">
+        <span class="nav-item-label">Projekter klar til print</span>
+        <span id="printReadyNavBadge" class="nav-count-badge hidden" aria-label="Aktive projekter">0</span>
+      </button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
       <button class="nav-item" data-tab="tracking">Tracking</button>
     </nav>
