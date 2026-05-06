@@ -3941,6 +3941,186 @@ input[type="checkbox"] {
     width: 100%;
   }
 
+  #settings-panel-logs .panel {
+    overflow-x: hidden;
+  }
+
+  #settings-panel-logs .table,
+  #settings-panel-logs .table thead,
+  #settings-panel-logs .table tbody,
+  #settings-panel-logs .table tr,
+  #settings-panel-logs .table th,
+  #settings-panel-logs .table td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #settings-panel-logs .table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  #settings-panel-logs .table thead {
+    display: none;
+  }
+
+  #settings-panel-logs .table tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  #settings-panel-logs .table tr {
+    border: 1px solid rgba(70, 81, 101, 0.75);
+    border-radius: 10px;
+    background: rgba(31, 36, 48, 0.48);
+    padding: 8px;
+  }
+
+  #settings-panel-logs .table td {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr);
+    gap: 8px;
+    border-bottom: 0;
+    padding: 5px 0;
+    font-size: 0.84rem;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  #settings-panel-logs .table td::before {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  #logsTableBody td:nth-child(1)::before { content: "Tid"; }
+  #logsTableBody td:nth-child(2)::before { content: "Status"; }
+  #logsTableBody td:nth-child(3)::before { content: "Type"; }
+  #logsTableBody td:nth-child(4)::before { content: "Fil/Job"; }
+  #logsTableBody td:nth-child(5)::before { content: "Mappe"; }
+  #logsTableBody td:nth-child(6)::before { content: "Beskrivelse"; }
+
+  #settings-panel-slicer .panel,
+  #settings-panel-slicer .slicer-profile-card {
+    overflow-x: hidden;
+  }
+
+  #settings-panel-slicer .slicer-profile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #settings-panel-slicer .table,
+  #settings-panel-slicer .table thead,
+  #settings-panel-slicer .table tbody,
+  #settings-panel-slicer .table tr,
+  #settings-panel-slicer .table th,
+  #settings-panel-slicer .table td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #settings-panel-slicer .table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  #settings-panel-slicer .table thead {
+    display: none;
+  }
+
+  #settings-panel-slicer .table tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  #settings-panel-slicer .table tr {
+    border: 1px solid rgba(70, 81, 101, 0.75);
+    border-radius: 10px;
+    background: rgba(31, 36, 48, 0.48);
+    padding: 8px;
+  }
+
+  #settings-panel-slicer .table td {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 8px;
+    border-bottom: 0;
+    padding: 5px 0;
+    font-size: 0.84rem;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  #settings-panel-slicer .table td::before {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  #settings-panel-slicer .table td[colspan] {
+    display: block;
+  }
+
+  #settings-panel-slicer .table td[colspan]::before {
+    content: "";
+    display: none;
+  }
+
+  #slicerBedMapTableBody td:nth-child(1)::before { content: "Printer"; }
+  #slicerBedMapTableBody td:nth-child(2)::before { content: "Producent"; }
+  #slicerBedMapTableBody td:nth-child(3)::before { content: "Model"; }
+  #slicerBedMapTableBody td:nth-child(4)::before { content: "X"; }
+  #slicerBedMapTableBody td:nth-child(5)::before { content: "Y"; }
+  #slicerBedMapTableBody td:nth-child(6)::before { content: "Kilde"; }
+  #slicerBedMapTableBody td:nth-child(7)::before { content: "Handling"; }
+
+  #slicerMachineTableBody td:nth-child(1)::before,
+  #slicerProcessTableBody td:nth-child(1)::before,
+  #slicerFilamentTableBody td:nth-child(1)::before,
+  #slicerConfigTableBody td:nth-child(1)::before { content: "Fil"; }
+
+  #slicerMachineTableBody td:nth-child(2)::before,
+  #slicerProcessTableBody td:nth-child(2)::before,
+  #slicerFilamentTableBody td:nth-child(2)::before,
+  #slicerConfigTableBody td:nth-child(2)::before { content: "Størrelse"; }
+
+  #slicerMachineTableBody td:nth-child(3)::before,
+  #slicerProcessTableBody td:nth-child(3)::before,
+  #slicerFilamentTableBody td:nth-child(3)::before,
+  #slicerConfigTableBody td:nth-child(3)::before { content: "Uploadet"; }
+
+  #slicerMachineTableBody td:nth-child(4)::before,
+  #slicerProcessTableBody td:nth-child(4)::before,
+  #slicerFilamentTableBody td:nth-child(4)::before,
+  #slicerConfigTableBody td:nth-child(4)::before { content: "Handling"; }
+
+  #settings-panel-slicer .select,
+  #settings-panel-slicer .input,
+  #slicerBedMapTableBody .select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  #settings-panel-slicer .table .btn {
+    width: 100%;
+  }
+
+  #settings-panel-slicer .slicer-bedmap-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  #settings-panel-slicer .slicer-bedmap-value {
+    min-height: 0;
+  }
+
   #tab-tracking .form-grid,
   #settings-panel-users .form-grid {
     grid-template-columns: 1fr;
@@ -3976,8 +4156,34 @@ input[type="checkbox"] {
     justify-content: flex-start;
   }
 
+  .modal-card.profile-modal-card form {
+    gap: 8px;
+  }
+
+  .modal-card.profile-modal-card .toolbar {
+    gap: 8px;
+  }
+
+  .modal-card.profile-modal-card .btn {
+    width: 100%;
+  }
+
+  .modal-card.profile-modal-card #profileSaveBtn {
+    order: 1;
+  }
+
+  .modal-card.profile-modal-card #profileModalCancelBtn {
+    order: 2;
+  }
+
   .file-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .file-caption {
+    padding: 7px 8px;
+    font-size: 0.82rem;
   }
 
   .metadata-fields {
