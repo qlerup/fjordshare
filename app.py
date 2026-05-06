@@ -805,17 +805,21 @@ def normalize_username(raw: str) -> str:
     value = str(raw or "").strip()
     if len(value) < 2 or len(value) > 40:
         raise ValueError("Brugernavn skal være mellem 2 og 40 tegn.")
+    if "@" in value:
+        raise ValueError("En mailadresse er ikke gyldig i feltet Brugernavn.")
     if re.search(r"[\\/:*?\"<>|\s]", value):
         raise ValueError("Brugernavn må ikke indeholde mellemrum eller specialtegn som / \\ : * ?")
     return value
 
 
-def normalize_person_name(raw: str, label: str = "Navn", required: bool = True) -> str:
+def normalize_person_name(raw: str, label: str = "Navn", required: bool = True, forbid_email: bool = False) -> str:
     value = re.sub(r"\s+", " ", str(raw or "").strip())
     if not value:
         if required:
             raise ValueError(f"{label} er påkrævet.")
         return ""
+    if forbid_email and "@" in value:
+        raise ValueError(f"En mailadresse er ikke gyldig i feltet {label}.")
     if len(value) > 80:
         raise ValueError(f"{label} må højst være 80 tegn.")
     if any(ord(ch) < 32 or ch in {"\x00", "/", "\\", ":", "*", "?", "\"", "<", ">", "|"} for ch in value):
@@ -823,8 +827,8 @@ def normalize_person_name(raw: str, label: str = "Navn", required: bool = True) 
     return value
 
 
-def last_name_to_initial(raw: str, required: bool = True) -> str:
-    value = normalize_person_name(raw, "Efternavn", required=required)
+def last_name_to_initial(raw: str, required: bool = True, forbid_email: bool = False) -> str:
+    value = normalize_person_name(raw, "Efternavn", required=required, forbid_email=forbid_email)
     if not value:
         return ""
     for ch in value:
@@ -9618,7 +9622,7 @@ def create_user_with_password_hash(
     require_name: bool = False,
 ) -> int:
     clean_username = normalize_username(username)
-    clean_first_name = normalize_person_name(first_name, "Navn", required=require_name)
+    clean_first_name = normalize_person_name(first_name, "Navn", required=require_name, forbid_email=True)
     clean_last_initial = normalize_last_initial(last_initial, required=require_name)
     pwd_hash = str(password_hash or "").strip()
     if not pwd_hash:
@@ -9653,7 +9657,7 @@ def create_user(
     last_name: str = "",
     require_name: bool = False,
 ) -> int:
-    clean_last_initial = last_name_to_initial(last_name, required=require_name)
+    clean_last_initial = last_name_to_initial(last_name, required=require_name, forbid_email=True)
     if len(str(password or "")) < 4:
         raise ValueError("Password skal være mindst 4 tegn.")
     return create_user_with_password_hash(
@@ -11453,8 +11457,8 @@ def profile_signup(token: str):
         else:
             try:
                 clean_username = normalize_username(username)
-                clean_first_name = normalize_person_name(first_name, "Navn", required=True)
-                clean_last_initial = last_name_to_initial(last_name, required=True)
+                clean_first_name = normalize_person_name(first_name, "Navn", required=True, forbid_email=True)
+                clean_last_initial = last_name_to_initial(last_name, required=True, forbid_email=True)
                 if len(password) < 4:
                     raise ValueError("Password skal være mindst 4 tegn.")
                 pwd_hash = generate_password_hash(password)
@@ -14679,8 +14683,8 @@ def api_admin_users_update(user_id: int):
 
     body = request.get_json(silent=True) or {}
     try:
-        first_name = normalize_person_name(str(body.get("first_name") or ""), "Navn", required=True)
-        last_initial = last_name_to_initial(str(body.get("last_name") or body.get("last_initial") or ""), required=True)
+        first_name = normalize_person_name(str(body.get("first_name") or ""), "Navn", required=True, forbid_email=True)
+        last_initial = last_name_to_initial(str(body.get("last_name") or body.get("last_initial") or ""), required=True, forbid_email=True)
         username = normalize_username(str(body.get("username") or ""))
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
