@@ -119,6 +119,21 @@
           <input id="fileInfoNote" class="input" type="text" placeholder="Bemærkning">
           <label for="fileInfoQty">Antal</label>
           <input id="fileInfoQty" class="input" type="number" min="1" value="1">
+          <div class="scale-up-field">
+            <label class="scale-up-toggle" for="fileInfoScaleUpEnabled">
+              <input id="fileInfoScaleUpEnabled" type="checkbox">
+              <span>Skal den printes større end originalfilen?</span>
+            </label>
+            <div id="fileInfoScaleUpControls" class="scale-up-controls is-disabled">
+              <input id="fileInfoScaleUpValue" class="input" type="text" inputmode="decimal" placeholder="Hvor meget større?" disabled>
+              <select id="fileInfoScaleUpUnit" aria-label="Enhed for større print" disabled>
+                <option value="%">%</option>
+                <option value="mm">mm</option>
+                <option value="cm">cm</option>
+                <option value="m">m</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <div class="file-info-attachments">
@@ -1088,7 +1103,7 @@
       <h3>Tilføj detaljer pr. fil</h3>
       <div id="metadataStepCounter" class="metadata-step-counter">1/1</div>
     </div>
-    <p class="hint">Skriv bemærkning og antal for den valgte fil.</p>
+    <p class="hint">Skriv bemærkning, antal og eventuel større printstørrelse for den valgte fil.</p>
 
     <div id="metadataCurrentFileName" class="metadata-current-file">-</div>
 
@@ -1100,6 +1115,22 @@
       <div class="metadata-field metadata-field-small">
         <label for="metadataQtyInput">Antal</label>
         <input id="metadataQtyInput" class="input" type="number" min="1" value="1">
+      </div>
+    </div>
+
+    <div class="metadata-scale-up-field scale-up-field">
+      <label class="scale-up-toggle" for="metadataScaleUpEnabled">
+        <input id="metadataScaleUpEnabled" type="checkbox">
+        <span>Skal den printes større end originalfilen?</span>
+      </label>
+      <div id="metadataScaleUpControls" class="scale-up-controls is-disabled">
+        <input id="metadataScaleUpValue" class="input" type="text" inputmode="decimal" placeholder="Hvor meget større?" disabled>
+        <select id="metadataScaleUpUnit" aria-label="Enhed for større print" disabled>
+          <option value="%">%</option>
+          <option value="mm">mm</option>
+          <option value="cm">cm</option>
+          <option value="m">m</option>
+        </select>
       </div>
     </div>
 
@@ -1201,7 +1232,7 @@
           </button>
           <button class="app-onboarding-nav-item" data-guide-panel="file-info" type="button">
             <span class="app-onboarding-nav-label">Filinformation</span>
-            <span class="app-onboarding-nav-meta">Tilfoj antal, noter og billeder</span>
+            <span class="app-onboarding-nav-meta">Tilfoj antal, noter, skalering og billeder</span>
           </button>
           <button class="app-onboarding-nav-item" data-guide-panel="print-ready" type="button">
             <span class="app-onboarding-nav-label">Send til print</span>
@@ -1297,10 +1328,11 @@
             data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
           >
           <div class="app-onboarding-guide-text">
-            <p>Åbn en fil og udfyld bemærkninger, antal og vedhæftede billeder, så produktionen har alle detaljer.</p>
+            <p>Åbn en fil og udfyld bemærkninger, antal, større printstørrelse og vedhæftede billeder, så produktionen har alle detaljer.</p>
             <ul>
               <li>Brug bemærkninger til specielle ønsker.</li>
               <li>Sæt korrekt antal, så ordren bliver produceret rigtigt første gang.</li>
+              <li>Slå større printstørrelse til, hvis filen skal printes større end originalen.</li>
             </ul>
           </div>
         </section>

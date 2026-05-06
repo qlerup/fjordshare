@@ -206,6 +206,10 @@
     fileInfoFilamentCost: document.getElementById("fileInfoFilamentCost"),
     fileInfoNote: document.getElementById("fileInfoNote"),
     fileInfoQty: document.getElementById("fileInfoQty"),
+    fileInfoScaleUpEnabled: document.getElementById("fileInfoScaleUpEnabled"),
+    fileInfoScaleUpControls: document.getElementById("fileInfoScaleUpControls"),
+    fileInfoScaleUpValue: document.getElementById("fileInfoScaleUpValue"),
+    fileInfoScaleUpUnit: document.getElementById("fileInfoScaleUpUnit"),
     fileInfoAttachUploadBtn: document.getElementById("fileInfoAttachUploadBtn"),
     fileInfoAttachInput: document.getElementById("fileInfoAttachInput"),
     fileInfoAttachDropZone: document.getElementById("fileInfoAttachDropZone"),
@@ -273,6 +277,10 @@
     metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
     metadataNoteInput: document.getElementById("metadataNoteInput"),
     metadataQtyInput: document.getElementById("metadataQtyInput"),
+    metadataScaleUpEnabled: document.getElementById("metadataScaleUpEnabled"),
+    metadataScaleUpControls: document.getElementById("metadataScaleUpControls"),
+    metadataScaleUpValue: document.getElementById("metadataScaleUpValue"),
+    metadataScaleUpUnit: document.getElementById("metadataScaleUpUnit"),
     metadataAttachUploadBtn: document.getElementById("metadataAttachUploadBtn"),
     metadataAttachInput: document.getElementById("metadataAttachInput"),
     metadataAttachDropZone: document.getElementById("metadataAttachDropZone"),
@@ -1444,6 +1452,55 @@
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return "-";
     return d.toLocaleString();
+  }
+
+  const SCALE_UP_UNITS = new Set(["%", "mm", "cm", "m"]);
+
+  function scaleUpUnit(value) {
+    const unit = String(value || "%").trim();
+    return SCALE_UP_UNITS.has(unit) ? unit : "%";
+  }
+
+  function normalizeScaleUpValue(value) {
+    const raw = String(value || "").trim().replace(",", ".");
+    if (!raw) return "";
+    const num = Number(raw);
+    if (!Number.isFinite(num) || num <= 0) {
+      throw new Error("Angiv hvor meget større filen skal printes.");
+    }
+    return String(num);
+  }
+
+  function scaleUpLabel(item) {
+    if (!item || !item.scale_up_enabled) return "";
+    const value = String(item.scale_up_value || "").trim();
+    if (!value) return "";
+    return `${value} ${scaleUpUnit(item.scale_up_unit)}`;
+  }
+
+  function setScaleUpControls(enabledEl, controlsEl, valueEl, unitEl, enabled) {
+    const isEnabled = !!enabled;
+    if (enabledEl) enabledEl.checked = isEnabled;
+    if (controlsEl) controlsEl.classList.toggle("is-disabled", !isEnabled);
+    if (valueEl) valueEl.disabled = !isEnabled;
+    if (unitEl) unitEl.disabled = !isEnabled;
+  }
+
+  function readScaleUpControls(enabledEl, valueEl, unitEl) {
+    const enabled = !!(enabledEl && enabledEl.checked);
+    const unit = scaleUpUnit(unitEl && unitEl.value);
+    if (!enabled) {
+      return {
+        scale_up_enabled: false,
+        scale_up_value: "",
+        scale_up_unit: unit,
+      };
+    }
+    return {
+      scale_up_enabled: true,
+      scale_up_value: normalizeScaleUpValue(valueEl && valueEl.value),
+      scale_up_unit: unit,
+    };
   }
 
   const SCALE_CAN_HEIGHT_MM = 122;
@@ -7205,10 +7262,6 @@
         ? file.slice_output.summary
         : null;
     const printTimeTotal = String((sliceSummary && sliceSummary.print_time_total) || "").trim();
-    const filamentGramsRaw = Number(sliceSummary && sliceSummary.filament_grams);
-    const filamentCostRaw = Number(sliceSummary && sliceSummary.filament_cost_kr);
-    const hasFilamentGrams = Number.isFinite(filamentGramsRaw);
-    const hasFilamentCost = Number.isFinite(filamentCostRaw);
 
     if (els.fileInfoPrintTimeTotal) {
       els.fileInfoPrintTimeTotal.textContent = printTimeTotal || "-";
@@ -7218,21 +7271,34 @@
     }
 
     if (els.fileInfoFilamentGrams) {
-      els.fileInfoFilamentGrams.textContent = hasFilamentGrams ? formatGrams(filamentGramsRaw) : "-";
+      els.fileInfoFilamentGrams.textContent = "-";
     }
     if (els.fileInfoRowFilamentGrams) {
-      els.fileInfoRowFilamentGrams.classList.toggle("hidden", !hasFilamentGrams);
+      els.fileInfoRowFilamentGrams.classList.add("hidden");
     }
 
     if (els.fileInfoFilamentCost) {
-      els.fileInfoFilamentCost.textContent = hasFilamentCost ? formatKr(filamentCostRaw) : "-";
+      els.fileInfoFilamentCost.textContent = "-";
     }
     if (els.fileInfoRowFilamentCost) {
-      els.fileInfoRowFilamentCost.classList.toggle("hidden", !hasFilamentCost);
+      els.fileInfoRowFilamentCost.classList.add("hidden");
     }
 
     if (els.fileInfoNote) els.fileInfoNote.value = String(file.note || "");
     if (els.fileInfoQty) els.fileInfoQty.value = String(Math.max(1, Number(file.quantity || 1) || 1));
+    if (els.fileInfoScaleUpValue) {
+      els.fileInfoScaleUpValue.value = String(file.scale_up_value || "");
+    }
+    if (els.fileInfoScaleUpUnit) {
+      els.fileInfoScaleUpUnit.value = scaleUpUnit(file.scale_up_unit);
+    }
+    setScaleUpControls(
+      els.fileInfoScaleUpEnabled,
+      els.fileInfoScaleUpControls,
+      els.fileInfoScaleUpValue,
+      els.fileInfoScaleUpUnit,
+      !!file.scale_up_enabled
+    );
     if (els.fileInfoDownloadLink) {
       els.fileInfoDownloadLink.href = String(file.download_url || "#");
     }
@@ -7358,7 +7424,12 @@
     if (!id) return;
     const note = String((els.fileInfoNote && els.fileInfoNote.value) || "");
     const quantity = Math.max(1, Number((els.fileInfoQty && els.fileInfoQty.value) || 1) || 1);
-    await api(`/api/files/${id}/metadata`, { method: "PATCH", body: { note, quantity } });
+    const scaleUp = readScaleUpControls(
+      els.fileInfoScaleUpEnabled,
+      els.fileInfoScaleUpValue,
+      els.fileInfoScaleUpUnit
+    );
+    await api(`/api/files/${id}/metadata`, { method: "PATCH", body: { note, quantity, ...scaleUp } });
     showStatus(els.uploadStatus, "Fil-information gemt.", "ok");
     await loadFiles();
   }
@@ -7886,6 +7957,9 @@
     if (els.metadataQtyInput) {
       item.quantity = Math.max(1, Number(els.metadataQtyInput.value || 1) || 1);
     }
+    item.scale_up_enabled = !!(els.metadataScaleUpEnabled && els.metadataScaleUpEnabled.checked);
+    item.scale_up_value = String((els.metadataScaleUpValue && els.metadataScaleUpValue.value) || "");
+    item.scale_up_unit = scaleUpUnit(els.metadataScaleUpUnit && els.metadataScaleUpUnit.value);
   }
 
   function renderMetadataAttachments(items) {
@@ -7966,6 +8040,19 @@
     if (els.metadataQtyInput) {
       els.metadataQtyInput.value = String(Math.max(1, Number(item.quantity || 1) || 1));
     }
+    if (els.metadataScaleUpValue) {
+      els.metadataScaleUpValue.value = String(item.scale_up_value || "");
+    }
+    if (els.metadataScaleUpUnit) {
+      els.metadataScaleUpUnit.value = scaleUpUnit(item.scale_up_unit);
+    }
+    setScaleUpControls(
+      els.metadataScaleUpEnabled,
+      els.metadataScaleUpControls,
+      els.metadataScaleUpValue,
+      els.metadataScaleUpUnit,
+      !!item.scale_up_enabled
+    );
 
     const hasMultiple = total > 1;
     const isFirst = current <= 1;
@@ -8011,6 +8098,9 @@
           id,
           note: String((file && file.note) || ""),
           quantity: Math.max(1, Number((file && file.quantity) || 1) || 1),
+          scale_up_enabled: !!(file && file.scale_up_enabled),
+          scale_up_value: String((file && file.scale_up_value) || ""),
+          scale_up_unit: scaleUpUnit(file && file.scale_up_unit),
           attachments: [],
         };
       })
@@ -8065,10 +8155,14 @@
 
     persistMetadataStepInputs();
     const items = state.pendingMetadata.map((file) => {
+      const scaleUpEnabled = !!file.scale_up_enabled;
       return {
         file_id: Number(file.id),
         note: String(file.note || ""),
         quantity: Math.max(1, Number(file.quantity || 1) || 1),
+        scale_up_enabled: scaleUpEnabled,
+        scale_up_value: scaleUpEnabled ? normalizeScaleUpValue(file.scale_up_value) : "",
+        scale_up_unit: scaleUpUnit(file.scale_up_unit),
       };
     });
     await api("/api/files/metadata-batch", { method: "POST", body: { items } });
@@ -8729,6 +8823,18 @@
     `;
   }
 
+  function printReadyInfoHtml(file) {
+    const note = String((file && file.note) || "").trim();
+    const scale = scaleUpLabel(file);
+    if (!note && !scale) return `<span class="hint">-</span>`;
+    return `
+      <div class="print-ready-file-info">
+        ${note ? `<div>${esc(note)}</div>` : ""}
+        ${scale ? `<div class="print-ready-scale-up">Større: ${esc(scale)}</div>` : ""}
+      </div>
+    `;
+  }
+
   function renderPrintReadyProjects() {
     if (!els.printReadyAdminList) return;
     const isAdmin = state.role === "admin";
@@ -8782,7 +8888,7 @@
       <tr class="print-ready-file-row">
         <td>${esc(file.display_path || file.folder_path || "-")}</td>
         <td><a href="${esc(file.download_url || "#")}" target="_blank" rel="noopener">${esc(file.filename || "-")}</a></td>
-        <td>${esc(file.note || "-")}</td>
+        <td>${printReadyInfoHtml(file)}</td>
         <td>${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : `<span class="print-ready-status-muted">Ikke printet</span>`}</td>
         <td>${Number(file.quantity || 1)}</td>
         <td>${printReadyAttachmentHtml(file.attachments)}</td>
@@ -12591,6 +12697,20 @@
         });
       });
     }
+    if (els.fileInfoScaleUpEnabled) {
+      els.fileInfoScaleUpEnabled.addEventListener("change", () => {
+        setScaleUpControls(
+          els.fileInfoScaleUpEnabled,
+          els.fileInfoScaleUpControls,
+          els.fileInfoScaleUpValue,
+          els.fileInfoScaleUpUnit,
+          !!els.fileInfoScaleUpEnabled.checked
+        );
+        if (els.fileInfoScaleUpEnabled.checked && els.fileInfoScaleUpValue) {
+          els.fileInfoScaleUpValue.focus();
+        }
+      });
+    }
     const queueInfoAttachmentUpload = (files) => {
       const id = Number(state.currentInfoFileId || 0);
       const list = Array.from(files || []);
@@ -13175,6 +13295,28 @@
     if (els.metadataQtyInput) {
       els.metadataQtyInput.addEventListener("input", persistMetadataStepInputs);
       els.metadataQtyInput.addEventListener("change", persistMetadataStepInputs);
+    }
+    if (els.metadataScaleUpEnabled) {
+      els.metadataScaleUpEnabled.addEventListener("change", () => {
+        setScaleUpControls(
+          els.metadataScaleUpEnabled,
+          els.metadataScaleUpControls,
+          els.metadataScaleUpValue,
+          els.metadataScaleUpUnit,
+          !!els.metadataScaleUpEnabled.checked
+        );
+        if (els.metadataScaleUpEnabled.checked && els.metadataScaleUpValue) {
+          els.metadataScaleUpValue.focus();
+        }
+        persistMetadataStepInputs();
+      });
+    }
+    if (els.metadataScaleUpValue) {
+      els.metadataScaleUpValue.addEventListener("input", persistMetadataStepInputs);
+      els.metadataScaleUpValue.addEventListener("change", persistMetadataStepInputs);
+    }
+    if (els.metadataScaleUpUnit) {
+      els.metadataScaleUpUnit.addEventListener("change", persistMetadataStepInputs);
     }
     if (els.metadataPrevBtn) {
       els.metadataPrevBtn.addEventListener("click", () => moveMetadataStep(-1));

@@ -23,6 +23,7 @@ from urllib import request as urllib_request
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -313,6 +314,61 @@ def parse_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+SCALE_UP_UNITS = {"%", "mm", "cm", "m"}
+
+
+def normalize_scale_up_unit(raw: Any) -> str:
+    unit = str(raw or "%").strip()
+    return unit if unit in SCALE_UP_UNITS else "%"
+
+
+def normalize_scale_up_value(raw: Any) -> str:
+    text = str(raw or "").strip().replace(",", ".")
+    if not text:
+        return ""
+    try:
+        value = Decimal(text)
+    except (InvalidOperation, ValueError):
+        raise ValueError("Angiv hvor meget større filen skal printes.")
+    if not value.is_finite() or value <= 0:
+        raise ValueError("Angiv hvor meget større filen skal printes.")
+    normalized = format(value.normalize(), "f")
+    if "." in normalized:
+        normalized = normalized.rstrip("0").rstrip(".")
+    return normalized or "0"
+
+
+def normalize_scale_up_payload(body: dict[str, Any]) -> tuple[int, str, str]:
+    enabled = 1 if parse_bool(body.get("scale_up_enabled")) else 0
+    unit = normalize_scale_up_unit(body.get("scale_up_unit"))
+    if not enabled:
+        return 0, "", unit
+    value = normalize_scale_up_value(body.get("scale_up_value"))
+    if not value:
+        raise ValueError("Angiv hvor meget større filen skal printes.")
+    return 1, value, unit
+
+
+def scale_up_label(row: sqlite3.Row) -> str:
+    if not bool(int(row["scale_up_enabled"] or 0)):
+        return ""
+    value = str(row["scale_up_value"] or "").strip()
+    if not value:
+        return ""
+    return f"{value} {normalize_scale_up_unit(row['scale_up_unit'])}"
+
+
+def print_info_with_scale(row: sqlite3.Row) -> str:
+    parts: list[str] = []
+    note = str(row["note"] or "").strip()
+    if note:
+        parts.append(note)
+    scale = scale_up_label(row)
+    if scale:
+        parts.append(f"Større: {scale}")
+    return " | ".join(parts)
 
 
 def _slicer_profile_dirs() -> dict[str, Path]:
@@ -8024,6 +8080,9 @@ def init_db() -> None:
                 uploaded_at TEXT NOT NULL,
                 note TEXT,
                 quantity INTEGER DEFAULT 1,
+                scale_up_enabled INTEGER NOT NULL DEFAULT 0,
+                scale_up_value TEXT NOT NULL DEFAULT '',
+                scale_up_unit TEXT NOT NULL DEFAULT '%',
                 printed INTEGER NOT NULL DEFAULT 0,
                 printed_at TEXT,
                 printed_by TEXT,
@@ -8148,6 +8207,9 @@ def init_db() -> None:
                 filename TEXT NOT NULL,
                 note TEXT,
                 quantity INTEGER NOT NULL DEFAULT 1,
+                scale_up_enabled INTEGER NOT NULL DEFAULT 0,
+                scale_up_value TEXT NOT NULL DEFAULT '',
+                scale_up_unit TEXT NOT NULL DEFAULT '%',
                 file_size INTEGER NOT NULL DEFAULT 0,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(project_id) REFERENCES print_ready_projects(id) ON DELETE CASCADE,
@@ -8215,10 +8277,19 @@ def init_db() -> None:
             conn.execute("ALTER TABLE files ADD COLUMN slice_error TEXT")
         if "slice_updated_at" not in file_cols:
             conn.execute("ALTER TABLE files ADD COLUMN slice_updated_at TEXT")
+        if "scale_up_enabled" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN scale_up_enabled INTEGER NOT NULL DEFAULT 0")
+        if "scale_up_value" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN scale_up_value TEXT NOT NULL DEFAULT ''")
+        if "scale_up_unit" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN scale_up_unit TEXT NOT NULL DEFAULT '%'")
         conn.execute(
             "UPDATE files SET thumb_status='none' WHERE thumb_status IS NULL OR TRIM(thumb_status)=''"
         )
         conn.execute("UPDATE files SET printed=0 WHERE printed IS NULL")
+        conn.execute("UPDATE files SET scale_up_enabled=0 WHERE scale_up_enabled IS NULL")
+        conn.execute("UPDATE files SET scale_up_value='' WHERE scale_up_value IS NULL")
+        conn.execute("UPDATE files SET scale_up_unit='%' WHERE scale_up_unit IS NULL OR TRIM(scale_up_unit)=''")
         conn.execute(
             "UPDATE files SET slice_status='none' WHERE slice_status IS NULL OR TRIM(slice_status)=''"
         )
@@ -8314,6 +8385,21 @@ def init_db() -> None:
             conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN display_path TEXT NOT NULL DEFAULT ''")
         if "sort_order" not in project_file_cols:
             conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        if "scale_up_enabled" not in project_file_cols:
+            conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN scale_up_enabled INTEGER NOT NULL DEFAULT 0")
+        if "scale_up_value" not in project_file_cols:
+            conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN scale_up_value TEXT NOT NULL DEFAULT ''")
+        if "scale_up_unit" not in project_file_cols:
+            conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN scale_up_unit TEXT NOT NULL DEFAULT '%'")
+        conn.execute(
+            "UPDATE print_ready_project_files SET scale_up_enabled=0 WHERE scale_up_enabled IS NULL"
+        )
+        conn.execute(
+            "UPDATE print_ready_project_files SET scale_up_value='' WHERE scale_up_value IS NULL"
+        )
+        conn.execute(
+            "UPDATE print_ready_project_files SET scale_up_unit='%' WHERE scale_up_unit IS NULL OR TRIM(scale_up_unit)=''"
+        )
 
         share_cols = [r[1] for r in conn.execute("PRAGMA table_info(share_links)").fetchall()]
         if "project_id" not in share_cols:
@@ -10123,6 +10209,9 @@ def serialize_file_row(
         "uploaded_at": str(row["uploaded_at"] or ""),
         "note": str(row["note"] or ""),
         "quantity": int(row["quantity"] or 1),
+        "scale_up_enabled": bool(int(row["scale_up_enabled"] or 0)),
+        "scale_up_value": str(row["scale_up_value"] or ""),
+        "scale_up_unit": normalize_scale_up_unit(row["scale_up_unit"]),
         "printed": bool(int(row["printed"] or 0)),
         "printed_at": str(row["printed_at"] or ""),
         "printed_by": str(row["printed_by"] or ""),
@@ -10333,8 +10422,9 @@ def create_print_ready_project(
                 """
                 INSERT INTO print_ready_project_files(
                     project_id, file_id, folder_path, rel_path, display_path,
-                    filename, note, quantity, file_size, sort_order
-                ) VALUES(?,?,?,?,?,?,?,?,?,?)
+                    filename, note, quantity, scale_up_enabled, scale_up_value,
+                    scale_up_unit, file_size, sort_order
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     project_id,
@@ -10345,6 +10435,9 @@ def create_print_ready_project(
                     filename,
                     str(row["note"] or ""),
                     max(1, int(row["quantity"] or 1)),
+                    int(row["scale_up_enabled"] or 0),
+                    str(row["scale_up_value"] or ""),
+                    normalize_scale_up_unit(row["scale_up_unit"]),
                     int(row["file_size"] or 0),
                     index,
                 ),
@@ -10446,6 +10539,9 @@ def serialize_print_ready_project(
                     "filename": str(row["filename"] or ""),
                     "note": str(row["note"] or ""),
                     "quantity": quantity,
+                    "scale_up_enabled": bool(int(row["scale_up_enabled"] or 0)),
+                    "scale_up_value": str(row["scale_up_value"] or ""),
+                    "scale_up_unit": normalize_scale_up_unit(row["scale_up_unit"]),
                     "file_size": int(row["file_size"] or 0),
                     "attachments": attachments,
                     "content_url": url_for("api_file_content", file_id=file_id),
@@ -10706,6 +10802,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
     for row in files:
         file_id = int(row["file_id"])
         display_path = _print_ready_display_path(project, row)
+        info_text = print_info_with_scale(row)
         attachments = attachment_map.get(file_id, [])
         thumbs = _pdf_attachment_images(attachments, max_items=3, max_size=(138, 104))
         text_probe = Image.new("RGB", (10, 10), "white")
@@ -10713,7 +10810,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
         text_heights = [
             _draw_wrapped_text(probe_draw, display_path, (0, 0), col_w[0] - 16, font_body),
             _draw_wrapped_text(probe_draw, str(row["filename"] or ""), (0, 0), col_w[1] - 16, font_body),
-            _draw_wrapped_text(probe_draw, str(row["note"] or ""), (0, 0), col_w[2] - 16, font_body),
+            _draw_wrapped_text(probe_draw, info_text, (0, 0), col_w[2] - 16, font_body),
         ]
         thumb_h = 118 if thumbs or attachments else 24
         row_h = max(80, max(text_heights) + 18, thumb_h + 18)
@@ -10729,7 +10826,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
             draw.line((x, y, x, y + row_h), fill="#d8dee7", width=1)
         _draw_wrapped_text(draw, display_path, (col_x[0] + 8, y + 10), col_w[0] - 16, font_body)
         _draw_wrapped_text(draw, str(row["filename"] or ""), (col_x[1] + 8, y + 10), col_w[1] - 16, font_body)
-        _draw_wrapped_text(draw, str(row["note"] or ""), (col_x[2] + 8, y + 10), col_w[2] - 16, font_body)
+        _draw_wrapped_text(draw, info_text, (col_x[2] + 8, y + 10), col_w[2] - 16, font_body)
         draw.text((col_x[3] + 22, y + 10), str(max(1, int(row["quantity"] or 1))), fill="#111111", font=font_body)
 
         img_x = col_x[4] + 8
@@ -12041,6 +12138,10 @@ def api_file_metadata(file_id: int):
     except Exception:
         quantity = 1
     quantity = max(1, min(quantity, 1_000_000))
+    try:
+        scale_up_enabled, scale_up_value, scale_up_unit = normalize_scale_up_payload(body)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -12050,8 +12151,12 @@ def api_file_metadata(file_id: int):
             return jsonify({"ok": False, "error": "Ingen rettighed til at opdatere metadata"}), 403
 
         conn.execute(
-            "UPDATE files SET note=?, quantity=? WHERE id=?",
-            (note, quantity, int(file_id)),
+            """
+            UPDATE files
+            SET note=?, quantity=?, scale_up_enabled=?, scale_up_value=?, scale_up_unit=?
+            WHERE id=?
+            """,
+            (note, quantity, scale_up_enabled, scale_up_value, scale_up_unit, int(file_id)),
         )
         conn.commit()
 
@@ -12090,10 +12195,18 @@ def api_file_metadata_batch():
             except Exception:
                 quantity = 1
             quantity = max(1, min(quantity, 1_000_000))
+            try:
+                scale_up_enabled, scale_up_value, scale_up_unit = normalize_scale_up_payload(item)
+            except ValueError:
+                continue
 
             conn.execute(
-                "UPDATE files SET note=?, quantity=? WHERE id=?",
-                (note, quantity, file_id),
+                """
+                UPDATE files
+                SET note=?, quantity=?, scale_up_enabled=?, scale_up_value=?, scale_up_unit=?
+                WHERE id=?
+                """,
+                (note, quantity, scale_up_enabled, scale_up_value, scale_up_unit, file_id),
             )
             updated_ids.append(file_id)
 
