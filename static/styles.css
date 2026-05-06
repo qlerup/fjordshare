@@ -3843,6 +3843,104 @@ input[type="checkbox"] {
     font-size: 0.68rem;
   }
 
+  #settings-panel-users .panel {
+    overflow-x: hidden;
+  }
+
+  #settings-panel-users .table,
+  #settings-panel-users .table thead,
+  #settings-panel-users .table tbody,
+  #settings-panel-users .table tr,
+  #settings-panel-users .table th,
+  #settings-panel-users .table td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #settings-panel-users .table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  #settings-panel-users .table thead {
+    display: none;
+  }
+
+  #settings-panel-users .table tbody {
+    display: grid;
+    gap: 8px;
+  }
+
+  #settings-panel-users .table tr {
+    border: 1px solid rgba(70, 81, 101, 0.75);
+    border-radius: 10px;
+    background: rgba(31, 36, 48, 0.48);
+    padding: 8px;
+  }
+
+  #settings-panel-users .table td {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 8px;
+    border-bottom: 0;
+    padding: 5px 0;
+    font-size: 0.84rem;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  #settings-panel-users .table td::before {
+    color: var(--muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  #settings-panel-users .table td[colspan] {
+    display: block;
+  }
+
+  #settings-panel-users .table td[colspan]::before {
+    content: "";
+    display: none;
+  }
+
+  #usersTableBody td:nth-child(1)::before { content: "ID"; }
+  #usersTableBody td:nth-child(2)::before { content: "Navn"; }
+  #usersTableBody td:nth-child(3)::before { content: "Brugernavn"; }
+  #usersTableBody td:nth-child(4)::before { content: "Rolle"; }
+  #usersTableBody td:nth-child(5)::before { content: "Hjem"; }
+  #usersTableBody td:nth-child(6)::before { content: "Handling"; }
+
+  #signupRequestsTableBody td:nth-child(1)::before { content: "ID"; }
+  #signupRequestsTableBody td:nth-child(2)::before { content: "Navn"; }
+  #signupRequestsTableBody td:nth-child(3)::before { content: "Initial"; }
+  #signupRequestsTableBody td:nth-child(4)::before { content: "Brugernavn"; }
+  #signupRequestsTableBody td:nth-child(5)::before { content: "Sendt"; }
+  #signupRequestsTableBody td:nth-child(6)::before { content: "Handling"; }
+
+  #signupLinksTableBody td:nth-child(1)::before { content: "ID"; }
+  #signupLinksTableBody td:nth-child(2)::before { content: "Status"; }
+  #signupLinksTableBody td:nth-child(3)::before { content: "Oprettet"; }
+  #signupLinksTableBody td:nth-child(4)::before { content: "Link"; }
+  #signupLinksTableBody td:nth-child(5)::before { content: "Handling"; }
+
+  #settings-panel-users .table .toolbar {
+    gap: 5px;
+    align-items: stretch;
+  }
+
+  #settings-panel-users .table .btn {
+    width: 100%;
+  }
+
+  #settings-panel-users .signup-link-input {
+    min-width: 0;
+    width: 100%;
+  }
+
   #tab-tracking .form-grid,
   #settings-panel-users .form-grid {
     grid-template-columns: 1fr;
