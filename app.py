@@ -10633,10 +10633,10 @@ def create_print_ready_project(
                     display_path,
                     filename,
                     str(row["note"] or ""),
-                    max(1, int(row["quantity"] or 1)),
-                    int(row["scale_up_enabled"] or 0),
-                    str(row["scale_up_value"] or ""),
-                    normalize_scale_up_unit(row["scale_up_unit"]),
+                    1,
+                    0,
+                    "",
+                    "%",
                     int(row["file_size"] or 0),
                     index,
                 ),
@@ -12387,15 +12387,21 @@ def api_files_thumbnails_cancel():
 def api_file_metadata(file_id: int):
     body = request.get_json(silent=True) or {}
     note = str(body.get("note") or "").strip()
-    try:
-        quantity = int(body.get("quantity") or 1)
-    except Exception:
-        quantity = 1
-    quantity = max(1, min(quantity, 1_000_000))
-    try:
-        scale_up_enabled, scale_up_value, scale_up_unit = normalize_scale_up_payload(body)
-    except ValueError as exc:
-        return jsonify({"ok": False, "error": str(exc)}), 400
+    has_print_fields = any(key in body for key in {"quantity", "scale_up_enabled", "scale_up_value", "scale_up_unit"})
+    quantity = 1
+    scale_up_enabled = 0
+    scale_up_value = ""
+    scale_up_unit = "%"
+    if has_print_fields:
+        try:
+            quantity = int(body.get("quantity") or 1)
+        except Exception:
+            quantity = 1
+        quantity = max(1, min(quantity, 1_000_000))
+        try:
+            scale_up_enabled, scale_up_value, scale_up_unit = normalize_scale_up_payload(body)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -12404,14 +12410,17 @@ def api_file_metadata(file_id: int):
         if not user_can_access_file(current_user, row, "upload"):
             return jsonify({"ok": False, "error": "Ingen rettighed til at opdatere metadata"}), 403
 
-        conn.execute(
-            """
-            UPDATE files
-            SET note=?, quantity=?, scale_up_enabled=?, scale_up_value=?, scale_up_unit=?
-            WHERE id=?
-            """,
-            (note, quantity, scale_up_enabled, scale_up_value, scale_up_unit, int(file_id)),
-        )
+        if has_print_fields:
+            conn.execute(
+                """
+                UPDATE files
+                SET note=?, quantity=?, scale_up_enabled=?, scale_up_value=?, scale_up_unit=?
+                WHERE id=?
+                """,
+                (note, quantity, scale_up_enabled, scale_up_value, scale_up_unit, int(file_id)),
+            )
+        else:
+            conn.execute("UPDATE files SET note=? WHERE id=?", (note, int(file_id)))
         conn.commit()
 
     return jsonify({"ok": True})
@@ -12444,24 +12453,28 @@ def api_file_metadata_batch():
                 continue
 
             note = str(item.get("note") or "").strip()
-            try:
-                quantity = int(item.get("quantity") or 1)
-            except Exception:
-                quantity = 1
-            quantity = max(1, min(quantity, 1_000_000))
-            try:
-                scale_up_enabled, scale_up_value, scale_up_unit = normalize_scale_up_payload(item)
-            except ValueError:
-                continue
+            has_print_fields = any(key in item for key in {"quantity", "scale_up_enabled", "scale_up_value", "scale_up_unit"})
+            if has_print_fields:
+                try:
+                    quantity = int(item.get("quantity") or 1)
+                except Exception:
+                    quantity = 1
+                quantity = max(1, min(quantity, 1_000_000))
+                try:
+                    scale_up_enabled, scale_up_value, scale_up_unit = normalize_scale_up_payload(item)
+                except ValueError:
+                    continue
 
-            conn.execute(
-                """
-                UPDATE files
-                SET note=?, quantity=?, scale_up_enabled=?, scale_up_value=?, scale_up_unit=?
-                WHERE id=?
-                """,
-                (note, quantity, scale_up_enabled, scale_up_value, scale_up_unit, file_id),
-            )
+                conn.execute(
+                    """
+                    UPDATE files
+                    SET note=?, quantity=?, scale_up_enabled=?, scale_up_value=?, scale_up_unit=?
+                    WHERE id=?
+                    """,
+                    (note, quantity, scale_up_enabled, scale_up_value, scale_up_unit, file_id),
+                )
+            else:
+                conn.execute("UPDATE files SET note=? WHERE id=?", (note, file_id))
             updated_ids.append(file_id)
 
         conn.commit()
@@ -12952,6 +12965,81 @@ def api_print_ready_project(project_id: int):
     if err is not None:
         return jsonify({"ok": False, "error": str(err.get("error") or "Fejl")}), int(err.get("status") or 500)
     return jsonify({"ok": True, "project": project})
+
+
+@app.route("/api/print-ready/<int:project_id>/metadata-batch", methods=["POST"])
+@login_required
+def api_print_ready_metadata_batch(project_id: int):
+    body = request.get_json(silent=True) or {}
+    raw_items = body.get("items")
+    if not isinstance(raw_items, list):
+        return jsonify({"ok": False, "error": "items skal være en liste"}), 400
+
+    updated_ids: list[int] = []
+    with closing(get_conn()) as conn:
+        project = conn.execute(
+            "SELECT * FROM print_ready_projects WHERE id=?",
+            (int(project_id),),
+        ).fetchone()
+        if project is None:
+            return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+        if not _can_access_print_ready_project(project):
+            return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+        if str(project["status"] or "").strip().lower() != "draft":
+            return jsonify({"ok": False, "error": "Projektet er allerede sendt"}), 400
+
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            try:
+                project_file_id = int(item.get("project_file_id") or item.get("id") or 0)
+            except Exception:
+                continue
+            if project_file_id <= 0:
+                continue
+
+            row = conn.execute(
+                "SELECT id FROM print_ready_project_files WHERE id=? AND project_id=?",
+                (project_file_id, int(project_id)),
+            ).fetchone()
+            if row is None:
+                continue
+
+            note = str(item.get("note") or "").strip()
+            try:
+                quantity = int(item.get("quantity") or 1)
+            except Exception:
+                quantity = 1
+            quantity = max(1, min(quantity, 1_000_000))
+            try:
+                scale_up_enabled, scale_up_value, scale_up_unit = normalize_scale_up_payload(item)
+            except ValueError as exc:
+                return jsonify({"ok": False, "error": str(exc)}), 400
+
+            conn.execute(
+                """
+                UPDATE print_ready_project_files
+                SET note=?, quantity=?, scale_up_enabled=?, scale_up_value=?, scale_up_unit=?
+                WHERE id=? AND project_id=?
+                """,
+                (
+                    note,
+                    quantity,
+                    scale_up_enabled,
+                    scale_up_value,
+                    scale_up_unit,
+                    project_file_id,
+                    int(project_id),
+                ),
+            )
+            updated_ids.append(project_file_id)
+
+        conn.commit()
+
+    project_payload, err = get_print_ready_project_payload(int(project_id))
+    if err is not None:
+        return jsonify({"ok": False, "error": str(err.get("error") or "Projektet kunne ikke læses")}), int(err.get("status") or 500)
+    return jsonify({"ok": True, "updated": len(updated_ids), "ids": updated_ids, "project": project_payload})
 
 
 @app.route("/api/print-ready/<int:project_id>/production-info.pdf", methods=["GET"])

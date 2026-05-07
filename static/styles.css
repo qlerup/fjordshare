@@ -2554,13 +2554,69 @@ input[type="checkbox"] {
 }
 
 .print-ready-modal-card {
-  width: min(620px, calc(100vw - 24px));
+  width: min(860px, calc(100vw - 24px));
   display: grid;
   gap: 10px;
 }
 
 .print-ready-modal-card .toolbar {
   justify-content: flex-start;
+}
+
+.print-ready-modal-files {
+  display: grid;
+  gap: 8px;
+  max-height: min(46vh, 440px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.print-ready-modal-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  padding: 10px;
+}
+
+.print-ready-modal-file-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.print-ready-modal-file-meta {
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.print-ready-modal-file-info {
+  margin-top: 6px;
+  font-size: 0.86rem;
+}
+
+.print-ready-modal-file-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.print-ready-modal-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 3px 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .log-entry-type {
@@ -2647,6 +2703,14 @@ input[type="checkbox"] {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 200px;
   gap: 10px;
+}
+
+.metadata-note-only .metadata-fields {
+  grid-template-columns: 1fr;
+}
+
+.metadata-note-only .metadata-print-field {
+  display: none;
 }
 
 .metadata-field {
@@ -4492,6 +4556,14 @@ input[type="checkbox"] {
   }
 
   .metadata-nav-right {
+    justify-content: flex-start;
+  }
+
+  .print-ready-modal-file {
+    grid-template-columns: 1fr;
+  }
+
+  .print-ready-modal-file-badges {
     justify-content: flex-start;
   }
 

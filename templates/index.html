@@ -120,23 +120,6 @@
         <div class="file-info-fields">
           <label for="fileInfoNote">Bemærkning</label>
           <input id="fileInfoNote" class="input" type="text" placeholder="Bemærkning">
-          <label for="fileInfoQty">Antal</label>
-          <input id="fileInfoQty" class="input" type="number" min="1" value="1">
-          <div class="scale-up-field">
-            <label class="scale-up-toggle" for="fileInfoScaleUpEnabled">
-              <input id="fileInfoScaleUpEnabled" type="checkbox">
-              <span>Skal den printes større end originalfilen?</span>
-            </label>
-            <div id="fileInfoScaleUpControls" class="scale-up-controls is-disabled">
-              <input id="fileInfoScaleUpValue" class="input" type="text" inputmode="decimal" placeholder="Hvor meget større?" disabled>
-              <select id="fileInfoScaleUpUnit" aria-label="Enhed for større print" disabled>
-                <option value="%">%</option>
-                <option value="mm">mm</option>
-                <option value="cm">cm</option>
-                <option value="m">m</option>
-              </select>
-            </div>
-          </div>
         </div>
 
         <div class="file-info-attachments">
@@ -151,7 +134,7 @@
         </div>
       </div>
       <div class="file-info-actions">
-        <button id="fileInfoSaveBtn" class="btn" type="button">Gem info</button>
+        <button id="fileInfoSaveBtn" class="btn" type="button">Gem bemærkning</button>
         <a id="fileInfoDownloadLink" class="btn" href="#" target="_blank" rel="noopener">Download</a>
         <a id="fileInfoSliceDownloadLink" class="btn hidden" href="#" target="_blank" rel="noopener">Download G-code</a>
         <button id="fileInfoSliceBtn" class="btn hidden admin-only" type="button" disabled>Slice STL</button>
@@ -592,6 +575,7 @@
     </div>
     <p class="hint">Gennemse projektet her. Når du er klar, klik "Send til print" for at sende til admin.</p>
     <div id="printReadyModalSummary" class="metadata-current-file">-</div>
+    <div id="printReadyModalFiles" class="print-ready-modal-files"></div>
     <div class="toolbar">
       <button id="printReadySendBtn" class="btn primary" type="button">Send til print</button>
       <a id="printReadyZipLink" class="btn" href="#" target="_blank" rel="noopener">Download zip fil</a>
@@ -1141,10 +1125,10 @@
   <div class="modal-backdrop"></div>
   <div class="modal-card">
     <div class="metadata-head">
-      <h3>Tilføj detaljer pr. fil</h3>
+      <h3 id="metadataModalTitle">Tilføj detaljer pr. fil</h3>
       <div id="metadataStepCounter" class="metadata-step-counter">1/1</div>
     </div>
-    <p class="hint">Skriv bemærkning, antal og eventuel større printstørrelse for den valgte fil.</p>
+    <p id="metadataModalHint" class="hint">Tilføj de relevante detaljer for den valgte fil.</p>
 
     <div id="metadataCurrentFileName" class="metadata-current-file">-</div>
 
@@ -1153,13 +1137,13 @@
         <label for="metadataNoteInput">Bemærkning</label>
         <input id="metadataNoteInput" class="input" type="text" placeholder="Bemærkning">
       </div>
-      <div class="metadata-field metadata-field-small">
+      <div id="metadataQtyField" class="metadata-field metadata-field-small metadata-print-field">
         <label for="metadataQtyInput">Antal</label>
         <input id="metadataQtyInput" class="input" type="number" min="1" value="1">
       </div>
     </div>
 
-    <div class="metadata-scale-up-field scale-up-field">
+    <div id="metadataScaleUpField" class="metadata-scale-up-field scale-up-field metadata-print-field">
       <label class="scale-up-toggle" for="metadataScaleUpEnabled">
         <input id="metadataScaleUpEnabled" type="checkbox">
         <span>Skal den printes større end originalfilen?</span>
@@ -1369,11 +1353,11 @@
             data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
           >
           <div class="app-onboarding-guide-text">
-            <p>Åbn en fil og udfyld bemærkninger, antal, større printstørrelse og vedhæftede billeder, så produktionen har alle detaljer.</p>
+            <p>Åbn en fil og tilføj bemærkning eller billeder, hvis filen skal have ekstra kontekst.</p>
             <ul>
               <li>Brug bemærkninger til specielle ønsker.</li>
-              <li>Sæt korrekt antal, så ordren bliver produceret rigtigt første gang.</li>
-              <li>Slå større printstørrelse til, hvis filen skal printes større end originalen.</li>
+              <li>Tilføj billeder hvis de hjælper med at forstå filen.</li>
+              <li>Antal og printstørrelse vælges først, når projektet sendes til print.</li>
             </ul>
           </div>
         </section>
@@ -1390,7 +1374,8 @@
             <ul>
               <li>Du kan vælge filer på tværs af dine mapper i samme projekt.</li>
               <li>Du kan også vælge hele mapper, hvis alt i mappen skal med.</li>
-              <li>Kontrollér filvalget inden du sender.</li>
+              <li>Udfyld antal, større printstørrelse og ekstra billeder pr. fil inden du sender.</li>
+              <li>Kontrollér filvalget inden projektet sendes.</li>
               <li>Når projektet er sendt, kan admin følge og afslutte det.</li>
             </ul>
           </div>

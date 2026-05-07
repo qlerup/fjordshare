@@ -46,6 +46,9 @@
     editingUserId: 0,
     pendingMetadata: [],
     metadataIndex: 0,
+    metadataMode: "upload",
+    metadataProjectId: 0,
+    metadataContinueProject: null,
     threeModules: null,
     three: null,
     thumbPollTimer: null,
@@ -241,11 +244,6 @@
     fileInfoRowFilamentCost: document.getElementById("fileInfoRowFilamentCost"),
     fileInfoFilamentCost: document.getElementById("fileInfoFilamentCost"),
     fileInfoNote: document.getElementById("fileInfoNote"),
-    fileInfoQty: document.getElementById("fileInfoQty"),
-    fileInfoScaleUpEnabled: document.getElementById("fileInfoScaleUpEnabled"),
-    fileInfoScaleUpControls: document.getElementById("fileInfoScaleUpControls"),
-    fileInfoScaleUpValue: document.getElementById("fileInfoScaleUpValue"),
-    fileInfoScaleUpUnit: document.getElementById("fileInfoScaleUpUnit"),
     fileInfoAttachUploadBtn: document.getElementById("fileInfoAttachUploadBtn"),
     fileInfoAttachInput: document.getElementById("fileInfoAttachInput"),
     fileInfoAttachDropZone: document.getElementById("fileInfoAttachDropZone"),
@@ -309,6 +307,8 @@
     sliceProcessSettingsList: document.getElementById("sliceProcessSettingsList"),
     sliceProcessSettingsStatus: document.getElementById("sliceProcessSettingsStatus"),
     metadataModal: document.getElementById("metadataModal"),
+    metadataModalTitle: document.getElementById("metadataModalTitle"),
+    metadataModalHint: document.getElementById("metadataModalHint"),
     metadataStepCounter: document.getElementById("metadataStepCounter"),
     metadataCurrentFileName: document.getElementById("metadataCurrentFileName"),
     metadataNoteInput: document.getElementById("metadataNoteInput"),
@@ -364,6 +364,7 @@
     printReadyModal: document.getElementById("printReadyModal"),
     printReadyModalCloseBtn: document.getElementById("printReadyModalCloseBtn"),
     printReadyModalSummary: document.getElementById("printReadyModalSummary"),
+    printReadyModalFiles: document.getElementById("printReadyModalFiles"),
     printReadySendBtn: document.getElementById("printReadySendBtn"),
     printReadyZipLink: document.getElementById("printReadyZipLink"),
     printReadyPdfLink: document.getElementById("printReadyPdfLink"),
@@ -1606,23 +1607,6 @@
     if (unitEl) unitEl.disabled = !isEnabled;
   }
 
-  function readScaleUpControls(enabledEl, valueEl, unitEl) {
-    const enabled = !!(enabledEl && enabledEl.checked);
-    const unit = scaleUpUnit(unitEl && unitEl.value);
-    if (!enabled) {
-      return {
-        scale_up_enabled: false,
-        scale_up_value: "",
-        scale_up_unit: unit,
-      };
-    }
-    return {
-      scale_up_enabled: true,
-      scale_up_value: normalizeScaleUpValue(valueEl && valueEl.value),
-      scale_up_unit: unit,
-    };
-  }
-
   const SCALE_CAN_HEIGHT_MM = 122;
   const SCALE_CAN_DIAMETER_MM = 66;
   const PRESENTATION_TABLE_SIZE_MM = 600;
@@ -2310,7 +2294,39 @@
   function closePrintReadyModal() {
     if (els.printReadyModal) els.printReadyModal.classList.add("hidden");
     showStatus(els.printReadyModalStatus, "");
+    if (els.printReadyModalFiles) els.printReadyModalFiles.innerHTML = "";
     state.currentPrintReadyProjectId = 0;
+  }
+
+  function renderPrintReadyModalFiles(project) {
+    if (!els.printReadyModalFiles) return;
+    const files = Array.isArray(project && project.files) ? project.files : [];
+    if (!files.length) {
+      els.printReadyModalFiles.innerHTML = "";
+      return;
+    }
+    els.printReadyModalFiles.innerHTML = files.map((file) => {
+      const quantity = Math.max(1, Number(file.quantity || 1) || 1);
+      const scale = scaleUpLabel(file);
+      const note = String(file.note || "").trim();
+      const attachments = Array.isArray(file.attachments) ? file.attachments : [];
+      const infoParts = [];
+      if (note) infoParts.push(esc(note));
+      if (scale) infoParts.push(`Større: ${esc(scale)}`);
+      return `
+        <div class="print-ready-modal-file">
+          <div>
+            <div class="print-ready-modal-file-name">${esc(file.filename || "-")}</div>
+            <div class="print-ready-modal-file-meta">${esc(file.display_path || file.folder_path || "-")} · ${formatSize(file.file_size || 0)}</div>
+            ${infoParts.length ? `<div class="print-ready-modal-file-info">${infoParts.join(" · ")}</div>` : ""}
+          </div>
+          <div class="print-ready-modal-file-badges">
+            <span class="print-ready-modal-badge">Antal ${quantity}</span>
+            <span class="print-ready-modal-badge">${attachments.length} billede(r)</span>
+          </div>
+        </div>
+      `;
+    }).join("");
   }
 
   function resetSmsConfirmFields() {
@@ -2512,6 +2528,7 @@
     if (els.printReadyPdfLink) {
       els.printReadyPdfLink.href = String(project.pdf_url || "#");
     }
+    renderPrintReadyModalFiles(project);
     const isReady = String(project.status || "").toLowerCase() === "ready";
     if (els.printReadySendBtn) {
       els.printReadySendBtn.disabled = isReady || !state.currentPrintReadyProjectId;
@@ -2565,7 +2582,15 @@
     if (state.role === "admin") {
       await loadPrintReadyProjects();
     }
-    openPrintReadyModal(project);
+    if (project && Array.isArray(project.files) && project.files.length) {
+      openMetadataModal(project.files, {
+        mode: "print-ready",
+        projectId: Number(project.id || 0),
+        continueProject: project,
+      });
+    } else {
+      openPrintReadyModal(project);
+    }
   }
 
   function toggleSelectMode(forceValue = null, purpose = "manage") {
@@ -2684,7 +2709,7 @@
       els.mapperSelectPrintReadyBtn.classList.toggle("hidden", !showPrintReadyBtn);
       els.mapperSelectPrintReadyBtn.disabled = printReadyMode && count <= 0;
       els.mapperSelectPrintReadyBtn.textContent = printReadyMode
-        ? (count > 0 ? `Send valgte filer til print (${count})` : "Send valgte filer til print")
+        ? (count > 0 ? `Fortsæt til printdetaljer (${count})` : "Fortsæt til printdetaljer")
         : "Vælg filer til print";
     }
     if (els.mapperSelectClearBtn) {
@@ -7775,20 +7800,6 @@
     }
 
     if (els.fileInfoNote) els.fileInfoNote.value = String(file.note || "");
-    if (els.fileInfoQty) els.fileInfoQty.value = String(Math.max(1, Number(file.quantity || 1) || 1));
-    if (els.fileInfoScaleUpValue) {
-      els.fileInfoScaleUpValue.value = String(file.scale_up_value || "");
-    }
-    if (els.fileInfoScaleUpUnit) {
-      els.fileInfoScaleUpUnit.value = scaleUpUnit(file.scale_up_unit);
-    }
-    setScaleUpControls(
-      els.fileInfoScaleUpEnabled,
-      els.fileInfoScaleUpControls,
-      els.fileInfoScaleUpValue,
-      els.fileInfoScaleUpUnit,
-      !!file.scale_up_enabled
-    );
     if (els.fileInfoDownloadLink) {
       els.fileInfoDownloadLink.href = String(file.download_url || "#");
     }
@@ -7913,14 +7924,8 @@
     const id = Number(state.currentInfoFileId || 0);
     if (!id) return;
     const note = String((els.fileInfoNote && els.fileInfoNote.value) || "");
-    const quantity = Math.max(1, Number((els.fileInfoQty && els.fileInfoQty.value) || 1) || 1);
-    const scaleUp = readScaleUpControls(
-      els.fileInfoScaleUpEnabled,
-      els.fileInfoScaleUpValue,
-      els.fileInfoScaleUpUnit
-    );
-    await api(`/api/files/${id}/metadata`, { method: "PATCH", body: { note, quantity, ...scaleUp } });
-    showStatus(els.uploadStatus, "Fil-information gemt.", "ok");
+    await api(`/api/files/${id}/metadata`, { method: "PATCH", body: { note } });
+    showStatus(els.uploadStatus, "Bemærkning gemt.", "ok");
     await loadFiles();
   }
 
@@ -8452,18 +8457,47 @@
     return state.pendingMetadata[idx] || null;
   }
 
+  function isPrintReadyMetadataMode() {
+    return state.metadataMode === "print-ready";
+  }
+
+  function metadataAttachmentFileId(item) {
+    return Number((item && item.file_id) || (item && item.id) || 0);
+  }
+
+  function syncMetadataModeUi() {
+    const printMode = isPrintReadyMetadataMode();
+    if (els.metadataModal) {
+      els.metadataModal.classList.toggle("metadata-note-only", !printMode);
+    }
+    if (els.metadataModalTitle) {
+      els.metadataModalTitle.textContent = printMode ? "Printdetaljer pr. fil" : "Tilføj bemærkning og billeder";
+    }
+    if (els.metadataModalHint) {
+      els.metadataModalHint.textContent = printMode
+        ? "Tjek hver fil før projektet sendes til print."
+        : "Skriv en bemærkning og tilføj billeder til den uploadede fil.";
+    }
+    if (els.metadataSaveBtn) {
+      els.metadataSaveBtn.textContent = printMode ? "Gem og se projekt" : "Gem";
+    }
+    if (els.metadataCancelBtn) {
+      els.metadataCancelBtn.textContent = printMode ? "Spring over og se projekt" : "Spring over";
+    }
+  }
+
   function persistMetadataStepInputs() {
     const item = getMetadataCurrentItem();
     if (!item) return;
     if (els.metadataNoteInput) {
       item.note = String(els.metadataNoteInput.value || "");
     }
-    if (els.metadataQtyInput) {
+    if (isPrintReadyMetadataMode() && els.metadataQtyInput) {
       item.quantity = Math.max(1, Number(els.metadataQtyInput.value || 1) || 1);
+      item.scale_up_enabled = !!(els.metadataScaleUpEnabled && els.metadataScaleUpEnabled.checked);
+      item.scale_up_value = String((els.metadataScaleUpValue && els.metadataScaleUpValue.value) || "");
+      item.scale_up_unit = scaleUpUnit(els.metadataScaleUpUnit && els.metadataScaleUpUnit.value);
     }
-    item.scale_up_enabled = !!(els.metadataScaleUpEnabled && els.metadataScaleUpEnabled.checked);
-    item.scale_up_value = String((els.metadataScaleUpValue && els.metadataScaleUpValue.value) || "");
-    item.scale_up_unit = scaleUpUnit(els.metadataScaleUpUnit && els.metadataScaleUpUnit.value);
   }
 
   function renderMetadataAttachments(items) {
@@ -8499,8 +8533,15 @@
     if (!id) return;
     const data = await api(`/api/files/${id}/attachments`);
     const current = getMetadataCurrentItem();
-    if (!current || Number(current.id || 0) !== id) return;
+    if (!current || metadataAttachmentFileId(current) !== id) return;
     current.attachments = Array.isArray(data.items) ? data.items : [];
+    if (isPrintReadyMetadataMode() && state.metadataContinueProject && Array.isArray(state.metadataContinueProject.files)) {
+      const projectFileId = Number(current.project_file_id || current.id || 0);
+      const projectFile = state.metadataContinueProject.files.find((file) => Number(file && file.id ? file.id : 0) === projectFileId);
+      if (projectFile) {
+        projectFile.attachments = current.attachments;
+      }
+    }
     renderMetadataAttachments(current.attachments);
   }
 
@@ -8530,24 +8571,28 @@
       return;
     }
 
+    syncMetadataModeUi();
+    const printMode = isPrintReadyMetadataMode();
     const total = state.pendingMetadata.length;
     const current = Number(state.metadataIndex || 0) + 1;
     if (els.metadataStepCounter) {
       els.metadataStepCounter.textContent = `${current}/${total}`;
     }
     if (els.metadataCurrentFileName) {
-      els.metadataCurrentFileName.textContent = String(item.filename || `Fil ${current}`);
+      const filename = String(item.filename || `Fil ${current}`);
+      const displayPath = String(item.display_path || item.folder_path || "").trim();
+      els.metadataCurrentFileName.textContent = printMode && displayPath ? `${filename} · ${displayPath}` : filename;
     }
     if (els.metadataNoteInput) {
       els.metadataNoteInput.value = String(item.note || "");
     }
-    if (els.metadataQtyInput) {
+    if (printMode && els.metadataQtyInput) {
       els.metadataQtyInput.value = String(Math.max(1, Number(item.quantity || 1) || 1));
     }
-    if (els.metadataScaleUpValue) {
+    if (printMode && els.metadataScaleUpValue) {
       els.metadataScaleUpValue.value = String(item.scale_up_value || "");
     }
-    if (els.metadataScaleUpUnit) {
+    if (printMode && els.metadataScaleUpUnit) {
       els.metadataScaleUpUnit.value = scaleUpUnit(item.scale_up_unit);
     }
     setScaleUpControls(
@@ -8555,7 +8600,7 @@
       els.metadataScaleUpControls,
       els.metadataScaleUpValue,
       els.metadataScaleUpUnit,
-      !!item.scale_up_enabled
+      printMode && !!item.scale_up_enabled
     );
 
     const hasMultiple = total > 1;
@@ -8576,7 +8621,7 @@
 
     renderMetadataAttachments(item.attachments || []);
     showStatus(els.metadataAttachStatus, "");
-    loadMetadataAttachments(Number(item.id || 0)).catch((err) => {
+    loadMetadataAttachments(metadataAttachmentFileId(item)).catch((err) => {
       showStatus(els.metadataAttachStatus, err.message || "Kunne ikke hente billeder", "error");
     });
   }
@@ -8591,40 +8636,71 @@
     renderMetadataStep();
   }
 
-  function openMetadataModal(files) {
+  function openMetadataModal(files, options = {}) {
     const list = Array.isArray(files) ? files : [];
+    const mode = String((options && options.mode) || "upload") === "print-ready" ? "print-ready" : "upload";
+    state.metadataMode = mode;
+    state.metadataProjectId = Number((options && options.projectId) || 0);
+    state.metadataContinueProject = (options && options.continueProject) || null;
     state.pendingMetadata = list
       .map((file) => {
-        const id = Number(file && file.id ? file.id : 0);
-        if (!id) return null;
+        const projectFileId = Number(file && file.id ? file.id : 0);
+        const fileId = Number(mode === "print-ready" ? (file && file.file_id) : projectFileId);
+        if (!projectFileId || !fileId) return null;
         return {
           ...file,
-          id,
+          id: projectFileId,
+          project_file_id: mode === "print-ready" ? projectFileId : 0,
+          file_id: fileId,
           note: String((file && file.note) || ""),
           quantity: Math.max(1, Number((file && file.quantity) || 1) || 1),
           scale_up_enabled: !!(file && file.scale_up_enabled),
           scale_up_value: String((file && file.scale_up_value) || ""),
           scale_up_unit: scaleUpUnit(file && file.scale_up_unit),
-          attachments: [],
+          attachments: Array.isArray(file && file.attachments) ? file.attachments : [],
         };
       })
       .filter(Boolean);
     state.metadataIndex = 0;
 
-    if (!state.pendingMetadata.length || !els.metadataModal) return;
+    if (!state.pendingMetadata.length || !els.metadataModal) {
+      const continueProject = state.metadataContinueProject;
+      state.metadataMode = "upload";
+      state.metadataProjectId = 0;
+      state.metadataContinueProject = null;
+      if (mode === "print-ready" && continueProject) {
+        openPrintReadyModal(continueProject);
+      }
+      return false;
+    }
+    syncMetadataModeUi();
     if (els.metadataAttachInput) els.metadataAttachInput.value = "";
     showStatus(els.metadataAttachStatus, "");
     els.metadataModal.classList.remove("hidden");
     renderMetadataStep();
+    return true;
   }
 
-  function closeMetadataModal() {
+  function closeMetadataModal(options = {}) {
+    const shouldContinue = options && Object.prototype.hasOwnProperty.call(options, "continueFlow")
+      ? !!options.continueFlow
+      : isPrintReadyMetadataMode();
+    const continueProject = state.metadataContinueProject;
     state.pendingMetadata = [];
     state.metadataIndex = 0;
+    state.metadataMode = "upload";
+    state.metadataProjectId = 0;
+    state.metadataContinueProject = null;
     if (els.metadataAttachInput) els.metadataAttachInput.value = "";
     showStatus(els.metadataAttachStatus, "");
     renderMetadataAttachments([]);
-    if (els.metadataModal) els.metadataModal.classList.add("hidden");
+    if (els.metadataModal) {
+      els.metadataModal.classList.remove("metadata-note-only");
+      els.metadataModal.classList.add("hidden");
+    }
+    if (shouldContinue && continueProject) {
+      openPrintReadyModal(continueProject);
+    }
   }
 
   function openImagePreviewModal(imageUrl, imageName = "Billede") {
@@ -8658,21 +8734,36 @@
     }
 
     persistMetadataStepInputs();
-    const items = state.pendingMetadata.map((file) => {
-      const scaleUpEnabled = !!file.scale_up_enabled;
-      return {
-        file_id: Number(file.id),
-        note: String(file.note || ""),
-        quantity: Math.max(1, Number(file.quantity || 1) || 1),
-        scale_up_enabled: scaleUpEnabled,
-        scale_up_value: scaleUpEnabled ? normalizeScaleUpValue(file.scale_up_value) : "",
-        scale_up_unit: scaleUpUnit(file.scale_up_unit),
-      };
-    });
+    if (isPrintReadyMetadataMode()) {
+      const projectId = Number(state.metadataProjectId || 0);
+      if (!projectId) throw new Error("Projektet mangler");
+      const items = state.pendingMetadata.map((file) => {
+        const scaleUpEnabled = !!file.scale_up_enabled;
+        return {
+          project_file_id: Number(file.project_file_id || file.id || 0),
+          note: String(file.note || ""),
+          quantity: Math.max(1, Number(file.quantity || 1) || 1),
+          scale_up_enabled: scaleUpEnabled,
+          scale_up_value: scaleUpEnabled ? normalizeScaleUpValue(file.scale_up_value) : "",
+          scale_up_unit: scaleUpUnit(file.scale_up_unit),
+        };
+      });
+      const data = await api(`/api/print-ready/${projectId}/metadata-batch`, { method: "POST", body: { items } });
+      const project = data && data.project ? data.project : state.metadataContinueProject;
+      state.metadataContinueProject = project;
+      closeMetadataModal({ continueFlow: true });
+      showStatus(els.uploadStatus, "Printdetaljer gemt.", "ok");
+      return;
+    }
+
+    const items = state.pendingMetadata.map((file) => ({
+      file_id: metadataAttachmentFileId(file),
+      note: String(file.note || ""),
+    }));
     await api("/api/files/metadata-batch", { method: "POST", body: { items } });
-    closeMetadataModal();
+    closeMetadataModal({ continueFlow: false });
     await loadFiles();
-    showStatus(els.uploadStatus, "Metadata gemt for de uploadede filer.", "ok");
+    showStatus(els.uploadStatus, "Bemærkning gemt for de uploadede filer.", "ok");
   }
 
   async function _readDirectoryEntriesRecursive(entry, basePath) {
@@ -8958,7 +9049,7 @@
         state.currentFolder = firstFolder;
       }
       await loadFiles();
-      if (resolved.length) openMetadataModal(resolved);
+      if (resolved.length) openMetadataModal(resolved, { mode: "upload" });
     } else {
       showStatus(els.uploadStatus, uploadWasStopped ? "Upload stoppet." : "Ingen filer blev uploadet.", uploadWasStopped ? "ok" : "error");
       await loadFiles();
@@ -13320,22 +13411,8 @@
     if (els.fileInfoSaveBtn) {
       els.fileInfoSaveBtn.addEventListener("click", () => {
         saveCurrentFileInfo().catch((err) => {
-          showStatus(els.uploadStatus, err.message || "Kunne ikke gemme fil-info", "error");
+          showStatus(els.uploadStatus, err.message || "Kunne ikke gemme bemærkning", "error");
         });
-      });
-    }
-    if (els.fileInfoScaleUpEnabled) {
-      els.fileInfoScaleUpEnabled.addEventListener("change", () => {
-        setScaleUpControls(
-          els.fileInfoScaleUpEnabled,
-          els.fileInfoScaleUpControls,
-          els.fileInfoScaleUpValue,
-          els.fileInfoScaleUpUnit,
-          !!els.fileInfoScaleUpEnabled.checked
-        );
-        if (els.fileInfoScaleUpEnabled.checked && els.fileInfoScaleUpValue) {
-          els.fileInfoScaleUpValue.focus();
-        }
       });
     }
     const queueInfoAttachmentUpload = (files) => {
@@ -13905,7 +13982,7 @@
 
     const queueMetadataAttachmentUpload = (files) => {
       const current = getMetadataCurrentItem();
-      const id = Number(current && current.id ? current.id : 0);
+      const id = metadataAttachmentFileId(current);
       const list = Array.from(files || []);
       if (!id || !list.length) {
         if (els.metadataAttachInput) els.metadataAttachInput.value = "";
@@ -13959,7 +14036,7 @@
     if (els.metadataAttachUploadBtn && els.metadataAttachInput) {
       els.metadataAttachUploadBtn.addEventListener("click", () => {
         const current = getMetadataCurrentItem();
-        if (!current || !Number(current.id || 0)) return;
+        if (!current || !metadataAttachmentFileId(current)) return;
         els.metadataAttachInput.click();
       });
       els.metadataAttachInput.addEventListener("change", () => {
@@ -13970,7 +14047,7 @@
       const zone = els.metadataAttachDropZone;
       zone.addEventListener("click", () => {
         const current = getMetadataCurrentItem();
-        if (!current || !Number(current.id || 0) || !els.metadataAttachInput) return;
+        if (!current || !metadataAttachmentFileId(current) || !els.metadataAttachInput) return;
         els.metadataAttachInput.click();
       });
       zone.addEventListener("dragenter", (event) => {
@@ -14008,7 +14085,7 @@
     if (els.metadataSaveBtn) {
       els.metadataSaveBtn.addEventListener("click", () => {
         saveBatchMetadata().catch((err) => {
-          showStatus(els.uploadStatus, err.message || "Kunne ikke gemme metadata", "error");
+          showStatus(els.metadataAttachStatus, err.message || "Kunne ikke gemme metadata", "error");
         });
       });
     }
