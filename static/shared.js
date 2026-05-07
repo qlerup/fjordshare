@@ -49,8 +49,8 @@
     el.textContent = message;
   }
 
-  const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".step", ".3mf", ".stl"]);
-  const PRIMARY_UPLOAD_ALLOWED_LABEL = ".step, .3mf og .stl";
+  const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".stl", ".step", ".zip", ".3mf", ".obj"]);
+  const PRIMARY_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf og .obj";
 
   function fileExt(filename) {
     const name = String(filename || "").trim().toLowerCase();
@@ -335,6 +335,4 @@
   bindEvents();
   loadShareInfo();
 })();
-
-
 
