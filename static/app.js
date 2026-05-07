@@ -8483,6 +8483,7 @@
     }
     if (els.metadataCancelBtn) {
       els.metadataCancelBtn.textContent = printMode ? "Spring over og se projekt" : "Spring over";
+      els.metadataCancelBtn.classList.toggle("hidden", printMode);
     }
   }
 
