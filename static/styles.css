@@ -430,7 +430,7 @@ input[type="checkbox"] {
   gap: 8px;
 }
 .mobile-nav-item {
-  border: 1px solid var(--border);
+  grid-template-columns: 252px 1fr;
   background: var(--panel-2);
   color: var(--text);
   border-radius: 12px;
