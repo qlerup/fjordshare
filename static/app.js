@@ -629,6 +629,8 @@
 
   const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".stl", ".step", ".zip", ".3mf", ".obj"]);
   const PRIMARY_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf og .obj";
+  const PRINT_READY_PROJECT_FILE_ALLOWED_EXTS = new Set([".3mf", ".stl"]);
+  const PRINT_READY_PROJECT_FILE_ALLOWED_LABEL = ".3mf og .stl";
 
   function fileExt(filename) {
     const name = String(filename || "").trim().toLowerCase();
@@ -638,6 +640,10 @@
 
   function isSupportedPrimaryUpload(file) {
     return !!file && PRIMARY_UPLOAD_ALLOWED_EXTS.has(fileExt(file.name));
+  }
+
+  function isSupportedPrintReadyProjectFile(file) {
+    return !!file && PRINT_READY_PROJECT_FILE_ALLOWED_EXTS.has(fileExt(file.name));
   }
 
   function unsupportedPrimaryUploadMessage(files) {
@@ -9420,6 +9426,49 @@
     `;
   }
 
+  function printReadyProjectFilesHtml(project) {
+    if (state.role !== "admin") return "";
+    const projectId = Number(project && project.id ? project.id : 0);
+    const list = Array.isArray(project && project.project_files) ? project.project_files : [];
+    return `
+      <section class="print-ready-project-files" aria-label="Gemt i projektet">
+        <div class="print-ready-project-files-head">
+          <div>
+            <div class="print-ready-project-files-title">Gemt i projektet</div>
+            <div class="hint">${list.length ? `${list.length} fil(er), kun synlig for admin` : `Upload ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer til intern brug.`}</div>
+          </div>
+          <label class="btn small print-ready-project-upload">
+            Upload 3MF/STL
+            <input class="print-ready-project-file-input" type="file" accept=".3mf,.stl" multiple data-project-id="${projectId}">
+          </label>
+        </div>
+        ${
+          list.length
+            ? `
+              <div class="print-ready-project-file-list">
+                ${list.map((item) => {
+                  const id = Number(item && item.id ? item.id : 0);
+                  const name = String((item && item.original_name) || "Projektfil");
+                  const url = String((item && item.download_url) || "#");
+                  const meta = `${formatSize(item && item.file_size)} · ${formatDate(item && item.uploaded_at)}`;
+                  return `
+                    <div class="print-ready-project-file-item">
+                      <a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(name)}">
+                        <span class="print-ready-project-file-name">${esc(name)}</span>
+                        <span class="print-ready-project-file-meta">${esc(meta)}</span>
+                      </a>
+                      <button class="btn small danger" type="button" data-print-ready-action="delete-project-file" data-id="${projectId}" data-project-file-id="${id}">Slet</button>
+                    </div>
+                  `;
+                }).join("")}
+              </div>
+            `
+            : `<div class="hint">Ingen projektfiler gemt endnu.</div>`
+        }
+      </section>
+    `;
+  }
+
   function printReadyInfoHtml(file) {
     const note = String((file && file.note) || "").trim();
     const scale = scaleUpLabel(file);
@@ -9481,6 +9530,7 @@
       : (isCancelledProject ? "project-cancelled" : "project-ready");
     const fileCount = Number(project.file_count || files.length || 0);
     const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
+    const projectFileCount = Array.isArray(project.project_files) ? project.project_files.length : 0;
     const rows = files.map((file) => `
       <tr class="print-ready-file-row">
         <td>${esc(file.display_path || file.folder_path || "-")}</td>
@@ -9515,6 +9565,7 @@
             <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))}</div>
             <div class="hint">Filer i alt: ${fileCount}</div>
             <div class="hint">Printet: ${printedCount}</div>
+            ${isAdmin ? `<div class="hint">Gemt i projektet: ${projectFileCount}</div>` : ""}
           </div>
           <div class="toolbar">
             <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
@@ -9533,6 +9584,7 @@
             }
           </div>
         </div>
+        ${printReadyProjectFilesHtml(project)}
         <div class="print-ready-table-wrap">
           <table class="table compact print-ready-table">
             <thead>
@@ -9551,6 +9603,38 @@
         </div>
       </article>
     `;
+  }
+
+  async function uploadPrintReadyProjectFiles(projectId, fileSource) {
+    if (state.role !== "admin") return;
+    const id = Number(projectId || 0);
+    const files = Array.from((fileSource && fileSource.files) || fileSource || []).filter(Boolean);
+    if (!id || !files.length) return;
+
+    const unsupported = files.filter((file) => !isSupportedPrintReadyProjectFile(file));
+    if (unsupported.length) {
+      showStatus(
+        els.printReadyStatus,
+        `${unsupported[0].name || "Filen"} understøttes ikke. Upload kun ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer.`,
+        "error",
+      );
+      if (fileSource && fileSource.files) fileSource.value = "";
+      return;
+    }
+
+    const formData = new FormData();
+    files.forEach((file) => formData.append("project_files", file, file.name || "projektfil"));
+    showStatus(els.printReadyStatus, `Uploader ${files.length} projektfil(er)...`, "ok");
+    const data = await api(`/api/admin/print-ready/${id}/project-files`, {
+      method: "POST",
+      body: formData,
+    });
+    if (fileSource && fileSource.files) fileSource.value = "";
+    const created = Math.max(0, Number(data && data.created ? data.created : files.length));
+    const skipped = Array.isArray(data && data.skipped) ? data.skipped.length : 0;
+    const skippedText = skipped ? ` ${skipped} blev sprunget over.` : "";
+    showStatus(els.printReadyStatus, `${created} projektfil(er) gemt.${skippedText}`, "ok");
+    await loadPrintReadyProjects();
   }
 
   async function onPrintReadyAdminClick(event) {
@@ -9582,6 +9666,17 @@
       if (!ok) return;
       await api(`/api/admin/print-ready/${id}/delete`, { method: "POST" });
       showStatus(els.printReadyStatus, "Projekt slettet permanent.", "ok");
+      await loadPrintReadyProjects();
+      return;
+    }
+
+    if (action === "delete-project-file") {
+      const assetId = Number(btn.dataset.projectFileId || 0);
+      if (!assetId) return;
+      const ok = window.confirm("Vil du slette denne gemte projektfil?");
+      if (!ok) return;
+      await api(`/api/admin/print-ready/${id}/project-files/${assetId}`, { method: "DELETE" });
+      showStatus(els.printReadyStatus, "Projektfil slettet.", "ok");
       await loadPrintReadyProjects();
       return;
     }
@@ -14298,7 +14393,18 @@
     if (els.printReadyAdminList) {
       els.printReadyAdminList.addEventListener("click", (event) => {
         onPrintReadyAdminClick(event).catch((err) => {
-          showStatus(els.printReadyStatus, err.message || "Fejl i annullering", "error");
+          showStatus(els.printReadyStatus, err.message || "Fejl i projektet", "error");
+        });
+      });
+      els.printReadyAdminList.addEventListener("change", (event) => {
+        const input = event.target && event.target.closest
+          ? event.target.closest(".print-ready-project-file-input")
+          : null;
+        if (!input) return;
+        const projectId = Number(input.dataset.projectId || 0);
+        uploadPrintReadyProjectFiles(projectId, input).catch((err) => {
+          showStatus(els.printReadyStatus, err.message || "Kunne ikke uploade projektfil", "error");
+          input.value = "";
         });
       });
     }

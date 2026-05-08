@@ -2516,6 +2516,86 @@ input[type="checkbox"] {
   flex-wrap: wrap;
 }
 
+.print-ready-project-files {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.print-ready-project-files-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.print-ready-project-files-title {
+  font-weight: 800;
+  color: #eef5ff;
+}
+
+.print-ready-project-upload {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.print-ready-project-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.print-ready-project-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.print-ready-project-file-item {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: min(100%, 260px);
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.print-ready-project-file-item a {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+  padding: 7px 9px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.print-ready-project-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.print-ready-project-file-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.print-ready-project-file-item .btn {
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: 0;
+}
+
 .print-ready-attachments {
   display: flex;
   align-items: center;
