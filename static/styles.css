@@ -3750,7 +3750,7 @@ input[type="checkbox"] {
 
   .app-onboarding-guide-gif {
     height: 100%;
-    max-height: min(56dvh, 680px);
+    min-height: 0;
     object-fit: contain;
   }
 }
