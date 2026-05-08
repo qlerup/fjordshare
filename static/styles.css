@@ -213,7 +213,7 @@ input[type="checkbox"] {
   height: 100dvh;
   z-index: 1000;
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 270px 1fr;
   margin: 0 !important;
   margin-top: 0 !important;
   padding: 0 !important;
