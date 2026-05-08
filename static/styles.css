@@ -2072,6 +2072,20 @@ input[type="checkbox"] {
   min-width: 1040px;
 }
 
+.rejected-file-types-table {
+  min-width: 980px;
+}
+
+#tab-rejected-file-types .panel {
+  overflow-x: auto;
+}
+
+.rejected-file-type-ext {
+  font-weight: 800;
+  color: #eef5ff;
+  white-space: nowrap;
+}
+
 #tab-tracking .panel {
   overflow-x: auto;
 }

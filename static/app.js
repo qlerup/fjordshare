@@ -39,6 +39,7 @@
     shares: [],
     printReadyProjects: [],
     finishedProjects: [],
+    rejectedFileTypes: [],
     tracking: [],
     users: [],
     signupRequests: [],
@@ -155,6 +156,7 @@
     tabFiles: document.getElementById("tab-files"),
     tabPrintReady: document.getElementById("tab-print-ready"),
     tabFinishedProjects: document.getElementById("tab-finished-projects"),
+    tabRejectedFileTypes: document.getElementById("tab-rejected-file-types"),
     tabSettings: document.getElementById("tab-settings"),
     tabTracking: document.getElementById("tab-tracking"),
     profileModal: document.getElementById("profileModal"),
@@ -415,6 +417,10 @@
     finishedProjectsRefreshBtn: document.getElementById("finishedProjectsRefreshBtn"),
     finishedProjectsStatus: document.getElementById("finishedProjectsStatus"),
     finishedProjectsList: document.getElementById("finishedProjectsList"),
+    rejectedFileTypesRefreshBtn: document.getElementById("rejectedFileTypesRefreshBtn"),
+    rejectedFileTypesClearBtn: document.getElementById("rejectedFileTypesClearBtn"),
+    rejectedFileTypesStatus: document.getElementById("rejectedFileTypesStatus"),
+    rejectedFileTypesTableBody: document.getElementById("rejectedFileTypesTableBody"),
     sharesListStatus: document.getElementById("sharesListStatus"),
     sharesTableBody: document.getElementById("sharesTableBody"),
     dnsExternalBaseUrlInput: document.getElementById("dnsExternalBaseUrlInput"),
@@ -551,6 +557,10 @@
       title: "Færdige projekter",
       subtitle: "Afsluttede projekter og genprint",
     },
+    "rejected-file-types": {
+      title: "Afviste filtyper",
+      subtitle: "Filtyper der er forsøgt uploadet, men afvist",
+    },
   };
 
   function esc(value) {
@@ -668,6 +678,24 @@
     const extra = list.length > 3 ? ` +${list.length - 3} flere` : "";
     const subject = list.length === 1 ? names : `${list.length} filer${names ? ` (${names}${extra})` : ""}`;
     return `${subject} understøttes ikke. Upload kun ${PRIMARY_UPLOAD_ALLOWED_LABEL} filer.`;
+  }
+
+  function logRejectedFileTypes(files, context = "upload", reason = "", folderPath = "") {
+    const list = Array.from(files || []).filter((file) => file && file.name);
+    if (!list.length) return;
+    api("/api/rejected-file-types", {
+      method: "POST",
+      body: {
+        items: list.slice(0, 50).map((file) => ({
+          filename: String(file.name || "Fil"),
+          context,
+          reason: reason || `Ikke understøttet. Upload kun ${PRIMARY_UPLOAD_ALLOWED_LABEL} filer.`,
+          folder_path: folderPath,
+        })),
+      },
+    }).catch(() => {
+      // Best effort only; upload validation should not depend on logging.
+    });
   }
 
   const SMS_COUNTRY_OPTIONS = [
@@ -2009,6 +2037,7 @@
       files: els.tabFiles,
       "print-ready": els.tabPrintReady,
       "finished-projects": els.tabFinishedProjects,
+      "rejected-file-types": els.tabRejectedFileTypes,
       settings: els.tabSettings,
       tracking: els.tabTracking,
     };
@@ -9018,6 +9047,12 @@
     const unsupported = list.filter((item) => !isSupportedPrimaryUpload(item.file));
     if (unsupported.length) {
       const message = unsupportedPrimaryUploadMessage(unsupported.map((item) => item.file));
+      logRejectedFileTypes(
+        unsupported.map((item) => item.file),
+        "upload",
+        message,
+        fallbackFolder,
+      );
       if (unsupported.length === list.length) {
         showStatus(els.uploadStatus, message, "error");
         return;
@@ -9742,9 +9777,16 @@
 
     const unsupported = files.filter((file) => !isSupportedPrintReadyProjectFile(file));
     if (unsupported.length) {
+      const reason = `${unsupported[0].name || "Filen"} understøttes ikke. Upload kun ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer.`;
+      logRejectedFileTypes(
+        unsupported,
+        "project-file-upload",
+        `Ikke understøttet. Upload kun ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer.`,
+        "",
+      );
       showStatus(
         statusEl,
-        `${unsupported[0].name || "Filen"} understøttes ikke. Upload kun ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer.`,
+        reason,
         "error",
       );
       if (fileSource && fileSource.files) fileSource.value = "";
@@ -10918,6 +10960,29 @@
     renderAdminLogs();
   }
 
+  async function loadRejectedFileTypes() {
+    if (state.role !== "admin" || !els.rejectedFileTypesTableBody) return;
+    try {
+      const data = await api("/api/admin/rejected-file-types");
+      state.rejectedFileTypes = Array.isArray(data.items) ? data.items : [];
+      showStatus(els.rejectedFileTypesStatus, "");
+    } catch (err) {
+      state.rejectedFileTypes = [];
+      showStatus(els.rejectedFileTypesStatus, err.message || "Kunne ikke hente afviste filtyper", "error");
+    }
+    renderRejectedFileTypes();
+  }
+
+  async function clearRejectedFileTypes() {
+    if (state.role !== "admin") return;
+    if (!window.confirm("Ryd loggen over afviste filtyper?")) return;
+    const data = await api("/api/admin/rejected-file-types", { method: "DELETE" });
+    const deleted = Math.max(0, Number(data.deleted || 0));
+    state.rejectedFileTypes = [];
+    renderRejectedFileTypes();
+    showStatus(els.rejectedFileTypesStatus, `Afviste filtyper ryddet (${deleted}).`, "ok");
+  }
+
   async function clearAdminLogs() {
     if (state.role !== "admin") return;
     if (!window.confirm("Ryd alle loglinjer? Dette kan ikke fortrydes.")) return;
@@ -11796,6 +11861,38 @@
             <td class="log-entry-target">${esc(target)}</td>
             <td class="log-entry-folder">${esc(folder)}</td>
             <td class="log-entry-message">${esc(description)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+  }
+
+  function renderRejectedFileTypes() {
+    if (!els.rejectedFileTypesTableBody) return;
+    const list = Array.isArray(state.rejectedFileTypes) ? state.rejectedFileTypes : [];
+    if (!list.length) {
+      els.rejectedFileTypesTableBody.innerHTML = `<tr><td colspan="7" class="hint">Ingen afviste filtyper logget endnu.</td></tr>`;
+      return;
+    }
+
+    els.rejectedFileTypesTableBody.innerHTML = list
+      .map((item) => {
+        const ext = String(item.ext || "(ingen)");
+        const count = Math.max(0, Number(item.count || 0));
+        const filename = String(item.filename || "-");
+        const reason = String(item.reason || "-");
+        const context = String(item.context || "-").replace(/-/g, " ");
+        const actor = String(item.actor || "-");
+        const latest = formatDate(item.created_at || "");
+        return `
+          <tr>
+            <td class="rejected-file-type-ext">${esc(ext)}</td>
+            <td>${count}</td>
+            <td>${esc(filename)}</td>
+            <td>${esc(reason)}</td>
+            <td>${esc(context)}</td>
+            <td>${esc(actor)}</td>
+            <td>${esc(latest)}</td>
           </tr>
         `;
       })
@@ -13227,6 +13324,9 @@
         }
         if (tab === "tracking") {
           await loadTracking();
+        }
+        if (tab === "rejected-file-types" && state.role === "admin") {
+          await loadRejectedFileTypes();
         }
         if (tab === "settings" && state.role === "admin") {
           if (state.currentSettingsTab === "shares") await loadShares();
@@ -14901,6 +15001,20 @@
       els.logsClearBtn.addEventListener("click", () => {
         clearAdminLogs().catch((err) => {
           showStatus(els.logsStatus, err.message || "Kunne ikke rydde logs", "error");
+        });
+      });
+    }
+    if (els.rejectedFileTypesRefreshBtn) {
+      els.rejectedFileTypesRefreshBtn.addEventListener("click", () => {
+        loadRejectedFileTypes().catch((err) => {
+          showStatus(els.rejectedFileTypesStatus, err.message || "Kunne ikke hente afviste filtyper", "error");
+        });
+      });
+    }
+    if (els.rejectedFileTypesClearBtn) {
+      els.rejectedFileTypesClearBtn.addEventListener("click", () => {
+        clearRejectedFileTypes().catch((err) => {
+          showStatus(els.rejectedFileTypesStatus, err.message || "Kunne ikke rydde afviste filtyper", "error");
         });
       });
     }

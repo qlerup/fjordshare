@@ -988,6 +988,53 @@ def _unsupported_print_ready_project_file_error(filename: str) -> str:
     return f"{name} understøttes ikke. Upload kun {PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer."
 
 
+def rejected_file_ext(filename: str) -> str:
+    ext = str(Path(str(filename or "")).suffix or "").strip().lower()
+    return ext or "(ingen)"
+
+
+def log_rejected_file_type(
+    filename: str,
+    reason: str,
+    context: str = "upload",
+    actor: str = "",
+    folder_path: str = "",
+    source: str = "server",
+) -> None:
+    name = sanitize_filename(str(filename or "Ukendt fil"))
+    ext = rejected_file_ext(filename)
+    safe_reason = str(reason or "Filtypen er ikke tilladt").strip()[:500]
+    safe_context = str(context or "upload").strip().lower()[:80] or "upload"
+    safe_actor = str(actor or "").strip()[:120]
+    safe_source = str(source or "server").strip().lower()[:40] or "server"
+    try:
+        safe_folder = normalize_folder_path(str(folder_path or ""))
+    except Exception:
+        safe_folder = ""
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                """
+                INSERT INTO rejected_file_types(
+                    ext, filename, context, reason, folder_path, actor, source, created_at
+                ) VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    ext[:40],
+                    name[:240],
+                    safe_context,
+                    safe_reason,
+                    safe_folder,
+                    safe_actor,
+                    safe_source,
+                    now_iso(),
+                ),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
 def parse_iso_or_none(raw: Any) -> Optional[datetime]:
     value = str(raw or "").strip()
     if not value:
@@ -1313,7 +1360,14 @@ def _zip_scan_error_message(errors: list[str]) -> str:
     return f"ZIP blev afvist før udpakning: {preview}{extra}"
 
 
-def validate_zip_upload_contents(zip_path: Path, original_zip_name: str = "") -> dict[str, int]:
+def validate_zip_upload_contents(
+    zip_path: Path,
+    original_zip_name: str = "",
+    log_rejections: bool = False,
+    actor: str = "",
+    folder_path: str = "",
+    context: str = "zip",
+) -> dict[str, int]:
     _ = original_zip_name
     errors: list[str] = []
     allowed_count = 0
@@ -1334,6 +1388,15 @@ def validate_zip_upload_contents(zip_path: Path, original_zip_name: str = "") ->
                     continue
                 if _zip_entry_is_ignored(parts):
                     continue
+
+                if not info.is_dir():
+                    file_name = sanitize_filename(parts[-1])
+                    if not file_name or not _is_allowed_primary_3d_model_upload(file_name):
+                        reason = f"Filtypen er ikke tilladt i ZIP ({PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL})"
+                        errors.append(f"{raw_name}: {reason}")
+                        if log_rejections:
+                            log_rejected_file_type(raw_name, reason, context=context, actor=actor, folder_path=folder_path, source="zip")
+                        continue
 
                 if int(info.flag_bits or 0) & 0x1:
                     errors.append(f"{raw_name}: krypterede ZIP-filer er ikke tilladt")
@@ -1370,10 +1433,6 @@ def validate_zip_upload_contents(zip_path: Path, original_zip_name: str = "") ->
                 if info.is_dir():
                     continue
 
-                file_name = sanitize_filename(parts[-1])
-                if not file_name or not _is_allowed_primary_3d_model_upload(file_name):
-                    errors.append(f"{raw_name}: filtypen er ikke tilladt i ZIP ({PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL})")
-                    continue
                 allowed_count += 1
     except zipfile.BadZipFile:
         raise ValueError("ZIP kunne ikke læses eller er beskadiget")
@@ -8368,6 +8427,20 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_activity_logs_created ON activity_logs(created_at DESC, id DESC);
             CREATE INDEX IF NOT EXISTS idx_activity_logs_kind ON activity_logs(kind, action, id DESC);
 
+            CREATE TABLE IF NOT EXISTS rejected_file_types (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ext TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                context TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                folder_path TEXT,
+                actor TEXT,
+                source TEXT NOT NULL DEFAULT 'server',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_rejected_file_types_ext ON rejected_file_types(ext, id DESC);
+            CREATE INDEX IF NOT EXISTS idx_rejected_file_types_created ON rejected_file_types(created_at DESC, id DESC);
+
             CREATE TABLE IF NOT EXISTS print_ready_projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 owner_user_id INTEGER NOT NULL,
@@ -13858,7 +13931,16 @@ def api_admin_print_ready_project_assets_upload(project_id: int):
     for upload in valid_uploads:
         original_name = sanitize_filename(str(upload.filename or "projektfil"))
         if not _is_allowed_print_ready_project_file(original_name):
-            skipped.append(_unsupported_print_ready_project_file_error(original_name))
+            reason = _unsupported_print_ready_project_file_error(original_name)
+            skipped.append(reason)
+            log_rejected_file_type(
+                original_name,
+                reason,
+                context="project-file-upload",
+                actor=str(current_user.username or ""),
+                folder_path=str(project["owner_home_folder"] or ""),
+                source="server",
+            )
             continue
 
         size_guess = _attachment_size_from_filestorage(upload)
@@ -16114,6 +16196,112 @@ def api_admin_logs():
     return jsonify({"ok": True, "items": items, "count": len(items)})
 
 
+def serialize_rejected_file_type_row(row: sqlite3.Row) -> dict:
+    return {
+        "id": int(row["id"]),
+        "ext": str(row["ext"] or "(ingen)"),
+        "filename": str(row["filename"] or ""),
+        "context": str(row["context"] or ""),
+        "reason": str(row["reason"] or ""),
+        "folder_path": str(row["folder_path"] or ""),
+        "actor": str(row["actor"] or ""),
+        "source": str(row["source"] or "server"),
+        "created_at": str(row["created_at"] or ""),
+        "created_at_display": format_local_datetime(row["created_at"]),
+    }
+
+
+@app.route("/api/rejected-file-types", methods=["POST"])
+@login_required
+def api_rejected_file_types_record():
+    body = request.get_json(silent=True) or {}
+    raw_items = body.get("items")
+    if not isinstance(raw_items, list):
+        raw_items = [body]
+
+    recorded = 0
+    for item in raw_items[:50]:
+        if not isinstance(item, dict):
+            continue
+        filename = str(item.get("filename") or item.get("name") or "").strip()
+        if not filename:
+            continue
+        reason = str(item.get("reason") or "Filtypen er ikke tilladt").strip()
+        context = str(item.get("context") or "upload").strip()
+        folder_path = str(item.get("folder_path") or item.get("folder") or "").strip()
+        log_rejected_file_type(
+            filename,
+            reason,
+            context=context,
+            actor=str(current_user.username or ""),
+            folder_path=folder_path,
+            source="client",
+        )
+        recorded += 1
+
+    return jsonify({"ok": True, "recorded": recorded})
+
+
+@app.route("/api/admin/rejected-file-types", methods=["GET", "DELETE"])
+@login_required
+def api_admin_rejected_file_types():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    if request.method == "DELETE":
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT COUNT(*) AS c FROM rejected_file_types").fetchone()
+            deleted = int(row["c"] or 0) if row else 0
+            conn.execute("DELETE FROM rejected_file_types")
+            conn.commit()
+        return jsonify({"ok": True, "deleted": deleted})
+
+    with closing(get_conn()) as conn:
+        summary_rows = conn.execute(
+            """
+            SELECT ext, COUNT(*) AS count, MAX(id) AS latest_id
+            FROM rejected_file_types
+            GROUP BY ext
+            ORDER BY latest_id DESC
+            """
+        ).fetchall()
+        latest_ids = [int(row["latest_id"] or 0) for row in summary_rows if int(row["latest_id"] or 0) > 0]
+        latest_by_id: dict[int, sqlite3.Row] = {}
+        if latest_ids:
+            placeholders = ",".join("?" for _ in latest_ids)
+            latest_rows = conn.execute(
+                f"""
+                SELECT id, ext, filename, context, reason, folder_path, actor, source, created_at
+                FROM rejected_file_types
+                WHERE id IN ({placeholders})
+                """,
+                tuple(latest_ids),
+            ).fetchall()
+            latest_by_id = {int(row["id"]): row for row in latest_rows}
+
+        recent_rows = conn.execute(
+            """
+            SELECT id, ext, filename, context, reason, folder_path, actor, source, created_at
+            FROM rejected_file_types
+            ORDER BY id DESC
+            LIMIT 200
+            """
+        ).fetchall()
+
+    items: list[dict] = []
+    for summary_row in summary_rows:
+        latest_id = int(summary_row["latest_id"] or 0)
+        latest = latest_by_id.get(latest_id)
+        if latest is None:
+            continue
+        item = serialize_rejected_file_type_row(latest)
+        item["count"] = int(summary_row["count"] or 0)
+        items.append(item)
+
+    recent = [serialize_rejected_file_type_row(row) for row in recent_rows]
+    return jsonify({"ok": True, "items": items, "recent": recent, "count": len(items)})
+
+
 @app.route("/api/shares", methods=["GET", "POST"])
 @login_required
 def api_shares():
@@ -16549,14 +16737,23 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
     try:
         ext = str(Path(filename).suffix or "").lower()
         if not _is_allowed_primary_3d_upload(filename):
+            reason = _unsupported_primary_3d_upload_error(filename)
+            log_rejected_file_type(filename, reason, context="upload-finalize", actor=uploaded_by, folder_path=folder, source="server")
             try:
                 data_path.unlink(missing_ok=True)
             except Exception:
                 pass
-            return False, None, _unsupported_primary_3d_upload_error(filename)
+            return False, None, reason
         if ext == ".zip":
             try:
-                validate_zip_upload_contents(data_path, filename)
+                validate_zip_upload_contents(
+                    data_path,
+                    filename,
+                    log_rejections=True,
+                    actor=uploaded_by,
+                    folder_path=folder,
+                    context="zip-upload",
+                )
             except Exception as exc:
                 try:
                     data_path.unlink(missing_ok=True)
@@ -16715,7 +16912,16 @@ def api_upload_tus_create():
     if not filename:
         return jsonify({"ok": False, "error": "Missing filename"}), 400, tus_headers()
     if not _is_allowed_primary_3d_upload(filename):
-        return jsonify({"ok": False, "error": _unsupported_primary_3d_upload_error(filename)}), 415, tus_headers()
+        reason = _unsupported_primary_3d_upload_error(filename)
+        log_rejected_file_type(
+            filename,
+            reason,
+            context="upload",
+            actor=str(current_user.username or ""),
+            folder_path=str(meta.get("folder") or ""),
+            source="server",
+        )
+        return jsonify({"ok": False, "error": reason}), 415, tus_headers()
 
     if current_user.is_admin:
         folder = normalize_folder_path(str(meta.get("folder") or ""))
@@ -16927,7 +17133,17 @@ def api_share_upload_tus_create(token: str):
     if not filename:
         return jsonify({"ok": False, "error": "Missing filename"}), 400, tus_headers()
     if not _is_allowed_primary_3d_upload(filename):
-        return jsonify({"ok": False, "error": _unsupported_primary_3d_upload_error(filename)}), 415, tus_headers()
+        reason = _unsupported_primary_3d_upload_error(filename)
+        visitor_name = str(session.get(share_visitor_key(int(share_row["id"]))) or "").strip()
+        log_rejected_file_type(
+            filename,
+            reason,
+            context="share-upload",
+            actor=visitor_name or "share-visitor",
+            folder_path=str(meta.get("folder") or (folders[0] if folders else "")),
+            source="server",
+        )
+        return jsonify({"ok": False, "error": reason}), 415, tus_headers()
 
     folder = normalize_folder_path(str(meta.get("folder") or ""))
     if not folder:

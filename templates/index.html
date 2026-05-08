@@ -23,6 +23,7 @@
       <button class="nav-item" data-tab="finished-projects">Færdige projekter</button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
       <button class="nav-item" data-tab="tracking">Tracking</button>
+      <button class="nav-item admin-only" data-tab="rejected-file-types">Afviste filtyper</button>
     </nav>
 
     <div class="sidebar-footer">
@@ -510,6 +511,32 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section id="tab-rejected-file-types" class="tab-section hidden admin-only">
+      <div class="panel">
+        <div class="toolbar">
+          <h3>Afviste filtyper</h3>
+          <button id="rejectedFileTypesClearBtn" class="btn small danger" type="button">Ryd log</button>
+          <button id="rejectedFileTypesRefreshBtn" class="icon-btn" type="button" title="Opdater afviste filtyper" aria-label="Opdater afviste filtyper">&#8635;</button>
+        </div>
+        <p class="hint">Filtyper som er blevet afvist ved upload eller inde i ZIP-filer.</p>
+        <div id="rejectedFileTypesStatus" class="status hidden"></div>
+        <table class="table compact rejected-file-types-table">
+          <thead>
+            <tr>
+              <th>Filtype</th>
+              <th>Antal</th>
+              <th>Seneste fil</th>
+              <th>Årsag</th>
+              <th>Kontekst</th>
+              <th>Bruger</th>
+              <th>Senest</th>
+            </tr>
+          </thead>
+          <tbody id="rejectedFileTypesTableBody"></tbody>
+        </table>
       </div>
     </section>
   </main>
