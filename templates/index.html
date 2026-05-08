@@ -20,6 +20,7 @@
         <span class="nav-item-label">Projekter klar til print</span>
         <span id="printReadyNavBadge" class="nav-count-badge hidden" aria-label="Aktive projekter">0</span>
       </button>
+      <button class="nav-item" data-tab="finished-projects">Færdige projekter</button>
       <button class="nav-item admin-only" data-tab="settings">Indstillinger</button>
       <button class="nav-item" data-tab="tracking">Tracking</button>
     </nav>
@@ -152,6 +153,18 @@
         <p class="hint">Projekter der er markeret klar til produktion.</p>
         <div id="printReadyStatus" class="status hidden"></div>
         <div id="printReadyAdminList" class="print-ready-admin-list"></div>
+      </div>
+    </section>
+
+    <section id="tab-finished-projects" class="tab-section hidden">
+      <div class="panel">
+        <div class="toolbar">
+          <h3>Færdige projekter</h3>
+          <button id="finishedProjectsRefreshBtn" class="icon-btn" type="button" title="Opdater færdige projekter" aria-label="Opdater færdige projekter">&#8635;</button>
+        </div>
+        <p class="hint">Afsluttede projekter som kan sendes til print igen.</p>
+        <div id="finishedProjectsStatus" class="status hidden"></div>
+        <div id="finishedProjectsList" class="print-ready-admin-list"></div>
       </div>
     </section>
 

@@ -2423,6 +2423,23 @@ input[type="checkbox"] {
   color: #e8f1ff;
 }
 
+.print-ready-project-head .toolbar {
+  align-items: stretch;
+}
+
+.print-ready-project-head .toolbar .btn {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  line-height: 1.15;
+}
+
+.print-ready-project-head .toolbar .btn.small {
+  font-size: 0.92rem;
+}
+
 .print-ready-table {
   min-width: 940px;
   table-layout: fixed;

@@ -38,6 +38,7 @@
     zipJobs: [],
     shares: [],
     printReadyProjects: [],
+    finishedProjects: [],
     tracking: [],
     users: [],
     signupRequests: [],
@@ -151,6 +152,7 @@
     mobileSidebarBackdrop: document.getElementById("mobileSidebarBackdrop"),
     tabFiles: document.getElementById("tab-files"),
     tabPrintReady: document.getElementById("tab-print-ready"),
+    tabFinishedProjects: document.getElementById("tab-finished-projects"),
     tabSettings: document.getElementById("tab-settings"),
     tabTracking: document.getElementById("tab-tracking"),
     profileModal: document.getElementById("profileModal"),
@@ -403,6 +405,9 @@
     printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
     printReadyStatus: document.getElementById("printReadyStatus"),
     printReadyAdminList: document.getElementById("printReadyAdminList"),
+    finishedProjectsRefreshBtn: document.getElementById("finishedProjectsRefreshBtn"),
+    finishedProjectsStatus: document.getElementById("finishedProjectsStatus"),
+    finishedProjectsList: document.getElementById("finishedProjectsList"),
     sharesListStatus: document.getElementById("sharesListStatus"),
     sharesTableBody: document.getElementById("sharesTableBody"),
     dnsExternalBaseUrlInput: document.getElementById("dnsExternalBaseUrlInput"),
@@ -534,6 +539,10 @@
     "print-ready": {
       title: "Projekter klar til print",
       subtitle: "Projekter markeret klar til produktion",
+    },
+    "finished-projects": {
+      title: "Færdige projekter",
+      subtitle: "Afsluttede projekter og genprint",
     },
   };
 
@@ -1992,6 +2001,7 @@
     const map = {
       files: els.tabFiles,
       "print-ready": els.tabPrintReady,
+      "finished-projects": els.tabFinishedProjects,
       settings: els.tabSettings,
       tracking: els.tabTracking,
     };
@@ -9411,6 +9421,20 @@
     updatePrintReadyNavBadge();
   }
 
+  async function loadFinishedProjects() {
+    if (!els.finishedProjectsList) return;
+    const listEndpoint = state.role === "admin" ? "/api/admin/finished-projects" : "/api/finished-projects";
+    try {
+      const data = await api(listEndpoint);
+      state.finishedProjects = Array.isArray(data.items) ? data.items : [];
+      showStatus(els.finishedProjectsStatus, "");
+    } catch (err) {
+      state.finishedProjects = [];
+      showStatus(els.finishedProjectsStatus, err.message || "Kunne ikke hente færdige projekter", "error");
+    }
+    renderFinishedProjects();
+  }
+
   function printReadyAttachmentHtml(attachments) {
     const list = Array.isArray(attachments) ? attachments : [];
     if (!list.length) return `<span class="hint">Ingen</span>`;
@@ -9518,8 +9542,46 @@
     `).join("");
   }
 
-  function renderPrintReadyProjectCard(project) {
+  function renderFinishedProjects() {
+    if (!els.finishedProjectsList) return;
     const isAdmin = state.role === "admin";
+    const projects = Array.isArray(state.finishedProjects) ? state.finishedProjects : [];
+    if (!projects.length) {
+      els.finishedProjectsList.innerHTML = `<div class="hint">${isAdmin ? "Ingen færdige projekter endnu." : "Du har ingen færdige projekter endnu."}</div>`;
+      return;
+    }
+
+    if (!isAdmin) {
+      els.finishedProjectsList.innerHTML = `
+        <section class="print-ready-user-group">
+          <div class="print-ready-projects">
+            ${projects.map((project) => renderPrintReadyProjectCard(project, { finished: true })).join("")}
+          </div>
+        </section>
+      `;
+      return;
+    }
+
+    const groups = new Map();
+    for (const project of projects) {
+      const user = String(project.owner_username || "Ukendt bruger");
+      if (!groups.has(user)) groups.set(user, []);
+      groups.get(user).push(project);
+    }
+
+    els.finishedProjectsList.innerHTML = Array.from(groups.entries()).map(([username, items]) => `
+      <section class="print-ready-user-group">
+        <h4>${esc(username)}</h4>
+        <div class="print-ready-projects">
+          ${items.map((project) => renderPrintReadyProjectCard(project, { finished: true })).join("")}
+        </div>
+      </section>
+    `).join("");
+  }
+
+  function renderPrintReadyProjectCard(project, options = {}) {
+    const isAdmin = state.role === "admin";
+    const finishedMode = !!(options && options.finished);
     const files = Array.isArray(project.files) ? project.files : [];
     const projectStatus = normalizePrintReadyProjectStatus(project.status);
     const isCompletedProject = projectStatus === "completed";
@@ -9544,7 +9606,7 @@
             ${
               isAdmin
                 ? (
-                  isFinalProject
+                  isFinalProject || finishedMode
                     ? `<button class="btn small" type="button" disabled>${isCancelledProject ? "Annulleret" : "Projekt færdigt"}</button>`
                     : (
                       file.printed
@@ -9571,8 +9633,11 @@
             <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
             <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener">Download PDF produktions info</a>
             ${
-              isAdmin
-                ? `
+              finishedMode
+                ? `<button class="btn primary" type="button" data-print-ready-action="resend-project" data-id="${Number(project.id || 0)}">Send til print igen</button>`
+                : (
+                  isAdmin
+                    ? `
                   ${
                     (isCancelledProject || isCompletedProject)
                       ? ""
@@ -9580,7 +9645,8 @@
                   }
                   <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${Number(project.id || 0)}">${isCancelledProject ? "Slet" : "Annuller"}</button>
                 `
-                : ""
+                    : ""
+                )
             }
           </div>
         </div>
@@ -9610,11 +9676,14 @@
     const id = Number(projectId || 0);
     const files = Array.from((fileSource && fileSource.files) || fileSource || []).filter(Boolean);
     if (!id || !files.length) return;
+    const statusEl = els.finishedProjectsList && fileSource instanceof Element && els.finishedProjectsList.contains(fileSource)
+      ? els.finishedProjectsStatus
+      : els.printReadyStatus;
 
     const unsupported = files.filter((file) => !isSupportedPrintReadyProjectFile(file));
     if (unsupported.length) {
       showStatus(
-        els.printReadyStatus,
+        statusEl,
         `${unsupported[0].name || "Filen"} understøttes ikke. Upload kun ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer.`,
         "error",
       );
@@ -9624,7 +9693,7 @@
 
     const formData = new FormData();
     files.forEach((file) => formData.append("project_files", file, file.name || "projektfil"));
-    showStatus(els.printReadyStatus, `Uploader ${files.length} projektfil(er)...`, "ok");
+    showStatus(statusEl, `Uploader ${files.length} projektfil(er)...`, "ok");
     const data = await api(`/api/admin/print-ready/${id}/project-files`, {
       method: "POST",
       body: formData,
@@ -9633,17 +9702,33 @@
     const created = Math.max(0, Number(data && data.created ? data.created : files.length));
     const skipped = Array.isArray(data && data.skipped) ? data.skipped.length : 0;
     const skippedText = skipped ? ` ${skipped} blev sprunget over.` : "";
-    showStatus(els.printReadyStatus, `${created} projektfil(er) gemt.${skippedText}`, "ok");
+    showStatus(statusEl, `${created} projektfil(er) gemt.${skippedText}`, "ok");
     await loadPrintReadyProjects();
+    await loadFinishedProjects();
   }
 
   async function onPrintReadyAdminClick(event) {
-    if (state.role !== "admin") return;
     const btn = event.target.closest("[data-print-ready-action]");
     if (!btn) return;
     const action = String(btn.dataset.printReadyAction || "");
     const id = Number(btn.dataset.id || 0);
     if (!id) return;
+    const statusEl = els.finishedProjectsList && els.finishedProjectsList.contains(btn)
+      ? els.finishedProjectsStatus
+      : els.printReadyStatus;
+
+    if (action === "resend-project") {
+      const ok = window.confirm("Vil du sende dette projekt til print igen?");
+      if (!ok) return;
+      await api(`/api/print-ready/${id}/resend`, { method: "POST" });
+      showStatus(statusEl, "Projektet er sendt til print igen.", "ok");
+      await loadFinishedProjects();
+      await loadPrintReadyProjects();
+      await loadFiles();
+      return;
+    }
+
+    if (state.role !== "admin") return;
 
     if (action === "cancel") {
       const ok = window.confirm("Vil du annullere dette projekt? Brugeren skal derefter sende et nyt.");
@@ -9651,7 +9736,7 @@
       const data = await api(`/api/admin/print-ready/${id}/cancel`, { method: "POST" });
       const resetCount = Number(data && data.reset_printed_count ? data.reset_printed_count : 0);
       showStatus(
-        els.printReadyStatus,
+        statusEl,
         resetCount > 0
           ? `Projekt annulleret. Printet-status nulstillet for ${resetCount} fil(er).`
           : "Projekt annulleret.",
@@ -9665,7 +9750,7 @@
       const ok = window.confirm("Vil du slette dette annullerede projekt permanent?");
       if (!ok) return;
       await api(`/api/admin/print-ready/${id}/delete`, { method: "POST" });
-      showStatus(els.printReadyStatus, "Projekt slettet permanent.", "ok");
+      showStatus(statusEl, "Projekt slettet permanent.", "ok");
       await loadPrintReadyProjects();
       return;
     }
@@ -9676,8 +9761,9 @@
       const ok = window.confirm("Vil du slette denne gemte projektfil?");
       if (!ok) return;
       await api(`/api/admin/print-ready/${id}/project-files/${assetId}`, { method: "DELETE" });
-      showStatus(els.printReadyStatus, "Projektfil slettet.", "ok");
+      showStatus(statusEl, "Projektfil slettet.", "ok");
       await loadPrintReadyProjects();
+      await loadFinishedProjects();
       return;
     }
 
@@ -9691,7 +9777,7 @@
         method: "POST",
         body: { send_sms: false },
       });
-      showStatus(els.printReadyStatus, "Fil markeret som printet.", "ok");
+      showStatus(statusEl, "Fil markeret som printet.", "ok");
       await loadPrintReadyProjects();
       await loadFiles();
       return;
@@ -9701,7 +9787,7 @@
       const fileId = Number(btn.dataset.fileId || 0);
       if (!fileId) return;
       await api(`/api/admin/print-ready/${id}/file/${fileId}/uncomplete`, { method: "POST" });
-      showStatus(els.printReadyStatus, "Printet-status fjernet for filen.", "ok");
+      showStatus(statusEl, "Printet-status fjernet for filen.", "ok");
       await loadPrintReadyProjects();
       await loadFiles();
       return;
@@ -9715,8 +9801,9 @@
         method: "POST",
         body: { send_sms: false },
       });
-      showStatus(els.printReadyStatus, "Projekt markeret som færdigprintet.", "ok");
+      showStatus(statusEl, "Projekt markeret som færdigprintet.", "ok");
       await loadPrintReadyProjects();
+      await loadFinishedProjects();
       await loadFiles();
     }
   }
@@ -13017,6 +13104,9 @@
         if (tab === "print-ready") {
           await loadPrintReadyProjects();
         }
+        if (tab === "finished-projects") {
+          await loadFinishedProjects();
+        }
         if (tab === "tracking") {
           await loadTracking();
         }
@@ -14389,6 +14479,13 @@
         });
       });
     }
+    if (els.finishedProjectsRefreshBtn) {
+      els.finishedProjectsRefreshBtn.addEventListener("click", () => {
+        loadFinishedProjects().catch((err) => {
+          showStatus(els.finishedProjectsStatus, err.message || "Kunne ikke hente færdige projekter", "error");
+        });
+      });
+    }
 
     if (els.printReadyAdminList) {
       els.printReadyAdminList.addEventListener("click", (event) => {
@@ -14404,6 +14501,24 @@
         const projectId = Number(input.dataset.projectId || 0);
         uploadPrintReadyProjectFiles(projectId, input).catch((err) => {
           showStatus(els.printReadyStatus, err.message || "Kunne ikke uploade projektfil", "error");
+          input.value = "";
+        });
+      });
+    }
+    if (els.finishedProjectsList) {
+      els.finishedProjectsList.addEventListener("click", (event) => {
+        onPrintReadyAdminClick(event).catch((err) => {
+          showStatus(els.finishedProjectsStatus, err.message || "Fejl i projektet", "error");
+        });
+      });
+      els.finishedProjectsList.addEventListener("change", (event) => {
+        const input = event.target && event.target.closest
+          ? event.target.closest(".print-ready-project-file-input")
+          : null;
+        if (!input) return;
+        const projectId = Number(input.dataset.projectId || 0);
+        uploadPrintReadyProjectFiles(projectId, input).catch((err) => {
+          showStatus(els.finishedProjectsStatus, err.message || "Kunne ikke uploade projektfil", "error");
           input.value = "";
         });
       });

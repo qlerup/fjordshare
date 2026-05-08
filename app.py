@@ -10713,6 +10713,120 @@ def create_print_ready_project(
     return project_id
 
 
+def clone_print_ready_project_for_resend(project_row: sqlite3.Row, actor_username: str) -> int:
+    source_project_id = int(project_row["id"] or 0)
+    actor = str(actor_username or "").strip()
+    with closing(get_conn()) as conn:
+        source_files = conn.execute(
+            """
+            SELECT *
+            FROM print_ready_project_files
+            WHERE project_id=?
+            ORDER BY sort_order, id
+            """,
+            (source_project_id,),
+        ).fetchall()
+        if not source_files:
+            raise ValueError("Projektet indeholder ingen filer")
+
+        cur = conn.execute(
+            """
+            INSERT INTO print_ready_projects(
+                owner_user_id, owner_username, owner_home_folder,
+                title, selected_summary, status, created_by, created_at
+            ) VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                int(project_row["owner_user_id"] or 0),
+                str(project_row["owner_username"] or ""),
+                str(project_row["owner_home_folder"] or ""),
+                str(project_row["title"] or ""),
+                str(project_row["selected_summary"] or ""),
+                "ready",
+                actor,
+                now_iso(),
+            ),
+        )
+        new_project_id = int(cur.lastrowid)
+        file_ids_to_reset: list[int] = []
+        for row in source_files:
+            file_id = int(row["file_id"] or 0)
+            if file_id > 0:
+                file_ids_to_reset.append(file_id)
+            conn.execute(
+                """
+                INSERT INTO print_ready_project_files(
+                    project_id, file_id, folder_path, rel_path, display_path,
+                    filename, note, quantity, scale_up_enabled, scale_up_value,
+                    scale_up_unit, file_size, sort_order
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    new_project_id,
+                    file_id,
+                    str(row["folder_path"] or ""),
+                    str(row["rel_path"] or ""),
+                    str(row["display_path"] or ""),
+                    str(row["filename"] or ""),
+                    str(row["note"] or ""),
+                    max(1, int(row["quantity"] or 1)),
+                    int(row["scale_up_enabled"] or 0),
+                    str(row["scale_up_value"] or ""),
+                    normalize_scale_up_unit(row["scale_up_unit"]),
+                    int(row["file_size"] or 0),
+                    int(row["sort_order"] or 0),
+                ),
+            )
+
+        source_assets = _print_ready_project_asset_rows(conn, source_project_id)
+        for asset in source_assets:
+            original_name = str(asset["original_name"] or "projektfil")
+            ext = str(Path(original_name).suffix or Path(str(asset["rel_name"] or "")).suffix or "").lower()
+            if ext not in PRINT_READY_PROJECT_FILE_ALLOWED_EXTS:
+                continue
+            new_rel = f"{new_project_id}/{secrets.token_hex(16)}{ext}"
+            try:
+                source_path = _print_ready_project_upload_abs_path_from_rel(str(asset["rel_name"] or ""))
+                target_path = _print_ready_project_upload_abs_path_from_rel(new_rel)
+                if not source_path.exists() or not source_path.is_file():
+                    continue
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_path, target_path)
+                file_size = int(target_path.stat().st_size)
+            except Exception:
+                continue
+            conn.execute(
+                """
+                INSERT INTO print_ready_project_assets(
+                    project_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+                ) VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    new_project_id,
+                    new_rel,
+                    original_name,
+                    str(asset["mime_type"] or guess_mime(original_name, ext)),
+                    file_size,
+                    actor,
+                    now_iso(),
+                ),
+            )
+
+        _set_files_printed_state(conn, file_ids_to_reset, False, actor)
+        conn.commit()
+
+    log_activity(
+        kind="print-ready",
+        action="resend",
+        message=f"Færdigt projekt sendt til print igen: {source_project_id} -> {new_project_id}",
+        level="info",
+        folder_path=str(project_row["owner_home_folder"] or ""),
+        target=str(project_row["title"] or f"Projekt #{source_project_id}"),
+        actor=actor,
+    )
+    return new_project_id
+
+
 def _fetch_print_ready_project(project_id: int) -> Optional[sqlite3.Row]:
     with closing(get_conn()) as conn:
         return conn.execute(
@@ -10808,10 +10922,11 @@ def serialize_print_ready_project(
     sms_state = _project_sms_state(project_row)
     if file_rows is not None:
         attachment_map = attachment_map or {}
+        project_status = str(project_row["status"] or "ready").strip().lower()
         for row in file_rows:
             file_id = int(row["file_id"])
             quantity = max(1, int(row["quantity"] or 1))
-            is_printed = bool(int(row["current_printed"] or 0))
+            is_printed = project_status == "completed" or bool(int(row["current_printed"] or 0))
             total_quantity += quantity
             if is_printed:
                 printed_file_count += 1
@@ -13188,13 +13303,12 @@ def api_print_ready_list():
             SELECT *
             FROM print_ready_projects
             WHERE owner_user_id=?
-                            AND lower(COALESCE(status, 'ready')) IN ('ready', 'completed', 'cancelled')
+              AND lower(COALESCE(status, 'ready')) IN ('ready', 'cancelled')
             ORDER BY
                 CASE lower(COALESCE(status, 'ready'))
                     WHEN 'ready' THEN 0
-                    WHEN 'completed' THEN 1
-                                        WHEN 'cancelled' THEN 2
-                                        ELSE 3
+                    WHEN 'cancelled' THEN 1
+                    ELSE 2
                 END,
                 id DESC
             LIMIT 200
@@ -13224,15 +13338,68 @@ def api_admin_print_ready():
             """
             SELECT *
             FROM print_ready_projects
-            WHERE lower(COALESCE(status, 'ready')) IN ('ready', 'completed', 'cancelled')
+            WHERE lower(COALESCE(status, 'ready')) IN ('ready', 'cancelled')
             ORDER BY
                 CASE lower(COALESCE(status, 'ready'))
                     WHEN 'ready' THEN 0
-                    WHEN 'completed' THEN 1
-                    WHEN 'cancelled' THEN 2
-                    ELSE 3
+                    WHEN 'cancelled' THEN 1
+                    ELSE 2
                 END,
                 id DESC
+            LIMIT 200
+            """
+        ).fetchall()
+        items: list[dict] = []
+        for project_row in project_rows:
+            files = _print_ready_file_rows(conn, int(project_row["id"]))
+            if not files:
+                continue
+            attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+            project_asset_rows = _print_ready_project_asset_rows(conn, int(project_row["id"]))
+            items.append(serialize_print_ready_project(project_row, files, attachment_map, project_asset_rows))
+
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/finished-projects", methods=["GET"])
+@login_required
+def api_finished_projects_list():
+    with closing(get_conn()) as conn:
+        project_rows = conn.execute(
+            """
+            SELECT *
+            FROM print_ready_projects
+            WHERE owner_user_id=?
+              AND lower(COALESCE(status, 'ready')) = 'completed'
+            ORDER BY id DESC
+            LIMIT 200
+            """,
+            (int(current_user.id),),
+        ).fetchall()
+        items: list[dict] = []
+        for project_row in project_rows:
+            files = _print_ready_file_rows(conn, int(project_row["id"]))
+            if not files:
+                continue
+            attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+            items.append(serialize_print_ready_project(project_row, files, attachment_map, []))
+
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/admin/finished-projects", methods=["GET"])
+@login_required
+def api_admin_finished_projects():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    with closing(get_conn()) as conn:
+        project_rows = conn.execute(
+            """
+            SELECT *
+            FROM print_ready_projects
+            WHERE lower(COALESCE(status, 'ready')) = 'completed'
+            ORDER BY id DESC
             LIMIT 200
             """
         ).fetchall()
@@ -13786,6 +13953,31 @@ def api_print_ready_send(project_id: int):
     if err is not None:
         return jsonify({"ok": False, "error": str(err.get("error") or "Fejl")}), int(err.get("status") or 500)
     return jsonify({"ok": True, "project": payload})
+
+
+@app.route("/api/print-ready/<int:project_id>/resend", methods=["POST"])
+@login_required
+def api_print_ready_resend(project_id: int):
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+    if not _can_access_print_ready_project(project):
+        return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+
+    status_value = str(project["status"] or "ready").strip().lower()
+    if status_value != "completed":
+        return jsonify({"ok": False, "error": "Kun færdige projekter kan sendes til print igen"}), 400
+
+    try:
+        new_project_id = clone_print_ready_project_for_resend(project, str(current_user.username or ""))
+        payload, err = get_print_ready_project_payload(new_project_id)
+        if err is not None:
+            return jsonify({"ok": False, "error": str(err.get("error") or "Projektet kunne ikke læses")}), int(err.get("status") or 500)
+        return jsonify({"ok": True, "project": payload, "source_project_id": int(project_id)})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke sende projektet til print igen: {exc}"}), 500
 
 
 @app.route("/api/files/by-upload-client/<client_id>", methods=["GET"])
