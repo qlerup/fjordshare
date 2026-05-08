@@ -598,6 +598,24 @@
   </div>
 </div>
 
+<div id="printReadyNameModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card print-ready-name-modal-card">
+    <div class="toolbar">
+      <h3>Projekt navn</h3>
+      <button id="printReadyNameCancelBtn" class="btn" type="button">Annuller</button>
+    </div>
+    <label class="modal-field" for="printReadyNameInput">
+      <span>Navn</span>
+      <input id="printReadyNameInput" class="input" type="text" maxlength="120" autocomplete="off" placeholder="Fx Kundeemne - 13 plader">
+    </label>
+    <div id="printReadyNameStatus" class="status hidden"></div>
+    <div class="toolbar end">
+      <button id="printReadyNameSendBtn" class="btn primary" type="button">Send til print</button>
+    </div>
+  </div>
+</div>
+
 <div id="smsConfirmModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card sms-confirm-card">
@@ -1335,7 +1353,7 @@
               <li>Du kan uploade enkelte filer med upload-knappen.</li>
               <li>Du kan også slippe hele mapper via drag-and-drop.</li>
               <li>Du kan uploade en .zip fil, som automatisk udpakkes efter upload i den valgte mappe.</li>
-              <li>Tilladte filtyper er: .stl, .step, .zip, .3mf og .obj.</li>
+              <li>Tilladte filtyper er: .stl, .step, .zip, .3mf, .obj, .lys og .pwscene.</li>
               <li>Hold filerne samlet i den rigtige mappe, så projektet er let at finde senere.</li>
             </ul>
           </div>

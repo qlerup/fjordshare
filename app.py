@@ -91,6 +91,7 @@ TUS_TMP_DIR = DATA_DIR / "tus_uploads"
 THUMBS_DIR = Path(_THUMBS_DIR_ENV or str(DATA_DIR / "thumbs")).resolve()
 FILE_ATTACHMENTS_DIR = DATA_DIR / "file_attachments"
 PRINT_READY_PROJECT_UPLOADS_DIR = DATA_DIR / "print_ready_project_uploads"
+PRINT_READY_PROJECT_FILES_FOLDER_NAME = "Project files"
 DB_PATH = DATA_DIR / "fjordshare.db"
 SLICER_PROFILE_DIR = BAMBU_DIR / "profiles"
 BAMBU_SLICED_DIR = BAMBU_DIR / "sliced"
@@ -109,7 +110,7 @@ SLICER_PROFILE_LEGACY_CONFIG_PATH = SLICER_PROFILE_DIR / "config.ini"
 SLICER_PROFILE_ALLOWED_CONFIG_EXTS = {".ini", ".cfg", ".conf", ".txt"}
 SLICER_PROFILE_MAX_BYTES = int(str(os.getenv("SLICER_PROFILE_MAX_BYTES", str(5 * 1024 * 1024))) or str(5 * 1024 * 1024))
 SLICER_PLATE_ASSET_DIR = ROOT_DIR / "static" / "slicer-plates"
-SLICER_PLATE_ASSET_ALLOWED_EXTS = {".stl", ".obj", ".glb", ".gltf", ".3mf"}
+SLICER_PLATE_ASSET_ALLOWED_EXTS = {".stl", ".obj", ".glb", ".gltf", ".3mf", ".lys", ".pwscene"}
 PREVIEW_MODELS_DIR = DATA_DIR / "previews"
 
 PERMISSION_RANK = {"view": 1, "upload": 2, "manage": 3}
@@ -141,13 +142,14 @@ TRACKING_LABEL_PDF_MAX_PAGES = max(1, min(40, TRACKING_LABEL_PDF_MAX_PAGES))
 TRACKING_LABEL_GS1_RE = re.compile(r"\(\s*00\s*\)\s*([0-9\s\-]{16,48})", re.IGNORECASE)
 TRACKING_LABEL_DIGIT_BLOCK_RE = re.compile(r"\d(?:[\s\-]*\d){15,23}")
 
-THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp"}
+THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp", ".lys", ".pwscene"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
 THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
 THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
-PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl", ".obj"}
+PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl", ".obj", ".lys", ".pwscene"}
 PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {*PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS, ".zip"}
-PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf og .obj"
+PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL = ".stl, .step, .3mf, .obj, .lys og .pwscene"
+PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf, .obj, .lys og .pwscene"
 THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "320")) or "320")
 THUMB_FAST_SIZE_PX = int(str(os.getenv("THUMB_FAST_SIZE_PX", "220")) or "220")
@@ -222,8 +224,8 @@ FILE_ATTACHMENT_HEIC_MIME_TYPES = {
     "application/heic",
     "application/heif",
 }
-PRINT_READY_PROJECT_FILE_ALLOWED_EXTS = {".3mf", ".stl"}
-PRINT_READY_PROJECT_FILE_ALLOWED_LABEL = ".3mf og .stl"
+PRINT_READY_PROJECT_FILE_ALLOWED_EXTS = {".3mf", ".stl", ".lys", ".pwscene"}
+PRINT_READY_PROJECT_FILE_ALLOWED_LABEL = ".3mf, .stl, .lys og .pwscene"
 try:
     PRINT_READY_PROJECT_FILE_MAX_BYTES = int(
         str(os.getenv("PRINT_READY_PROJECT_FILE_MAX_BYTES", str(1024 * 1024 * 1024))) or str(1024 * 1024 * 1024)
@@ -233,6 +235,18 @@ except Exception:
 PRINT_READY_PROJECT_FILE_MAX_BYTES = max(1024 * 1024, min(10 * 1024 * 1024 * 1024, PRINT_READY_PROJECT_FILE_MAX_BYTES))
 ZIP_UPLOAD_MAX_FILES = int(str(os.getenv("ZIP_UPLOAD_MAX_FILES", "10000")) or "10000")
 ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES = int(str(os.getenv("ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES", str(2 * 1024 * 1024 * 1024))) or str(2 * 1024 * 1024 * 1024))
+try:
+    ZIP_UPLOAD_MAX_COMPRESSION_RATIO = float(str(os.getenv("ZIP_UPLOAD_MAX_COMPRESSION_RATIO", "1000")) or "1000")
+except Exception:
+    ZIP_UPLOAD_MAX_COMPRESSION_RATIO = 1000.0
+ZIP_UPLOAD_MAX_COMPRESSION_RATIO = max(0.0, min(100000.0, ZIP_UPLOAD_MAX_COMPRESSION_RATIO))
+ZIP_UPLOAD_ALLOWED_COMPRESSION_METHODS = {
+    zipfile.ZIP_STORED,
+    zipfile.ZIP_DEFLATED,
+    getattr(zipfile, "ZIP_BZIP2", -1),
+    getattr(zipfile, "ZIP_LZMA", -1),
+}
+ZIP_UPLOAD_ALLOWED_COMPRESSION_METHODS.discard(-1)
 _startup_build = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 APP_BUILD = str(os.getenv("APP_BUILD", _startup_build)).strip() or _startup_build
 UI_VERSION_MARKER = str(os.getenv("UI_VERSION_MARKER", "TMP-2026-04-12-07")).strip() or "TMP-2026-04-12-07"
@@ -941,6 +955,8 @@ def guess_mime(filename: str, ext: str) -> str:
         return "model/stl"
     if ext_l == ".3mf":
         return "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
+    if ext_l in {".lys", ".pwscene"}:
+        return "application/octet-stream"
     if ext_l == ".obj":
         return "model/obj"
     guessed, _ = mimetypes.guess_type(filename)
@@ -1261,6 +1277,121 @@ def _zip_info_is_symlink(info: zipfile.ZipInfo) -> bool:
         return False
 
 
+def _zip_entry_is_ignored(parts: list[str]) -> bool:
+    if not parts:
+        return True
+    joined = "/".join(parts)
+    return joined.startswith("__MACOSX/") or parts[-1] in {".DS_Store", "Thumbs.db"}
+
+
+def _zip_member_safety_issue(member_name: str) -> str:
+    raw = str(member_name or "")
+    if not raw.strip():
+        return "tomt filnavn"
+    if "\x00" in raw or any(ord(ch) < 32 for ch in raw):
+        return "indeholder kontroltegn"
+
+    normalized = raw.replace("\\", "/").strip()
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized):
+        return "absolut sti"
+
+    parts = [p for p in normalized.split("/") if p not in {"", "."}]
+    if not parts:
+        return "tomt filnavn"
+    if any(part == ".." for part in parts):
+        return "forsøger at skrive uden for mål-mappen"
+    if any(len(part.strip()) > 240 for part in parts):
+        return "har for langt filnavn"
+    return ""
+
+
+def _zip_scan_error_message(errors: list[str]) -> str:
+    if not errors:
+        return "ZIP blev afvist før udpakning."
+    preview = "; ".join(errors[:6])
+    extra = f" (+{len(errors) - 6} flere)" if len(errors) > 6 else ""
+    return f"ZIP blev afvist før udpakning: {preview}{extra}"
+
+
+def validate_zip_upload_contents(zip_path: Path, original_zip_name: str = "") -> dict[str, int]:
+    _ = original_zip_name
+    errors: list[str] = []
+    allowed_count = 0
+    total_uncompressed = 0
+
+    try:
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            infos = archive.infolist()
+            if len(infos) > ZIP_UPLOAD_MAX_FILES:
+                errors.append(f"for mange elementer (maks {ZIP_UPLOAD_MAX_FILES})")
+
+            for info in infos:
+                raw_name = str(info.filename or "")
+                issue = _zip_member_safety_issue(raw_name)
+                parts = _zip_member_parts(raw_name)
+                if issue:
+                    errors.append(f"{raw_name or 'ukendt'}: {issue}")
+                    continue
+                if _zip_entry_is_ignored(parts):
+                    continue
+
+                if int(info.flag_bits or 0) & 0x1:
+                    errors.append(f"{raw_name}: krypterede ZIP-filer er ikke tilladt")
+                    continue
+                if _zip_info_is_symlink(info):
+                    errors.append(f"{raw_name}: symlinks er ikke tilladt")
+                    continue
+                if info.compress_type not in ZIP_UPLOAD_ALLOWED_COMPRESSION_METHODS:
+                    errors.append(f"{raw_name}: ukendt ZIP-komprimering")
+                    continue
+
+                try:
+                    file_size = max(0, int(info.file_size or 0))
+                except Exception:
+                    file_size = 0
+                total_uncompressed += file_size
+                if total_uncompressed > ZIP_UPLOAD_MAX_UNCOMPRESSED_BYTES:
+                    errors.append("ZIP er for stor efter udpakning")
+                    break
+
+                try:
+                    compressed_size = max(0, int(info.compress_size or 0))
+                except Exception:
+                    compressed_size = 0
+                if (
+                    ZIP_UPLOAD_MAX_COMPRESSION_RATIO > 0
+                    and compressed_size > 0
+                    and file_size > 10 * 1024 * 1024
+                    and (file_size / compressed_size) > ZIP_UPLOAD_MAX_COMPRESSION_RATIO
+                ):
+                    errors.append(f"{raw_name}: mistænkelig høj komprimeringsrate")
+                    continue
+
+                if info.is_dir():
+                    continue
+
+                file_name = sanitize_filename(parts[-1])
+                if not file_name or not _is_allowed_primary_3d_model_upload(file_name):
+                    errors.append(f"{raw_name}: filtypen er ikke tilladt i ZIP ({PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL})")
+                    continue
+                allowed_count += 1
+    except zipfile.BadZipFile:
+        raise ValueError("ZIP kunne ikke læses eller er beskadiget")
+    except zipfile.LargeZipFile:
+        raise ValueError("ZIP kræver Zip64 og kunne ikke valideres")
+
+    if errors:
+        raise ValueError(_zip_scan_error_message(errors))
+    if allowed_count <= 0:
+        raise ValueError(f"ZIP indeholder ingen gyldige 3D-filer ({PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL})")
+
+    return {
+        "files": allowed_count,
+        "entries": allowed_count,
+        "uncompressed_bytes": int(total_uncompressed),
+    }
+
+
 def _extract_zip_upload(
     zip_path: Path,
     base_folder: str,
@@ -1270,6 +1401,8 @@ def _extract_zip_upload(
     original_zip_name: str = "",
 ) -> Tuple[int, Optional[sqlite3.Row], list[str]]:
     _ = upload_client_id
+    validate_zip_upload_contents(zip_path, original_zip_name)
+
     base = normalize_folder_path(base_folder)
     if not base:
         raise ValueError("ZIP kræver en målmappe")
@@ -1325,10 +1458,7 @@ def _extract_zip_upload(
                 parts = _zip_member_parts(info.filename)
                 if not parts:
                     continue
-                joined = "/".join(parts)
-                if joined.startswith("__MACOSX/"):
-                    continue
-                if parts[-1] in {".DS_Store", "Thumbs.db"}:
+                if _zip_entry_is_ignored(parts):
                     continue
                 if len(parts) <= 1:
                     has_root_files = True
@@ -1358,10 +1488,7 @@ def _extract_zip_upload(
                 continue
 
             # Ignore common OS metadata folders/files in ZIP archives.
-            joined = "/".join(parts)
-            if joined.startswith("__MACOSX/"):
-                continue
-            if parts[-1] in {".DS_Store", "Thumbs.db"}:
+            if _zip_entry_is_ignored(parts):
                 continue
 
             if wrapper_prefix and parts[0] == wrapper_prefix:
@@ -8249,6 +8376,7 @@ def init_db() -> None:
                 title TEXT NOT NULL,
                 selected_summary TEXT,
                 status TEXT NOT NULL DEFAULT 'ready',
+                project_files_folder_path TEXT NOT NULL DEFAULT '',
                 created_by TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -8280,6 +8408,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS print_ready_project_assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id INTEGER NOT NULL,
+                file_id INTEGER,
                 rel_name TEXT NOT NULL,
                 original_name TEXT NOT NULL,
                 mime_type TEXT NOT NULL,
@@ -8448,6 +8577,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE print_ready_projects ADD COLUMN selected_summary TEXT")
         if "status" not in project_cols:
             conn.execute("ALTER TABLE print_ready_projects ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'")
+        if "project_files_folder_path" not in project_cols:
+            conn.execute("ALTER TABLE print_ready_projects ADD COLUMN project_files_folder_path TEXT NOT NULL DEFAULT ''")
         conn.execute(
             "UPDATE print_ready_projects SET status='ready' WHERE status IS NULL OR TRIM(status)=''"
         )
@@ -8472,6 +8603,11 @@ def init_db() -> None:
         conn.execute(
             "UPDATE print_ready_project_files SET scale_up_unit='%' WHERE scale_up_unit IS NULL OR TRIM(scale_up_unit)=''"
         )
+
+        project_asset_cols = [r[1] for r in conn.execute("PRAGMA table_info(print_ready_project_assets)").fetchall()]
+        if "file_id" not in project_asset_cols:
+            conn.execute("ALTER TABLE print_ready_project_assets ADD COLUMN file_id INTEGER")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_print_ready_project_assets_file ON print_ready_project_assets(file_id)")
 
         share_cols = [r[1] for r in conn.execute("PRAGMA table_info(share_links)").fetchall()]
         if "project_id" not in share_cols:
@@ -9405,6 +9541,24 @@ def ensure_folder_record(
         conn.commit()
 
 
+def ensure_upload_folder_hierarchy(
+    folder_path: str,
+    owner_user_id: Optional[int] = None,
+    folder_kind: str = FOLDER_KIND_USER,
+) -> str:
+    folder = normalize_folder_path(folder_path)
+    if not folder:
+        return ""
+    _, abs_folder = folder_abs_path(folder)
+    abs_folder.mkdir(parents=True, exist_ok=True)
+    parts = folder.split("/")
+    start_len = 2 if len(parts) >= 2 and parts[0].lower() == "users" else 1
+    folder_items = ["/".join(parts[:idx]) for idx in range(start_len, len(parts) + 1)]
+    for item in folder_items:
+        ensure_folder_record(item, owner_user_id=owner_user_id, folder_kind=folder_kind)
+    return folder
+
+
 def ensure_user_home_folder(user_id: int, username: str, home_folder: str) -> None:
     _ = username
     folder, abs_folder = folder_abs_path(home_folder)
@@ -10183,6 +10337,37 @@ def file_disk_path(file_row: sqlite3.Row) -> Path:
     return full_path
 
 
+def _delete_file_row_and_disk(file_id: int) -> None:
+    file_id_i = int(file_id or 0)
+    if file_id_i <= 0:
+        return
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM files WHERE id=?", (file_id_i,)).fetchone()
+    if row is None:
+        return
+
+    try:
+        path = file_disk_path(row)
+        if path.exists() and path.is_file():
+            path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        _safe_remove_thumbnail(str(row["thumb_rel"] or ""))
+    except Exception:
+        pass
+    try:
+        _cleanup_file_attachments_for_file(file_id_i)
+    except Exception:
+        pass
+
+    with closing(get_conn()) as conn:
+        conn.execute("DELETE FROM print_ready_project_assets WHERE file_id=?", (file_id_i,))
+        conn.execute("DELETE FROM files WHERE id=?", (file_id_i,))
+        conn.commit()
+
+
 def file_thumb_path(file_row: sqlite3.Row) -> Optional[Path]:
     rel = str(file_row["thumb_rel"] or "").strip()
     if not rel:
@@ -10642,6 +10827,104 @@ def _print_ready_selected_summary(folder_paths: list[str], file_ids: list[int]) 
     return " | ".join(parts)
 
 
+def normalize_print_ready_project_name(raw: Any) -> str:
+    clean = sanitize_folder_segment(str(raw or ""), fallback="")
+    clean = re.sub(r"\s+", " ", clean).strip()
+    if not clean:
+        raise ValueError("Indtast et projekt navn")
+    return clean[:120].rstrip(". ") or "Projekt"
+
+
+def _row_value(row: sqlite3.Row, key: str, default: Any = "") -> Any:
+    try:
+        if key in row.keys():
+            return row[key]
+    except Exception:
+        pass
+    return default
+
+
+def _project_files_folder_parent(project_row: sqlite3.Row) -> str:
+    home = normalize_folder_path(str(project_row["owner_home_folder"] or ""))
+    if not home:
+        home = normalize_folder_path(
+            f"users/{username_to_folder_slug(str(project_row['owner_username'] or ''), int(project_row['owner_user_id'] or 0))}"
+        )
+    return normalize_folder_path(f"{home}/{PRINT_READY_PROJECT_FILES_FOLDER_NAME}")
+
+
+def _folder_path_is_taken(folder_path: str) -> bool:
+    folder = normalize_folder_path(folder_path)
+    if not folder:
+        return False
+    try:
+        _, abs_folder = folder_abs_path(folder)
+        if abs_folder.exists():
+            return True
+    except Exception:
+        return True
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT 1 AS found
+            FROM folders
+            WHERE folder_path=?
+            UNION ALL
+            SELECT 1 AS found
+            FROM print_ready_projects
+            WHERE project_files_folder_path=?
+            LIMIT 1
+            """,
+            (folder, folder),
+        ).fetchone()
+    return row is not None
+
+
+def _unique_project_files_folder_path(project_row: sqlite3.Row, project_name: str) -> str:
+    parent = _project_files_folder_parent(project_row)
+    fallback = f"Projekt {int(project_row['id'] or 0)}"
+    base_segment = sanitize_folder_segment(project_name, fallback=fallback)
+    candidate = normalize_folder_path(f"{parent}/{base_segment}")
+    if not _folder_path_is_taken(candidate):
+        return candidate
+
+    for index in range(2, 1000):
+        suffix = f"-{index}"
+        max_base_len = max(1, 120 - len(suffix))
+        segment = sanitize_folder_segment(base_segment[:max_base_len].rstrip(". "), fallback=fallback)
+        candidate = normalize_folder_path(f"{parent}/{segment}{suffix}")
+        if not _folder_path_is_taken(candidate):
+            return candidate
+    return normalize_folder_path(f"{parent}/{base_segment}-{secrets.token_hex(4)}")
+
+
+def ensure_print_ready_project_files_folder(
+    project_row: sqlite3.Row,
+    project_name: Optional[str] = None,
+    persist: bool = True,
+) -> str:
+    stored = normalize_folder_path(str(_row_value(project_row, "project_files_folder_path", "") or ""))
+    folder = stored
+    if not folder:
+        name_source = project_name if project_name is not None else str(project_row["title"] or "")
+        try:
+            clean_name = normalize_print_ready_project_name(name_source)
+        except ValueError:
+            clean_name = f"Projekt {int(project_row['id'] or 0)}"
+        folder = _unique_project_files_folder_path(project_row, clean_name)
+
+    owner_user_id = int(project_row["owner_user_id"] or 0)
+    ensure_upload_folder_hierarchy(folder, owner_user_id=owner_user_id if owner_user_id > 0 else None)
+    if persist and folder != stored:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "UPDATE print_ready_projects SET project_files_folder_path=? WHERE id=?",
+                (folder, int(project_row["id"] or 0)),
+            )
+            conn.commit()
+    return folder
+
+
 def create_print_ready_project(
     user: User,
     rows: list[sqlite3.Row],
@@ -10733,8 +11016,8 @@ def clone_print_ready_project_for_resend(project_row: sqlite3.Row, actor_usernam
             """
             INSERT INTO print_ready_projects(
                 owner_user_id, owner_username, owner_home_folder,
-                title, selected_summary, status, created_by, created_at
-            ) VALUES(?,?,?,?,?,?,?,?)
+                title, selected_summary, status, project_files_folder_path, created_by, created_at
+            ) VALUES(?,?,?,?,?,?,?,?,?)
             """,
             (
                 int(project_row["owner_user_id"] or 0),
@@ -10743,6 +11026,7 @@ def clone_print_ready_project_for_resend(project_row: sqlite3.Row, actor_usernam
                 str(project_row["title"] or ""),
                 str(project_row["selected_summary"] or ""),
                 "ready",
+                "",
                 actor,
                 now_iso(),
             ),
@@ -10778,42 +11062,78 @@ def clone_print_ready_project_for_resend(project_row: sqlite3.Row, actor_usernam
                 ),
             )
 
-        source_assets = _print_ready_project_asset_rows(conn, source_project_id)
+        _set_files_printed_state(conn, file_ids_to_reset, False, actor)
+        conn.commit()
+
+    new_project = _fetch_print_ready_project(new_project_id)
+    if new_project is not None:
+        new_folder = ensure_print_ready_project_files_folder(new_project, str(new_project["title"] or "Projekt"))
+        with closing(get_conn()) as conn:
+            source_assets = _print_ready_project_asset_rows(conn, source_project_id)
         for asset in source_assets:
-            original_name = str(asset["original_name"] or "projektfil")
+            original_name = sanitize_filename(str(asset["original_name"] or "projektfil"))
             ext = str(Path(original_name).suffix or Path(str(asset["rel_name"] or "")).suffix or "").lower()
             if ext not in PRINT_READY_PROJECT_FILE_ALLOWED_EXTS:
                 continue
-            new_rel = f"{new_project_id}/{secrets.token_hex(16)}{ext}"
-            try:
-                source_path = _print_ready_project_upload_abs_path_from_rel(str(asset["rel_name"] or ""))
-                target_path = _print_ready_project_upload_abs_path_from_rel(new_rel)
-                if not source_path.exists() or not source_path.is_file():
-                    continue
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source_path, target_path)
-                file_size = int(target_path.stat().st_size)
-            except Exception:
-                continue
-            conn.execute(
-                """
-                INSERT INTO print_ready_project_assets(
-                    project_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
-                ) VALUES(?,?,?,?,?,?,?)
-                """,
-                (
-                    new_project_id,
-                    new_rel,
-                    original_name,
-                    str(asset["mime_type"] or guess_mime(original_name, ext)),
-                    file_size,
-                    actor,
-                    now_iso(),
-                ),
-            )
 
-        _set_files_printed_state(conn, file_ids_to_reset, False, actor)
-        conn.commit()
+            source_path: Optional[Path] = None
+            file_id = int(_row_value(asset, "file_id", 0) or 0)
+            if file_id > 0:
+                with closing(get_conn()) as conn:
+                    source_file = conn.execute("SELECT * FROM files WHERE id=?", (file_id,)).fetchone()
+                if source_file is not None:
+                    try:
+                        source_path = file_disk_path(source_file)
+                    except Exception:
+                        source_path = None
+                    original_name = sanitize_filename(str(source_file["filename"] or original_name))
+            if source_path is None:
+                try:
+                    source_path = _print_ready_project_upload_abs_path_from_rel(str(asset["rel_name"] or ""))
+                except Exception:
+                    source_path = None
+            if source_path is None or not source_path.exists() or not source_path.is_file():
+                continue
+
+            tmp_path = DATA_DIR / f"print-ready-project-copy-{secrets.token_hex(16)}{ext}"
+            try:
+                shutil.copy2(source_path, tmp_path)
+                copied_file = commit_uploaded_file(
+                    tmp_path,
+                    new_folder,
+                    original_name,
+                    actor,
+                    None,
+                )
+                copied_file_id = int(copied_file["id"] or 0)
+                copied_name = str(copied_file["filename"] or original_name)
+                copied_rel = str(copied_file["rel_path"] or upload_relative_path(new_folder, copied_name))
+                copied_size = int(copied_file["file_size"] or 0)
+                copied_mime = str(copied_file["mime_type"] or guess_mime(copied_name, Path(copied_name).suffix.lower()))
+                with closing(get_conn()) as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO print_ready_project_assets(
+                            project_id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+                        ) VALUES(?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            new_project_id,
+                            copied_file_id,
+                            copied_rel,
+                            copied_name,
+                            copied_mime,
+                            copied_size,
+                            actor,
+                            now_iso(),
+                        ),
+                    )
+                    conn.commit()
+            except Exception:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     log_activity(
         kind="print-ready",
@@ -10884,7 +11204,7 @@ def _attachment_rows_for_files(conn: sqlite3.Connection, file_ids: list[int]) ->
 def _print_ready_project_asset_rows(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
     return conn.execute(
         """
-        SELECT id, project_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+        SELECT id, project_id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
         FROM print_ready_project_assets
         WHERE project_id=?
         ORDER BY uploaded_at DESC, id DESC
@@ -10899,6 +11219,7 @@ def serialize_print_ready_project_asset_row(row: sqlite3.Row) -> dict:
     return {
         "id": asset_id,
         "project_id": project_id,
+        "file_id": int(_row_value(row, "file_id", 0) or 0),
         "original_name": str(row["original_name"] or ""),
         "mime_type": str(row["mime_type"] or "application/octet-stream"),
         "file_size": int(row["file_size"] or 0),
@@ -13473,15 +13794,22 @@ def api_admin_print_ready_delete(project_id: int):
             (int(project_id),),
         ).fetchone()
         asset_rows = conn.execute(
-            "SELECT rel_name FROM print_ready_project_assets WHERE project_id=?",
+            "SELECT file_id, rel_name FROM print_ready_project_assets WHERE project_id=?",
             (int(project_id),),
         ).fetchall()
         file_count = int((count_row["c"] if count_row is not None else 0) or 0)
         conn.execute("DELETE FROM print_ready_projects WHERE id=?", (int(project_id),))
         conn.commit()
 
+    removed_asset_file_ids: set[int] = set()
     for asset_row in asset_rows:
-        _safe_remove_print_ready_project_upload(str(asset_row["rel_name"] or ""))
+        asset_file_id = int(_row_value(asset_row, "file_id", 0) or 0)
+        if asset_file_id > 0:
+            if asset_file_id not in removed_asset_file_ids:
+                removed_asset_file_ids.add(asset_file_id)
+                _delete_file_row_and_disk(asset_file_id)
+        else:
+            _safe_remove_print_ready_project_upload(str(asset_row["rel_name"] or ""))
 
     log_activity(
         kind="print-ready",
@@ -13522,73 +13850,101 @@ def api_admin_print_ready_project_assets_upload(project_id: int):
 
     created_items: list[dict] = []
     skipped: list[str] = []
-    with closing(get_conn()) as conn:
-        for upload in valid_uploads:
-            original_name = sanitize_filename(str(upload.filename or "projektfil"))
-            if not _is_allowed_print_ready_project_file(original_name):
-                skipped.append(_unsupported_print_ready_project_file_error(original_name))
-                continue
+    try:
+        project_folder = ensure_print_ready_project_files_folder(project)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke oprette projektmappe: {exc}"}), 500
 
-            size_guess = _attachment_size_from_filestorage(upload)
-            if size_guess > PRINT_READY_PROJECT_FILE_MAX_BYTES:
-                skipped.append(f"{original_name}: for stor fil")
-                continue
+    for upload in valid_uploads:
+        original_name = sanitize_filename(str(upload.filename or "projektfil"))
+        if not _is_allowed_print_ready_project_file(original_name):
+            skipped.append(_unsupported_print_ready_project_file_error(original_name))
+            continue
 
-            ext = str(Path(original_name).suffix or "").lower()
-            rel_name = f"{int(project_id)}/{secrets.token_hex(16)}{ext}"
-            try:
-                abs_path = _print_ready_project_upload_abs_path_from_rel(rel_name)
-            except Exception:
-                skipped.append(f"{original_name}: ugyldig filsti")
-                continue
-            abs_path.parent.mkdir(parents=True, exist_ok=True)
+        size_guess = _attachment_size_from_filestorage(upload)
+        if size_guess > PRINT_READY_PROJECT_FILE_MAX_BYTES:
+            skipped.append(f"{original_name}: for stor fil")
+            continue
 
+        ext = str(Path(original_name).suffix or "").lower()
+        tmp_path = DATA_DIR / f"print-ready-project-upload-{secrets.token_hex(16)}{ext}"
+        try:
             try:
                 upload.stream.seek(0)
             except Exception:
                 pass
-
+            upload.save(tmp_path)
+            file_size = int(tmp_path.stat().st_size)
+        except Exception as exc:
             try:
-                upload.save(abs_path)
-                file_size = int(abs_path.stat().st_size)
-            except Exception as exc:
-                try:
-                    abs_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                skipped.append(f"{original_name}: kunne ikke gemmes ({exc})")
-                continue
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            skipped.append(f"{original_name}: kunne ikke gemmes ({exc})")
+            continue
 
-            if file_size > PRINT_READY_PROJECT_FILE_MAX_BYTES:
-                try:
-                    abs_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                skipped.append(f"{original_name}: for stor fil")
-                continue
+        if file_size > PRINT_READY_PROJECT_FILE_MAX_BYTES:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            skipped.append(f"{original_name}: for stor fil")
+            continue
 
-            mime_type = guess_mime(original_name, ext)
-            uploaded_at = now_iso()
-            uploaded_by = str(current_user.username or "")
-            cur = conn.execute(
-                """
-                INSERT INTO print_ready_project_assets(
-                    project_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
-                ) VALUES(?,?,?,?,?,?,?)
-                """,
-                (int(project_id), rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at),
+        uploaded_by = str(current_user.username or "")
+        created_file_id = 0
+        try:
+            file_row = commit_uploaded_file(
+                tmp_path,
+                project_folder,
+                original_name,
+                uploaded_by,
+                None,
             )
-            row = conn.execute(
-                """
-                SELECT id, project_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
-                FROM print_ready_project_assets
-                WHERE id=?
-                """,
-                (int(cur.lastrowid),),
-            ).fetchone()
+            created_file_id = int(file_row["id"] or 0)
+            stored_name = str(file_row["filename"] or original_name)
+            rel_name = str(file_row["rel_path"] or upload_relative_path(project_folder, stored_name))
+            mime_type = str(file_row["mime_type"] or guess_mime(stored_name, ext))
+            file_size = int(file_row["file_size"] or file_size)
+            uploaded_at = now_iso()
+            with closing(get_conn()) as conn:
+                cur = conn.execute(
+                    """
+                    INSERT INTO print_ready_project_assets(
+                        project_id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+                    ) VALUES(?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        int(project_id),
+                        created_file_id,
+                        rel_name,
+                        stored_name,
+                        mime_type,
+                        file_size,
+                        uploaded_by,
+                        uploaded_at,
+                    ),
+                )
+                row = conn.execute(
+                    """
+                    SELECT id, project_id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+                    FROM print_ready_project_assets
+                    WHERE id=?
+                    """,
+                    (int(cur.lastrowid),),
+                ).fetchone()
+                conn.commit()
             if row is not None:
                 created_items.append(serialize_print_ready_project_asset_row(row))
-        conn.commit()
+        except Exception as exc:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            if created_file_id > 0:
+                _delete_file_row_and_disk(created_file_id)
+            skipped.append(f"{original_name}: kunne ikke gemmes ({exc})")
+            continue
 
     if not created_items:
         err = skipped[0] if skipped else "Ingen projektfiler blev uploadet"
@@ -13623,7 +13979,7 @@ def api_admin_print_ready_project_asset_download(project_id: int, asset_id: int)
     with closing(get_conn()) as conn:
         row = conn.execute(
             """
-            SELECT id, project_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
+            SELECT id, project_id, file_id, rel_name, original_name, mime_type, file_size, uploaded_by, uploaded_at
             FROM print_ready_project_assets
             WHERE id=? AND project_id=?
             """,
@@ -13633,19 +13989,34 @@ def api_admin_print_ready_project_asset_download(project_id: int, asset_id: int)
     if row is None:
         return jsonify({"ok": False, "error": "Projektfilen findes ikke"}), 404
 
-    try:
-        path = _print_ready_project_upload_abs_path_from_rel(str(row["rel_name"] or ""))
-    except Exception:
-        return jsonify({"ok": False, "error": "Ugyldig projektfilsti"}), 400
+    file_id = int(_row_value(row, "file_id", 0) or 0)
+    if file_id > 0:
+        with closing(get_conn()) as conn:
+            file_row = conn.execute("SELECT * FROM files WHERE id=?", (file_id,)).fetchone()
+        if file_row is None:
+            return jsonify({"ok": False, "error": "Projektfilen findes ikke på disk"}), 404
+        try:
+            path = file_disk_path(file_row)
+        except Exception:
+            return jsonify({"ok": False, "error": "Ugyldig projektfilsti"}), 400
+        download_name = str(file_row["filename"] or row["original_name"] or path.name)
+        mime_type = str(file_row["mime_type"] or row["mime_type"] or "application/octet-stream")
+    else:
+        try:
+            path = _print_ready_project_upload_abs_path_from_rel(str(row["rel_name"] or ""))
+        except Exception:
+            return jsonify({"ok": False, "error": "Ugyldig projektfilsti"}), 400
+        download_name = str(row["original_name"] or path.name)
+        mime_type = str(row["mime_type"] or "application/octet-stream")
 
     if not path.exists() or not path.is_file():
         return jsonify({"ok": False, "error": "Projektfilen findes ikke på disk"}), 404
 
     return send_file(
         path,
-        mimetype=str(row["mime_type"] or "application/octet-stream"),
+        mimetype=mime_type,
         as_attachment=True,
-        download_name=str(row["original_name"] or path.name),
+        download_name=download_name,
     )
 
 
@@ -13662,7 +14033,7 @@ def api_admin_print_ready_project_asset_delete(project_id: int, asset_id: int):
     with closing(get_conn()) as conn:
         row = conn.execute(
             """
-            SELECT id, project_id, rel_name, original_name
+            SELECT id, project_id, file_id, rel_name, original_name
             FROM print_ready_project_assets
             WHERE id=? AND project_id=?
             """,
@@ -13670,13 +14041,25 @@ def api_admin_print_ready_project_asset_delete(project_id: int, asset_id: int):
         ).fetchone()
         if row is None:
             return jsonify({"ok": False, "error": "Projektfilen findes ikke"}), 404
+        file_id = int(_row_value(row, "file_id", 0) or 0)
+        remaining_file_refs = 0
+        if file_id > 0:
+            ref_row = conn.execute(
+                "SELECT COUNT(*) AS c FROM print_ready_project_assets WHERE file_id=? AND id<>?",
+                (file_id, int(asset_id)),
+            ).fetchone()
+            remaining_file_refs = int((ref_row["c"] if ref_row is not None else 0) or 0)
         conn.execute(
             "DELETE FROM print_ready_project_assets WHERE id=? AND project_id=?",
             (int(asset_id), int(project_id)),
         )
         conn.commit()
 
-    _safe_remove_print_ready_project_upload(str(row["rel_name"] or ""))
+    if file_id > 0:
+        if remaining_file_refs <= 0:
+            _delete_file_row_and_disk(file_id)
+    else:
+        _safe_remove_print_ready_project_upload(str(row["rel_name"] or ""))
     log_activity(
         kind="print-ready",
         action="project-file-delete",
@@ -13932,10 +14315,26 @@ def api_print_ready_send(project_id: int):
             return jsonify({"ok": False, "error": str(err.get("error") or "Fejl")}), int(err.get("status") or 500)
         return jsonify({"ok": True, "project": payload})
 
+    payload_in = request.get_json(silent=True) or {}
+    raw_project_name = payload_in.get("project_name", payload_in.get("title", ""))
+    try:
+        project_name = normalize_print_ready_project_name(raw_project_name)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    try:
+        project_files_folder = ensure_print_ready_project_files_folder(project, project_name)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke oprette projektmappe: {exc}"}), 500
+
     with closing(get_conn()) as conn:
         conn.execute(
-            "UPDATE print_ready_projects SET status=? WHERE id=?",
-            ("ready", int(project_id)),
+            """
+            UPDATE print_ready_projects
+            SET status=?, title=?, project_files_folder_path=?
+            WHERE id=?
+            """,
+            ("ready", project_name, project_files_folder, int(project_id)),
         )
         conn.commit()
 
@@ -13945,7 +14344,7 @@ def api_print_ready_send(project_id: int):
         message=f"Projekt sendt til admin: {int(project_id)}",
         level="info",
         folder_path=str(project["owner_home_folder"] or ""),
-        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        target=project_name,
         actor=str(current_user.username or ""),
     )
 
@@ -14096,6 +14495,10 @@ def api_files_batch_delete():
             for arow in attachment_rows:
                 _safe_remove_attachment(str(arow["rel_name"] or ""))
 
+            conn.execute(
+                f"DELETE FROM print_ready_project_assets WHERE file_id IN ({placeholders})",
+                tuple(file_ids_to_delete),
+            )
             conn.execute(
                 f"DELETE FROM files WHERE id IN ({placeholders})",
                 tuple(file_ids_to_delete),
@@ -16100,6 +16503,7 @@ def api_share_file_delete(token: str, file_id: int):
         pass
 
     with closing(get_conn()) as conn:
+        conn.execute("DELETE FROM print_ready_project_assets WHERE file_id=?", (int(file_id),))
         conn.execute("DELETE FROM files WHERE id=?", (int(file_id),))
         conn.commit()
 
@@ -16151,6 +16555,24 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
                 pass
             return False, None, _unsupported_primary_3d_upload_error(filename)
         if ext == ".zip":
+            try:
+                validate_zip_upload_contents(data_path, filename)
+            except Exception as exc:
+                try:
+                    data_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                log_activity(
+                    kind="upload",
+                    action="zip-rejected",
+                    message=str(exc),
+                    level="warning",
+                    folder_path=folder,
+                    target=filename,
+                    actor=uploaded_by,
+                )
+                return False, None, str(exc)
+
             owner_user_id: Optional[int] = None
             share_id: Optional[int] = None
             try:

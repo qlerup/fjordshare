@@ -122,6 +122,8 @@
     modelPreviewLoadToken: 0,
     modelModalCloseGuardUntil: 0,
     currentPrintReadyProjectId: 0,
+    currentPrintReadyProject: null,
+    printReadyNameResolver: null,
     smsConfirmResolver: null,
     smsConfirmContext: "",
     smsConfirmTargetUsername: "",
@@ -371,6 +373,11 @@
     printReadyZipLink: document.getElementById("printReadyZipLink"),
     printReadyPdfLink: document.getElementById("printReadyPdfLink"),
     printReadyModalStatus: document.getElementById("printReadyModalStatus"),
+    printReadyNameModal: document.getElementById("printReadyNameModal"),
+    printReadyNameInput: document.getElementById("printReadyNameInput"),
+    printReadyNameStatus: document.getElementById("printReadyNameStatus"),
+    printReadyNameCancelBtn: document.getElementById("printReadyNameCancelBtn"),
+    printReadyNameSendBtn: document.getElementById("printReadyNameSendBtn"),
     smsConfirmModal: document.getElementById("smsConfirmModal"),
     smsConfirmCloseBtn: document.getElementById("smsConfirmCloseBtn"),
     smsConfirmNoBtn: document.getElementById("smsConfirmNoBtn"),
@@ -636,10 +643,10 @@
     }
   }
 
-  const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".stl", ".step", ".zip", ".3mf", ".obj"]);
-  const PRIMARY_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf og .obj";
-  const PRINT_READY_PROJECT_FILE_ALLOWED_EXTS = new Set([".3mf", ".stl"]);
-  const PRINT_READY_PROJECT_FILE_ALLOWED_LABEL = ".3mf og .stl";
+  const PRIMARY_UPLOAD_ALLOWED_EXTS = new Set([".stl", ".step", ".zip", ".3mf", ".obj", ".lys", ".pwscene"]);
+  const PRIMARY_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf, .obj, .lys og .pwscene";
+  const PRINT_READY_PROJECT_FILE_ALLOWED_EXTS = new Set([".3mf", ".stl", ".lys", ".pwscene"]);
+  const PRINT_READY_PROJECT_FILE_ALLOWED_LABEL = ".3mf, .stl, .lys og .pwscene";
 
   function fileExt(filename) {
     const name = String(filename || "").trim().toLowerCase();
@@ -2312,6 +2319,51 @@
     showStatus(els.printReadyModalStatus, "");
     if (els.printReadyModalFiles) els.printReadyModalFiles.innerHTML = "";
     state.currentPrintReadyProjectId = 0;
+    state.currentPrintReadyProject = null;
+  }
+
+  function defaultPrintReadyProjectName(project) {
+    const title = String((project && project.title) || "").trim();
+    if (!title) return "";
+    if (title.toLowerCase().startsWith("klar til print")) return "";
+    return title.slice(0, 120);
+  }
+
+  function settlePrintReadyNameModal(value) {
+    const resolver = state.printReadyNameResolver;
+    state.printReadyNameResolver = null;
+    if (els.printReadyNameModal) els.printReadyNameModal.classList.add("hidden");
+    showStatus(els.printReadyNameStatus, "");
+    if (els.printReadyNameSendBtn) els.printReadyNameSendBtn.disabled = false;
+    if (typeof resolver === "function") resolver(String(value || "").trim());
+  }
+
+  function confirmPrintReadyProjectName() {
+    const value = String((els.printReadyNameInput && els.printReadyNameInput.value) || "").trim();
+    if (!value) {
+      showStatus(els.printReadyNameStatus, "Indtast et projekt navn.", "error");
+      if (els.printReadyNameInput) els.printReadyNameInput.focus();
+      return;
+    }
+    settlePrintReadyNameModal(value);
+  }
+
+  function askPrintReadyProjectName(project) {
+    if (!els.printReadyNameModal || !els.printReadyNameInput) {
+      const fallback = defaultPrintReadyProjectName(project);
+      return Promise.resolve(String(window.prompt("Projekt navn", fallback) || "").trim());
+    }
+    return new Promise((resolve) => {
+      state.printReadyNameResolver = resolve;
+      els.printReadyNameInput.value = defaultPrintReadyProjectName(project);
+      showStatus(els.printReadyNameStatus, "");
+      if (els.printReadyNameSendBtn) els.printReadyNameSendBtn.disabled = false;
+      els.printReadyNameModal.classList.remove("hidden");
+      window.setTimeout(() => {
+        els.printReadyNameInput.focus();
+        els.printReadyNameInput.select();
+      }, 0);
+    });
   }
 
   function renderPrintReadyModalFiles(project) {
@@ -2532,6 +2584,7 @@
   function openPrintReadyModal(project) {
     if (!project || !els.printReadyModal) return;
     state.currentPrintReadyProjectId = Number(project.id || 0) || 0;
+    state.currentPrintReadyProject = project;
     const files = Array.isArray(project.files) ? project.files : [];
     const fileCount = Number(project.file_count || files.length || 0);
     const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
@@ -2561,7 +2614,13 @@
   async function sendCurrentPrintReadyProject() {
     const id = Number(state.currentPrintReadyProjectId || 0);
     if (!id) return;
-    const data = await api(`/api/print-ready/${id}/send`, { method: "POST" });
+    const projectName = await askPrintReadyProjectName(state.currentPrintReadyProject || {});
+    if (!projectName) return;
+    showStatus(els.printReadyModalStatus, "Sender projektet til print...", "ok");
+    const data = await api(`/api/print-ready/${id}/send`, {
+      method: "POST",
+      body: { project_name: projectName },
+    });
     const project = data && data.project ? data.project : null;
     if (project) {
       openPrintReadyModal(project);
@@ -9455,15 +9514,16 @@
     const projectId = Number(project && project.id ? project.id : 0);
     const list = Array.isArray(project && project.project_files) ? project.project_files : [];
     return `
-      <section class="print-ready-project-files" aria-label="Gemt i projektet">
+      <section class="print-ready-project-files" aria-label="Gemt i projektet" data-project-id="${projectId}">
         <div class="print-ready-project-files-head">
           <div>
             <div class="print-ready-project-files-title">Gemt i projektet</div>
             <div class="hint">${list.length ? `${list.length} fil(er), kun synlig for admin` : `Upload ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer til intern brug.`}</div>
+            <div class="print-ready-project-drop-hint">Træk ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} hertil</div>
           </div>
           <label class="btn small print-ready-project-upload">
             Upload 3MF/STL
-            <input class="print-ready-project-file-input" type="file" accept=".3mf,.stl" multiple data-project-id="${projectId}">
+            <input class="print-ready-project-file-input" type="file" accept=".3mf,.stl,.lys,.pwscene" multiple data-project-id="${projectId}">
           </label>
         </div>
         ${
@@ -9671,14 +9731,14 @@
     `;
   }
 
-  async function uploadPrintReadyProjectFiles(projectId, fileSource) {
+  async function uploadPrintReadyProjectFiles(projectId, fileSource, statusElOverride = null) {
     if (state.role !== "admin") return;
     const id = Number(projectId || 0);
     const files = Array.from((fileSource && fileSource.files) || fileSource || []).filter(Boolean);
     if (!id || !files.length) return;
-    const statusEl = els.finishedProjectsList && fileSource instanceof Element && els.finishedProjectsList.contains(fileSource)
+    const statusEl = statusElOverride || (els.finishedProjectsList && fileSource instanceof Element && els.finishedProjectsList.contains(fileSource)
       ? els.finishedProjectsStatus
-      : els.printReadyStatus;
+      : els.printReadyStatus);
 
     const unsupported = files.filter((file) => !isSupportedPrintReadyProjectFile(file));
     if (unsupported.length) {
@@ -9705,6 +9765,64 @@
     showStatus(statusEl, `${created} projektfil(er) gemt.${skippedText}`, "ok");
     await loadPrintReadyProjects();
     await loadFinishedProjects();
+  }
+
+  function bindPrintReadyProjectFileDrop(rootEl, statusEl) {
+    if (!rootEl) return;
+    const zoneFromEvent = (event) => {
+      const target = event && event.target;
+      return target && target.closest ? target.closest(".print-ready-project-files[data-project-id]") : null;
+    };
+    const hasFiles = (event) => !!(
+      event &&
+      event.dataTransfer &&
+      event.dataTransfer.types &&
+      Array.from(event.dataTransfer.types).includes("Files")
+    );
+
+    rootEl.addEventListener("dragenter", (event) => {
+      const zone = zoneFromEvent(event);
+      if (!zone || !hasFiles(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      globalDropDepth = 0;
+      hideGlobalDropOverlay();
+      zone.classList.add("dragover");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    });
+
+    rootEl.addEventListener("dragover", (event) => {
+      const zone = zoneFromEvent(event);
+      if (!zone || !hasFiles(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      globalDropDepth = 0;
+      hideGlobalDropOverlay();
+      zone.classList.add("dragover");
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    });
+
+    rootEl.addEventListener("dragleave", (event) => {
+      const zone = zoneFromEvent(event);
+      if (!zone) return;
+      const related = event.relatedTarget;
+      if (related instanceof Node && zone.contains(related)) return;
+      zone.classList.remove("dragover");
+    });
+
+    rootEl.addEventListener("drop", (event) => {
+      const zone = zoneFromEvent(event);
+      if (!zone) return;
+      event.preventDefault();
+      event.stopPropagation();
+      globalDropDepth = 0;
+      hideGlobalDropOverlay();
+      zone.classList.remove("dragover");
+      const projectId = Number(zone.dataset.projectId || 0);
+      uploadPrintReadyProjectFiles(projectId, event.dataTransfer && event.dataTransfer.files, statusEl).catch((err) => {
+        showStatus(statusEl, err.message || "Kunne ikke uploade projektfil", "error");
+      });
+    });
   }
 
   async function onPrintReadyAdminClick(event) {
@@ -13384,6 +13502,11 @@
       if (event.key !== "Escape") return;
       const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
       const printReadyModalOpen = !!(els.printReadyModal && !els.printReadyModal.classList.contains("hidden"));
+      const printReadyNameModalOpen = !!(els.printReadyNameModal && !els.printReadyNameModal.classList.contains("hidden"));
+      if (printReadyNameModalOpen) {
+        settlePrintReadyNameModal("");
+        return;
+      }
       if (shareModalOpen || printReadyModalOpen) return;
       if (!state.selectMode) return;
       toggleSelectMode(false);
@@ -14128,6 +14251,11 @@
         closeSmsOnboardingModal();
         return;
       }
+      const printReadyNameModalOpen = !!(els.printReadyNameModal && !els.printReadyNameModal.classList.contains("hidden"));
+      if (printReadyNameModalOpen) {
+        settlePrintReadyNameModal("");
+        return;
+      }
       const printReadyModalOpen = !!(els.printReadyModal && !els.printReadyModal.classList.contains("hidden"));
       if (printReadyModalOpen) {
         closePrintReadyModal();
@@ -14358,6 +14486,34 @@
         });
       });
     }
+    if (els.printReadyNameCancelBtn) {
+      els.printReadyNameCancelBtn.addEventListener("click", () => settlePrintReadyNameModal(""));
+    }
+    if (els.printReadyNameSendBtn) {
+      els.printReadyNameSendBtn.addEventListener("click", confirmPrintReadyProjectName);
+    }
+    if (els.printReadyNameInput) {
+      els.printReadyNameInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          confirmPrintReadyProjectName();
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          settlePrintReadyNameModal("");
+        }
+      });
+      els.printReadyNameInput.addEventListener("input", () => {
+        showStatus(els.printReadyNameStatus, "");
+      });
+    }
+    if (els.printReadyNameModal) {
+      els.printReadyNameModal.addEventListener("click", (event) => {
+        if (event.target === els.printReadyNameModal || event.target.classList.contains("modal-backdrop")) {
+          settlePrintReadyNameModal("");
+        }
+      });
+    }
     if (els.smsConfirmCloseBtn) {
       els.smsConfirmCloseBtn.addEventListener("click", () => settleSmsConfirmModal(false));
     }
@@ -14504,6 +14660,7 @@
           input.value = "";
         });
       });
+      bindPrintReadyProjectFileDrop(els.printReadyAdminList, els.printReadyStatus);
     }
     if (els.finishedProjectsList) {
       els.finishedProjectsList.addEventListener("click", (event) => {
@@ -14522,6 +14679,7 @@
           input.value = "";
         });
       });
+      bindPrintReadyProjectFileDrop(els.finishedProjectsList, els.finishedProjectsStatus);
     }
 
     if (els.dnsSaveBtn) {
