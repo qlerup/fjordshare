@@ -3614,10 +3614,10 @@ input[type="checkbox"] {
 .modal-card.app-onboarding-card {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
-  gap: 14px;
-  width: min(1940px, calc(100vw - 6px));
-  height: min(1180px, calc(100dvh - 6px));
-  max-height: calc(100dvh - 6px);
+  gap: 12px;
+  width: min(1980px, calc(100vw - 4px));
+  height: min(1220px, calc(100dvh - 4px));
+  max-height: calc(100dvh - 4px);
   padding: clamp(12px, 1.1vw, 18px);
 }
 
@@ -3734,6 +3734,25 @@ input[type="checkbox"] {
   border: 1px solid var(--border);
   background: #0d1320;
   display: block;
+}
+
+@media (min-width: 861px) {
+  .app-onboarding-content {
+    overflow: hidden;
+  }
+
+  .app-onboarding-panel {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .app-onboarding-guide-gif {
+    height: 100%;
+    max-height: min(56dvh, 680px);
+    object-fit: contain;
+  }
 }
 
 .app-onboarding-guide-text p {
