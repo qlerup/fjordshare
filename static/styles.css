@@ -3615,10 +3615,10 @@ input[type="checkbox"] {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
   gap: 14px;
-  width: min(1840px, calc(100vw - 12px));
-  height: min(1120px, calc(100dvh - 12px));
-  max-height: calc(100dvh - 12px);
-  padding: clamp(10px, 1vw, 16px);
+  width: min(1940px, calc(100vw - 6px));
+  height: min(1180px, calc(100dvh - 6px));
+  max-height: calc(100dvh - 6px);
+  padding: clamp(12px, 1.1vw, 18px);
 }
 
 .app-onboarding-layout {
