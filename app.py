@@ -12419,14 +12419,14 @@ def api_me_onboarding_preferences():
     enabled = bool(parse_bool(body.get("enabled")))
 
     with closing(get_conn()) as conn:
+        # Keep the first-run completion flag separate from the user's auto-show preference.
         conn.execute(
             """
             UPDATE users
-            SET app_onboarding_enabled=?,
-                app_onboarding_seen_v1=CASE WHEN ?=1 THEN 0 ELSE app_onboarding_seen_v1 END
+            SET app_onboarding_enabled=?
             WHERE id=?
             """,
-            (1 if enabled else 0, 1 if enabled else 0, int(current_user.id)),
+            (1 if enabled else 0, int(current_user.id)),
         )
         conn.commit()
 

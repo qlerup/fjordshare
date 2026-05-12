@@ -9,6 +9,9 @@
   const SLICE_ACTIONS_DISABLED = String((boot && boot.dataset.slicingDisabled) || "0").trim() === "1";
   const SLICE_DISABLED_TITLE = "Slicing er midlertidigt slået fra";
   const SMS_ONBOARDING_LOGIN_PROMPT_ENABLED = false;
+  const APP_ONBOARDING_DESKTOP_MIN_WIDTH = 861;
+  const APP_ONBOARDING_FALLBACK_STEP_MS = 5000;
+  const APP_ONBOARDING_STEP_BUFFER_MS = 450;
   const UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY = "fjordshare.unseenUploadsOverlayExpanded.v1";
 
   function readPersistedUnseenUploadsOverlayExpanded() {
@@ -136,6 +139,12 @@
     appOnboardingSeenPersisted: false,
     appOnboardingEnabled: true,
     appOnboardingPanelKey: "navigation",
+    appOnboardingMode: "normal",
+    appOnboardingBusy: false,
+    appOnboardingStepComplete: false,
+    appOnboardingStepTimer: null,
+    appOnboardingStepToken: 0,
+    appOnboardingDurationCache: Object.create(null),
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
   };
@@ -406,8 +415,9 @@
     smsOnboardingVerifyBtn: document.getElementById("smsOnboardingVerifyBtn"),
     appOnboardingModal: document.getElementById("appOnboardingModal"),
     appOnboardingNavItems: Array.from(document.querySelectorAll(".app-onboarding-nav-item[data-guide-panel]")),
+    appOnboardingContent: document.querySelector(".app-onboarding-content"),
     appOnboardingPanels: Array.from(document.querySelectorAll(".app-onboarding-panel[data-guide-panel]")),
-    appOnboardingGuideGifs: Array.from(document.querySelectorAll(".app-onboarding-guide-gif[data-fallback-src]")),
+    appOnboardingGuideGifs: Array.from(document.querySelectorAll(".app-onboarding-guide-gif")),
     appOnboardingEnabledChk: document.getElementById("appOnboardingEnabledChk"),
     appOnboardingDoneBtn: document.getElementById("appOnboardingDoneBtn"),
     appOnboardingStatus: document.getElementById("appOnboardingStatus"),
@@ -953,21 +963,247 @@
     }
   }
 
-  function setAppOnboardingBusy(busy) {
-    const isBusy = !!busy;
-    if (els.appOnboardingEnabledChk) {
-      els.appOnboardingEnabledChk.disabled = isBusy;
+  function isDesktopAppOnboardingViewport() {
+    if (window.matchMedia) {
+      return window.matchMedia(`(min-width: ${APP_ONBOARDING_DESKTOP_MIN_WIDTH}px)`).matches;
     }
-    if (els.appOnboardingDoneBtn) {
-      els.appOnboardingDoneBtn.disabled = isBusy;
-      els.appOnboardingDoneBtn.textContent = isBusy ? "Gemmer..." : "Færdig";
+    return window.innerWidth >= APP_ONBOARDING_DESKTOP_MIN_WIDTH;
+  }
+
+  function isRequiredAppOnboarding() {
+    return state.appOnboardingMode === "required";
+  }
+
+  function appOnboardingPanelKeys() {
+    return (Array.isArray(els.appOnboardingPanels) ? els.appOnboardingPanels : [])
+      .map((panel) => String((panel.dataset && panel.dataset.guidePanel) || "").trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  function appOnboardingPanelIndex() {
+    const keys = appOnboardingPanelKeys();
+    const key = String(state.appOnboardingPanelKey || "").trim().toLowerCase();
+    const index = keys.indexOf(key);
+    return index >= 0 ? index : 0;
+  }
+
+  function activeAppOnboardingPanel() {
+    const key = String(state.appOnboardingPanelKey || "").trim().toLowerCase();
+    return (Array.isArray(els.appOnboardingPanels) ? els.appOnboardingPanels : []).find(
+      (panel) => String((panel.dataset && panel.dataset.guidePanel) || "").trim().toLowerCase() === key,
+    ) || null;
+  }
+
+  function clearAppOnboardingStepTimer() {
+    if (state.appOnboardingStepTimer) {
+      window.clearTimeout(state.appOnboardingStepTimer);
+      state.appOnboardingStepTimer = null;
     }
   }
 
-  function setAppOnboardingPanel(panelKey = "") {
+  function rememberAppOnboardingGifSrc(gif) {
+    if (!gif) return "";
+    if (!gif.dataset.originalSrc) {
+      gif.dataset.originalSrc = gif.getAttribute("src") || gif.currentSrc || gif.src || "";
+    }
+    return String(gif.dataset.originalSrc || gif.getAttribute("src") || gif.currentSrc || gif.src || "");
+  }
+
+  function appOnboardingReplaySrc(src, token) {
+    const raw = String(src || "").trim();
+    if (!raw) return raw;
+    try {
+      const url = new URL(raw, window.location.href);
+      url.searchParams.set("_guide_play", String(token || Date.now()));
+      return url.href;
+    } catch (_err) {
+      const separator = raw.includes("?") ? "&" : "?";
+      return `${raw}${separator}_guide_play=${encodeURIComponent(String(token || Date.now()))}`;
+    }
+  }
+
+  function restartAppOnboardingGif(gif) {
+    if (!gif) return;
+    const src = rememberAppOnboardingGifSrc(gif);
+    if (!src) return;
+    gif.src = appOnboardingReplaySrc(src, state.appOnboardingStepToken);
+  }
+
+  function skipGifSubBlocks(bytes, pos) {
+    let next = Number(pos || 0);
+    while (next < bytes.length) {
+      const size = Number(bytes[next] || 0);
+      next += 1;
+      if (!size) break;
+      next += size;
+    }
+    return next;
+  }
+
+  function parseGifDurationMs(buffer) {
+    const bytes = new Uint8Array(buffer || []);
+    if (bytes.length < 13) return 0;
+    const signature = String.fromCharCode(bytes[0], bytes[1], bytes[2]);
+    if (signature !== "GIF") return 0;
+
+    let pos = 6;
+    pos += 4;
+    const packed = bytes[pos] || 0;
+    pos += 3;
+    if (packed & 0x80) {
+      pos += 3 * (1 << ((packed & 0x07) + 1));
+    }
+
+    let duration = 0;
+    let frames = 0;
+    while (pos < bytes.length) {
+      const blockType = bytes[pos];
+      pos += 1;
+      if (blockType === 0x3b) break;
+
+      if (blockType === 0x21) {
+        const label = bytes[pos];
+        pos += 1;
+        if (label === 0xf9) {
+          const blockSize = bytes[pos] || 0;
+          pos += 1;
+          if (blockSize >= 4 && pos + blockSize <= bytes.length) {
+            const delayCs = (bytes[pos + 1] || 0) | ((bytes[pos + 2] || 0) << 8);
+            duration += Math.max(2, delayCs || 10) * 10;
+            frames += 1;
+          }
+          pos += blockSize;
+          if (pos < bytes.length && bytes[pos] === 0) pos += 1;
+          continue;
+        }
+        pos = skipGifSubBlocks(bytes, pos);
+        continue;
+      }
+
+      if (blockType === 0x2c) {
+        if (pos + 9 > bytes.length) break;
+        const imagePacked = bytes[pos + 8] || 0;
+        pos += 9;
+        if (imagePacked & 0x80) {
+          pos += 3 * (1 << ((imagePacked & 0x07) + 1));
+        }
+        pos += 1;
+        pos = skipGifSubBlocks(bytes, pos);
+        continue;
+      }
+
+      break;
+    }
+
+    return frames ? duration : 0;
+  }
+
+  async function appOnboardingGifDurationMs(gif) {
+    const src = rememberAppOnboardingGifSrc(gif);
+    if (!src) return APP_ONBOARDING_FALLBACK_STEP_MS;
+    let cacheKey = src;
+    try {
+      cacheKey = new URL(src, window.location.href).href;
+    } catch (_err) {}
+    if (state.appOnboardingDurationCache[cacheKey]) {
+      return state.appOnboardingDurationCache[cacheKey];
+    }
+    try {
+      const resp = await fetch(cacheKey, { cache: "force-cache" });
+      if (!resp.ok) throw new Error("Kunne ikke hente guide-gif");
+      const duration = parseGifDurationMs(await resp.arrayBuffer());
+      const safeDuration = Math.max(1200, Math.min(180000, (duration || APP_ONBOARDING_FALLBACK_STEP_MS) + APP_ONBOARDING_STEP_BUFFER_MS));
+      state.appOnboardingDurationCache[cacheKey] = safeDuration;
+      return safeDuration;
+    } catch (_err) {
+      state.appOnboardingDurationCache[cacheKey] = APP_ONBOARDING_FALLBACK_STEP_MS;
+      return APP_ONBOARDING_FALLBACK_STEP_MS;
+    }
+  }
+
+  function renderAppOnboardingControls() {
+    const required = isRequiredAppOnboarding();
+    const busy = !!state.appOnboardingBusy;
+    const keys = appOnboardingPanelKeys();
+    const index = appOnboardingPanelIndex();
+    const isLast = index >= keys.length - 1;
+
+    if (els.appOnboardingModal) {
+      els.appOnboardingModal.classList.toggle("app-onboarding-required", required);
+    }
+    if (els.appOnboardingEnabledChk) {
+      els.appOnboardingEnabledChk.disabled = busy;
+    }
+    if (els.appOnboardingNavItems && els.appOnboardingNavItems.length) {
+      els.appOnboardingNavItems.forEach((item) => {
+        item.disabled = required;
+        item.setAttribute("aria-disabled", required ? "true" : "false");
+      });
+    }
+    if (els.appOnboardingDoneBtn) {
+      if (required) {
+        els.appOnboardingDoneBtn.textContent = busy ? "Gemmer..." : (isLast ? "Færdig" : "Næste");
+        els.appOnboardingDoneBtn.disabled = busy || !state.appOnboardingStepComplete;
+      } else {
+        els.appOnboardingDoneBtn.textContent = busy ? "Gemmer..." : "Færdig";
+        els.appOnboardingDoneBtn.disabled = busy;
+      }
+    }
+  }
+
+  function setAppOnboardingBusy(busy) {
+    state.appOnboardingBusy = !!busy;
+    renderAppOnboardingControls();
+  }
+
+  function beginRequiredAppOnboardingStep() {
+    clearAppOnboardingStepTimer();
+    if (!isRequiredAppOnboarding()) {
+      state.appOnboardingStepComplete = true;
+      renderAppOnboardingControls();
+      return;
+    }
+
+    const token = state.appOnboardingStepToken + 1;
+    state.appOnboardingStepToken = token;
+    state.appOnboardingStepComplete = false;
+    renderAppOnboardingControls();
+
+    const keys = appOnboardingPanelKeys();
+    const index = appOnboardingPanelIndex();
+    const panel = activeAppOnboardingPanel();
+    const gif = panel ? panel.querySelector(".app-onboarding-guide-gif") : null;
+    restartAppOnboardingGif(gif);
+    showStatus(els.appOnboardingStatus, `Guide ${index + 1} af ${keys.length} afspilles. Knappen åbner, når videoen er færdig.`, "ok");
+
+    appOnboardingGifDurationMs(gif).then((duration) => {
+      if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding()) return;
+      state.appOnboardingStepTimer = window.setTimeout(() => {
+        if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding()) return;
+        state.appOnboardingStepComplete = true;
+        renderAppOnboardingControls();
+        showStatus(
+          els.appOnboardingStatus,
+          index >= keys.length - 1 ? "Sidste guide er færdig. Tryk Færdig for at fortsætte." : "Guiden er færdig. Tryk Næste for at fortsætte.",
+          "ok",
+        );
+      }, duration);
+    });
+  }
+
+  async function markAppOnboardingSeen() {
+    if (state.appOnboardingSeenPersisted) return;
+    await api("/api/me/onboarding/seen", { method: "POST" });
+    state.appOnboardingSeenPersisted = true;
+  }
+
+  function setAppOnboardingPanel(panelKey = "", options = {}) {
     const panels = Array.isArray(els.appOnboardingPanels) ? els.appOnboardingPanels : [];
     const navItems = Array.isArray(els.appOnboardingNavItems) ? els.appOnboardingNavItems : [];
     if (!panels.length) return;
+    if (isRequiredAppOnboarding() && !(options && options.force)) {
+      return;
+    }
 
     const requested = String(panelKey || state.appOnboardingPanelKey || "").trim().toLowerCase();
     const firstKey = String((panels[0] && panels[0].dataset && panels[0].dataset.guidePanel) || "navigation").trim().toLowerCase();
@@ -989,23 +1225,43 @@
       item.classList.toggle("active", active);
       item.setAttribute("aria-current", active ? "true" : "false");
     });
+
+    if (els.appOnboardingContent) {
+      els.appOnboardingContent.scrollTop = 0;
+    }
+    const activeNav = navItems.find((item) => String((item.dataset && item.dataset.guidePanel) || "").trim().toLowerCase() === next);
+    if (activeNav && typeof activeNav.scrollIntoView === "function") {
+      activeNav.scrollIntoView({ block: "nearest" });
+    }
+
+    if (isRequiredAppOnboarding()) {
+      beginRequiredAppOnboardingStep();
+    } else {
+      state.appOnboardingStepComplete = true;
+      renderAppOnboardingControls();
+    }
   }
 
   function openAppOnboarding(options = {}) {
     if (!els.appOnboardingModal) return;
     const force = !!(options && options.force);
     const closeProfile = !!(options && options.closeProfile);
+    const required = !!(options && options.required);
     if (!force && !state.appOnboardingEnabled) return;
     if (closeProfile) {
       closeProfileModal();
     }
+    clearAppOnboardingStepTimer();
+    state.appOnboardingMode = required ? "required" : "normal";
+    state.appOnboardingStepComplete = !required;
+    state.appOnboardingBusy = false;
     if (els.appOnboardingEnabledChk) {
       els.appOnboardingEnabledChk.checked = !!state.appOnboardingEnabled;
     }
-    setAppOnboardingPanel("navigation");
     showStatus(els.appOnboardingStatus, "");
-    setAppOnboardingBusy(false);
     els.appOnboardingModal.classList.remove("hidden");
+    setAppOnboardingPanel("navigation", { force: true });
+    renderAppOnboardingControls();
   }
 
   function openProfileModal() {
@@ -1040,7 +1296,10 @@
       const user = (data && data.user) || {};
       applyAppOnboardingPreference(user);
       if (state.appOnboardingEnabled) {
-        openAppOnboarding({ force: true });
+        openAppOnboarding({
+          force: true,
+          required: !state.appOnboardingSeenPersisted && isDesktopAppOnboardingViewport(),
+        });
       }
     } catch (err) {
       // Ignore onboarding on error to not block UI
@@ -1048,6 +1307,9 @@
   }
 
   function dismissAppOnboarding() {
+    clearAppOnboardingStepTimer();
+    state.appOnboardingMode = "normal";
+    state.appOnboardingStepComplete = true;
     if (els.appOnboardingModal) els.appOnboardingModal.classList.add("hidden");
     showStatus(els.appOnboardingStatus, "");
     setAppOnboardingBusy(false);
@@ -1055,18 +1317,49 @@
 
   async function completeAppOnboardingFromModal() {
     const enabled = !!(els.appOnboardingEnabledChk && els.appOnboardingEnabledChk.checked);
-    if (enabled === !!state.appOnboardingEnabled) {
+    if (isRequiredAppOnboarding()) {
+      if (!state.appOnboardingStepComplete) return;
+      const keys = appOnboardingPanelKeys();
+      const index = appOnboardingPanelIndex();
+      if (index < keys.length - 1) {
+        setAppOnboardingPanel(keys[index + 1], { force: true });
+        return;
+      }
+
+      setAppOnboardingBusy(true);
+      showStatus(els.appOnboardingStatus, "");
+      try {
+        if (enabled !== !!state.appOnboardingEnabled) {
+          const data = await api("/api/me/onboarding/preferences", {
+            method: "POST",
+            body: { enabled },
+          });
+          applyAppOnboardingPreference((data && data.onboarding) || { app_onboarding_enabled: enabled });
+        }
+        await markAppOnboardingSeen();
+        dismissAppOnboarding();
+      } catch (err) {
+        setAppOnboardingBusy(false);
+        showStatus(els.appOnboardingStatus, err.message || "Kunne ikke gemme guidevalg", "error");
+      }
+      return;
+    }
+
+    if (enabled === !!state.appOnboardingEnabled && state.appOnboardingSeenPersisted) {
       dismissAppOnboarding();
       return;
     }
     setAppOnboardingBusy(true);
     showStatus(els.appOnboardingStatus, "");
     try {
-      const data = await api("/api/me/onboarding/preferences", {
-        method: "POST",
-        body: { enabled },
-      });
-      applyAppOnboardingPreference((data && data.onboarding) || { app_onboarding_enabled: enabled });
+      if (enabled !== !!state.appOnboardingEnabled) {
+        const data = await api("/api/me/onboarding/preferences", {
+          method: "POST",
+          body: { enabled },
+        });
+        applyAppOnboardingPreference((data && data.onboarding) || { app_onboarding_enabled: enabled });
+      }
+      await markAppOnboardingSeen();
       dismissAppOnboarding();
       if (enabled) {
         showStatus(els.profileGuideStatus, 'Guiden er slået til. Klik "Vis guide" for at starte den igen.', "ok");
@@ -9557,7 +9850,7 @@
             <div class="print-ready-project-drop-hint">Træk ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} hertil</div>
           </div>
           <label class="btn small print-ready-project-upload">
-            Upload 3MF/STL
+            Upload projekt fil(er)
             <input class="print-ready-project-file-input" type="file" accept=".3mf,.stl,.lys,.pwscene" multiple data-project-id="${projectId}">
           </label>
         </div>
@@ -9572,7 +9865,7 @@
                   const meta = `${formatSize(item && item.file_size)} · ${formatDate(item && item.uploaded_at)}`;
                   return `
                     <div class="print-ready-project-file-item">
-                      <a href="${esc(url)}" target="_blank" rel="noopener" title="${esc(name)}">
+                      <a class="print-ready-project-file-download" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(`Download ${name}`)}" aria-label="${esc(`Download ${name}`)}" data-download-label="Download">
                         <span class="print-ready-project-file-name">${esc(name)}</span>
                         <span class="print-ready-project-file-meta">${esc(meta)}</span>
                       </a>
@@ -15140,11 +15433,13 @@
     }
     if (els.appOnboardingGuideGifs && els.appOnboardingGuideGifs.length) {
       els.appOnboardingGuideGifs.forEach((gif) => {
+        rememberAppOnboardingGifSrc(gif);
         gif.addEventListener("error", () => {
           const fallbackSrc = String(gif.dataset.fallbackSrc || "").trim();
           if (!fallbackSrc || gif.dataset.fallbackApplied === "1") return;
           gif.dataset.fallbackApplied = "1";
-          gif.src = fallbackSrc;
+          gif.dataset.originalSrc = fallbackSrc;
+          gif.src = appOnboardingReplaySrc(fallbackSrc, state.appOnboardingStepToken || Date.now());
         });
       });
     }
