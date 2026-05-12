@@ -22,6 +22,7 @@ DO_BUILD=1
 NO_CACHE=0
 SKIP_DB_BACKUP=0
 SHOW_LOGS=1
+PRUNE_DOCKER=1
 
 usage() {
 	cat <<EOF
@@ -38,6 +39,7 @@ Options:
   --branch BRANCH     Git branch to pull (default: current branch, then main)
   --no-build          Do not build image; only docker compose up -d
   --no-cache          Rebuild image without Docker cache
+  --no-prune          Skip Docker prune before update
   --skip-db-backup    Skip SQLite backup before updating
   --no-logs           Do not print recent container logs at the end
   -h, --help          Show this help
@@ -71,6 +73,9 @@ while [ "$#" -gt 0 ]; do
 		--no-cache)
 			NO_CACHE=1
 			DO_BUILD=1
+			;;
+		--no-prune)
+			PRUNE_DOCKER=0
 			;;
 		--skip-db-backup)
 			SKIP_DB_BACKUP=1
@@ -127,6 +132,19 @@ docker_cmd() {
 	else
 		docker "$@"
 	fi
+}
+
+prune_docker_space() {
+	if [ "$PRUNE_DOCKER" != "1" ]; then
+		return 0
+	fi
+
+	echo "==> Rydder Docker build-cache og ubrugte objekter (bevarer volumes/data)"
+	docker_cmd builder prune -af || true
+	docker_cmd image prune -af || true
+	docker_cmd container prune -f || true
+	docker_cmd network prune -f || true
+	docker_cmd system df || true
 }
 
 read_env_value() {
@@ -330,14 +348,14 @@ docker_compose config >/dev/null
 
 if [ ! -d .git ]; then
 	echo "Fejl: $APP_DIR er ikke et git repository."
-	echo "Tip: brug fjordshare-force-update.sh hvis mappen skal rettes op fra GitHub."
+	echo "Tip: kontroller APP_DIR, eller klon FjordShare repoet igen i denne mappe."
 	exit 1
 fi
 
 dirty="$(git status --porcelain --untracked-files=no)"
 if [ -n "$dirty" ]; then
 	echo "Fejl: der er lokale tracked aendringer i $APP_DIR."
-	echo "Commit/stash dem foerst, eller brug fjordshare-force-update.sh hvis de skal overskrives."
+	echo "Commit/stash dem foerst, eller ret mappen manuelt foer update koeres igen."
 	git status --short --untracked-files=no
 	exit 1
 fi
@@ -365,6 +383,8 @@ if [ -n "$OLD_REV" ] && [ "$OLD_REV" = "$NEW_REV" ]; then
 else
 	echo "==> Opdateret: ${OLD_REV:-unknown} -> $NEW_REV"
 fi
+
+prune_docker_space
 
 if [ "$NO_CACHE" = "1" ]; then
 	echo "==> Bygger uden Docker cache"
