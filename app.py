@@ -9345,10 +9345,8 @@ def _load_sms_gateway_settings() -> dict[str, Any]:
 
 
 def _makerworld_password_preview(password: str) -> str:
-    value = str(password or "").strip()
-    if not value:
-        return ""
-    return f"{value[:3]}............"
+    # Do not expose any part of the credential in UI/API responses.
+    return ""
 
 
 def _makerworld_token_fernet() -> Optional[Any]:
@@ -15517,11 +15515,6 @@ def api_settings_makerworld():
 
     if not username:
         return jsonify({"ok": False, "error": "Indtast MakerWorld brugernavn eller e-mail"}), 400
-
-    current_settings = _load_makerworld_settings()
-    current_password_preview = str(current_settings.get("password_preview") or "").strip()
-    if incoming_password and incoming_password == current_password_preview:
-        incoming_password = ""
 
     set_setting(MAKERWORLD_SETTING_USERNAME_KEY, username)
     if incoming_password:

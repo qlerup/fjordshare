@@ -10672,25 +10672,21 @@
 
   function showMakerworldPasswordPreview() {
     if (!els.makerworldPasswordInput) return;
-    if (!state.makerworldPasswordConfigured || !state.makerworldPasswordPreview) {
-      state.makerworldPasswordPreviewActive = false;
-      els.makerworldPasswordInput.type = "password";
-      els.makerworldPasswordInput.value = "";
-      els.makerworldPasswordInput.placeholder = "Indsæt kodeord";
-      return;
-    }
-    state.makerworldPasswordPreviewActive = true;
-    els.makerworldPasswordInput.type = "text";
-    els.makerworldPasswordInput.value = state.makerworldPasswordPreview;
-    els.makerworldPasswordInput.placeholder = "Skriv nyt kodeord ved ændring";
-  }
-
-  function beginMakerworldPasswordEdit() {
-    if (!els.makerworldPasswordInput || !state.makerworldPasswordPreviewActive) return;
     state.makerworldPasswordPreviewActive = false;
     els.makerworldPasswordInput.type = "password";
     els.makerworldPasswordInput.value = "";
-    els.makerworldPasswordInput.placeholder = "Skriv nyt kodeord";
+    els.makerworldPasswordInput.placeholder = state.makerworldPasswordConfigured
+      ? "Kodeord er gemt (skjult). Skriv nyt for at ændre"
+      : "Indsæt kodeord";
+  }
+
+  function beginMakerworldPasswordEdit() {
+    if (!els.makerworldPasswordInput) return;
+    state.makerworldPasswordPreviewActive = false;
+    els.makerworldPasswordInput.type = "password";
+    if (!String(els.makerworldPasswordInput.value || "").trim()) {
+      els.makerworldPasswordInput.placeholder = "Skriv nyt kodeord";
+    }
   }
 
   function restoreMakerworldPasswordPreviewIfEmpty() {
@@ -10740,9 +10736,7 @@
     }
     const username = String((els.makerworldUsernameInput && els.makerworldUsernameInput.value) || "").trim();
     const rawPassword = String((els.makerworldPasswordInput && els.makerworldPasswordInput.value) || "").trim();
-    const password = state.makerworldPasswordPreviewActive && rawPassword === state.makerworldPasswordPreview
-      ? ""
-      : rawPassword;
+    const password = rawPassword;
 
     if (!username) {
       showStatus(els.makerworldStatus, "Indtast MakerWorld brugernavn eller e-mail.", "error");
@@ -10761,7 +10755,7 @@
       showStatus(
         els.makerworldStatus,
         secure
-          ? "MakerWorld login gemt. Kodeord vises maskeret."
+          ? "MakerWorld login gemt. Kodeord vises ikke i feltet."
           : "MakerWorld login gemt, men kodeord er ikke krypteret uden MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY.",
         secure ? "ok" : "error",
       );
