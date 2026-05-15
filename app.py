@@ -166,6 +166,7 @@ except Exception:
     THUMB_WORKER_COUNT = 2
 THUMB_WORKER_COUNT = max(1, min(4, THUMB_WORKER_COUNT))
 THUMB_RENDER_STYLE_VERSION = "9"
+FOLDER_PREVIEW_THUMB_LIMIT = 4
 SLICABLE_3D_EXTENSIONS = {".stl"}
 BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
 BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
@@ -10765,6 +10766,99 @@ def serialize_file_attachment_row(row: sqlite3.Row) -> dict:
     }
 
 
+def _folder_preview_candidate_clause() -> tuple[str, tuple[str, ...]]:
+    thumb_exts = tuple(sorted(THUMBABLE_3D_EXTENSIONS))
+    placeholders = ",".join("?" for _ in thumb_exts)
+    return (
+        f"""
+        (
+            lower(COALESCE(mime_type,'')) LIKE 'image/%'
+            OR (
+                lower(COALESCE(ext,'')) IN ({placeholders})
+                AND TRIM(COALESCE(thumb_rel,'')) != ''
+            )
+        )
+        """,
+        thumb_exts,
+    )
+
+
+def _folder_preview_seed(folder_path: str, bucket: str) -> int:
+    digest = hashlib.sha256(f"folder-preview:{bucket}:{folder_path}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") % 2_147_483_647
+
+
+def _append_accessible_preview_rows(
+    out: list[sqlite3.Row],
+    user: User,
+    rows: Iterable[sqlite3.Row],
+    limit: int,
+) -> None:
+    for row in rows:
+        if len(out) >= limit:
+            return
+        if not user_can_access_file(user, row, "view"):
+            continue
+        out.append(row)
+
+
+def folder_preview_file_rows(conn: sqlite3.Connection, user: User, folder_path: str, limit: int = FOLDER_PREVIEW_THUMB_LIMIT) -> list[sqlite3.Row]:
+    folder = normalize_folder_path(folder_path)
+    safe_limit = max(1, min(FOLDER_PREVIEW_THUMB_LIMIT, int(limit or FOLDER_PREVIEW_THUMB_LIMIT)))
+    candidate_clause, candidate_params = _folder_preview_candidate_clause()
+    order_sql = "((id * 1103515245 + ?) % 2147483647), id"
+
+    direct_rows = conn.execute(
+        f"""
+        SELECT *
+        FROM files
+        WHERE folder_path=?
+          AND {candidate_clause}
+        ORDER BY {order_sql}
+        LIMIT ?
+        """,
+        (
+            folder,
+            *candidate_params,
+            _folder_preview_seed(folder, "direct"),
+            safe_limit,
+        ),
+    ).fetchall()
+
+    selected: list[sqlite3.Row] = []
+    _append_accessible_preview_rows(selected, user, direct_rows, safe_limit)
+
+    remaining = safe_limit - len(selected)
+    if remaining <= 0:
+        return selected
+
+    if folder:
+        descendant_where = "folder_path LIKE ?"
+        descendant_params: tuple[Any, ...] = (f"{folder}/%",)
+    else:
+        descendant_where = "folder_path != ''"
+        descendant_params = ()
+
+    descendant_rows = conn.execute(
+        f"""
+        SELECT *
+        FROM files
+        WHERE {descendant_where}
+          AND {candidate_clause}
+        ORDER BY {order_sql}
+        LIMIT ?
+        """,
+        (
+            *descendant_params,
+            *candidate_params,
+            _folder_preview_seed(folder, "descendant"),
+            remaining,
+        ),
+    ).fetchall()
+    _append_accessible_preview_rows(selected, user, descendant_rows, safe_limit)
+    return selected
+
+
 def _parse_positive_int_list(raw: Any) -> list[int]:
     if not isinstance(raw, list):
         return []
@@ -12702,6 +12796,21 @@ def api_folders_list():
         with closing(get_conn()) as conn:
             unseen_counts = _unseen_folder_counts_for_user(conn, current_user)
     return jsonify({"ok": True, "items": items, "unseen_counts": unseen_counts})
+
+
+@app.route("/api/folders/preview", methods=["GET"])
+@login_required
+def api_folder_preview():
+    folder = normalize_folder_path(str(request.args.get("folder") or ""))
+
+    if folder and not permission_allows(permission_for_user_folder(current_user, folder), "view"):
+        return jsonify({"ok": False, "error": "Ingen adgang til mappe"}), 403
+
+    with closing(get_conn()) as conn:
+        rows = folder_preview_file_rows(conn, current_user, folder, FOLDER_PREVIEW_THUMB_LIMIT)
+
+    items = [serialize_file_row(row) for row in rows]
+    return jsonify({"ok": True, "folder": folder, "items": items})
 
 
 @app.route("/api/folders", methods=["POST"])

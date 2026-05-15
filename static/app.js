@@ -3614,7 +3614,7 @@
     const jobs = missing.map(async (path) => {
       state.folderPreviewLoading.add(path);
       try {
-        const data = await api(`/api/files?folder=${encodeURIComponent(path)}`);
+        const data = await api(`/api/folders/preview?folder=${encodeURIComponent(path)}`);
         const files = Array.isArray(data.items) ? data.items : [];
         state.folderPreviewCache[path] = buildFolderPreviewEntry(files);
       } catch (_err) {
