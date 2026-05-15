@@ -668,6 +668,39 @@
     return true;
   }
 
+  function triggerTopLevelDownload(url) {
+    const safeUrl = String(url || "").trim();
+    if (!safeUrl || safeUrl === "#") return false;
+
+    try {
+      const popup = window.open(safeUrl, "_blank", "noopener,noreferrer");
+      if (popup) {
+        try {
+          popup.opener = null;
+        } catch (_err) {
+          // Ignore cross-origin opener guards.
+        }
+        return true;
+      }
+    } catch (_err) {
+      // Fall back to anchor-click behavior below.
+    }
+
+    try {
+      const anchor = document.createElement("a");
+      anchor.href = safeUrl;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
   function bindHoverMarqueeCards(rootEl, cardSelector, lineSelector) {
     if (!rootEl) return;
     const cards = Array.from(rootEl.querySelectorAll(cardSelector));
@@ -15670,10 +15703,8 @@
         }
 
         let started = 0;
-        downloadUrls.forEach((url, index) => {
-          window.setTimeout(() => {
-            if (triggerHiddenDownload(url)) started += 1;
-          }, index * 220);
+        downloadUrls.forEach((url) => {
+          if (triggerTopLevelDownload(url)) started += 1;
         });
 
         const source = String((state.importLinkPreview && state.importLinkPreview.source_label) || "MakerWorld").trim() || "MakerWorld";
@@ -15681,21 +15712,23 @@
         const plannedCount = downloadUrls.length;
         showStatus(
           els.importPreviewStatus,
-          `Starter download af ${plannedCount} valgt${plannedCount === 1 ? "" : "e"} profil${plannedCount === 1 ? "" : "er"} fra ${source}. Hvis intet hentes, så log ind på MakerWorld først og prøv igen.`,
+          `Starter download af ${plannedCount} valgt${plannedCount === 1 ? "" : "e"} profil${plannedCount === 1 ? "" : "er"} fra ${source}. Downloads åbnes i nye faner/vinduer.`,
           "ok"
         );
 
-        window.setTimeout(() => {
-          if (started <= 0) {
-            showStatus(els.importPreviewStatus, "Browseren blokerede download. Prøv igen eller tillad download/popups.", "error");
-          } else if (started < plannedCount) {
-            showStatus(
-              els.importPreviewStatus,
-              `Download delvist startet (${started}/${plannedCount}) for ${selectedCount} valgte profiler.`,
-              "ok"
-            );
-          }
-        }, Math.max(1200, plannedCount * 260));
+        if (started <= 0) {
+          showStatus(
+            els.importPreviewStatus,
+            "Browseren blokerede åbning af download-faner. Tillad popups for siden og prøv igen.",
+            "error"
+          );
+        } else if (started < plannedCount) {
+          showStatus(
+            els.importPreviewStatus,
+            `Download delvist startet (${started}/${plannedCount}) for ${selectedCount} valgte profiler. Tillad flere popups/faner for at hente alle.`,
+            "ok"
+          );
+        }
       });
     }
     if (els.importPreviewBody) {
