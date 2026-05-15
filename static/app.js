@@ -151,6 +151,7 @@
     appOnboardingDurationCache: Object.create(null),
     importLinkPreview: null,
     importLinkSelectedProfileId: "",
+    importLinkSelectedProfileIds: [],
     importLinkSelectedImageUrl: "",
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
@@ -13825,20 +13826,30 @@
     return `<span class="import-meta-chip"><strong>${esc(label)}</strong>${esc(text)}</span>`;
   }
 
-  function importSelectedProfile(preview) {
+  function importSelectedProfiles(preview) {
     const profiles = Array.isArray(preview && preview.profiles) ? preview.profiles : [];
-    const selectedId = String(state.importLinkSelectedProfileId || "");
-    return profiles.find((profile) => String(profile.id || "") === selectedId) || profiles[0] || null;
+    const selectedIds = Array.isArray(state.importLinkSelectedProfileIds)
+      ? state.importLinkSelectedProfileIds.map((value) => String(value || "").trim()).filter(Boolean)
+      : [];
+    if (!selectedIds.length) return [];
+    const selectedSet = new Set(selectedIds);
+    return profiles.filter((profile) => selectedSet.has(String((profile && profile.id) || "")));
+  }
+
+  function importSelectedProfile(preview) {
+    return importSelectedProfiles(preview)[0] || null;
   }
 
   function renderImportPreview(preview) {
     if (!els.importPreviewBody) return;
     const data = preview && typeof preview === "object" ? preview : {};
     const profiles = Array.isArray(data.profiles) ? data.profiles : [];
-    const selected = importSelectedProfile(data);
-    if (selected) {
-      state.importLinkSelectedProfileId = String(selected.id || "");
-    }
+    const selectedProfiles = importSelectedProfiles(data);
+    const selectedProfileIds = selectedProfiles.map((profile) => String(profile.id || "")).filter(Boolean);
+    const selectedProfileIdSet = new Set(selectedProfileIds);
+    state.importLinkSelectedProfileIds = selectedProfileIds;
+    state.importLinkSelectedProfileId = selectedProfileIds[0] || "";
+    const selectedCount = selectedProfiles.length;
     if (els.importPreviewTitle) {
       els.importPreviewTitle.textContent = String(data.title || "Model fra link");
     }
@@ -13848,8 +13859,14 @@
       els.importPreviewSubtitle.textContent = creator ? `${source} · ${creator}` : source;
     }
     if (els.importPreviewUseBtn) {
-      els.importPreviewUseBtn.disabled = profiles.length <= 0;
-      els.importPreviewUseBtn.textContent = selected ? "Vælg profil" : "Ingen profiler";
+      els.importPreviewUseBtn.disabled = profiles.length <= 0 || selectedCount <= 0;
+      if (profiles.length <= 0) {
+        els.importPreviewUseBtn.textContent = "Ingen profiler";
+      } else if (selectedCount > 0) {
+        els.importPreviewUseBtn.textContent = `Vælg profiler (${selectedCount})`;
+      } else {
+        els.importPreviewUseBtn.textContent = "Vælg profiler";
+      }
     }
 
     const images = Array.isArray(data.image_urls) ? data.image_urls.filter(Boolean).slice(0, 12) : [];
@@ -13895,7 +13912,7 @@
     const profileHtml = profiles.length
       ? profiles.map((profile, index) => {
           const id = String(profile.id || "");
-          const checked = id === String(state.importLinkSelectedProfileId || "") ? "checked" : "";
+          const checked = selectedProfileIdSet.has(id) ? "checked" : "";
           const settings = profile.settings || {};
           const filamentHtml = (Array.isArray(profile.filaments) ? profile.filaments : [])
             .slice(0, 4)
@@ -13910,7 +13927,7 @@
           const coverUrl = String(profile.cover_url || (Array.isArray(profile.picture_urls) && profile.picture_urls[0]) || "").trim();
           return `
             <label class="import-profile-card ${checked ? "selected" : ""}">
-              <input type="radio" name="importProfile" value="${esc(id)}" ${checked}>
+              <input type="checkbox" name="importProfiles" value="${esc(id)}" ${checked}>
               ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${index + 1}</div>`}
               <div class="import-profile-main">
                 <div class="import-profile-title">${esc(profile.title || "Printprofil")}</div>
@@ -13963,8 +13980,16 @@
   function openImportPreviewModal(preview) {
     state.importLinkPreview = preview || null;
     const profiles = Array.isArray(preview && preview.profiles) ? preview.profiles : [];
-    const selected = profiles.find((profile) => profile && profile.selected) || profiles[0] || null;
-    state.importLinkSelectedProfileId = selected ? String(selected.id || "") : "";
+    const selectedFromSource = profiles
+      .filter((profile) => !!(profile && profile.selected))
+      .map((profile) => String((profile && profile.id) || "").trim())
+      .filter(Boolean);
+    const firstProfileId = String((profiles[0] && profiles[0].id) || "").trim();
+    const selectedIds = selectedFromSource.length
+      ? Array.from(new Set(selectedFromSource))
+      : (firstProfileId ? [firstProfileId] : []);
+    state.importLinkSelectedProfileIds = selectedIds;
+    state.importLinkSelectedProfileId = selectedIds[0] || "";
     state.importLinkSelectedImageUrl = "";
     renderImportPreview(preview);
     showStatus(els.importPreviewStatus, "");
@@ -15343,23 +15368,55 @@
     }
     if (els.importPreviewUseBtn) {
       els.importPreviewUseBtn.addEventListener("click", () => {
-        const selected = importSelectedProfile(state.importLinkPreview || {});
-        if (!selected) {
-          showStatus(els.importPreviewStatus, "Vælg en printprofil først.", "error");
+        const selectedProfiles = importSelectedProfiles(state.importLinkPreview || {});
+        if (!selectedProfiles.length) {
+          showStatus(els.importPreviewStatus, "Vælg mindst en printprofil først.", "error");
           return;
         }
-        showStatus(els.importPreviewStatus, `Printprofil valgt: ${selected.title || "Printprofil"}. Download/import kommer i næste trin.`, "ok");
+        const titles = selectedProfiles
+          .map((profile) => String((profile && profile.title) || "Printprofil").trim() || "Printprofil")
+          .filter(Boolean);
+        const previewTitles = titles.slice(0, 3).join(", ");
+        const remaining = Math.max(0, titles.length - 3);
+        const suffix = remaining > 0 ? ` +${remaining} flere` : "";
+        showStatus(
+          els.importPreviewStatus,
+          `Printprofiler valgt (${selectedProfiles.length}): ${previewTitles}${suffix}. Download/import kommer i næste trin.`,
+          "ok"
+        );
       });
     }
     if (els.importPreviewBody) {
       els.importPreviewBody.addEventListener("change", (event) => {
-        const input = event.target && event.target.closest ? event.target.closest('input[name="importProfile"]') : null;
+        const input = event.target && event.target.closest ? event.target.closest('input[name="importProfiles"]') : null;
         if (!input) return;
-        state.importLinkSelectedProfileId = String(input.value || "");
+
+        const checkedIds = Array.from(els.importPreviewBody.querySelectorAll('input[name="importProfiles"]:checked'))
+          .map((node) => String((node && node.value) || "").trim())
+          .filter(Boolean);
+        state.importLinkSelectedProfileIds = Array.from(new Set(checkedIds));
+        state.importLinkSelectedProfileId = state.importLinkSelectedProfileIds[0] || "";
+
         els.importPreviewBody.querySelectorAll(".import-profile-card").forEach((card) => {
-          const radio = card.querySelector('input[name="importProfile"]');
-          card.classList.toggle("selected", !!radio && radio.checked);
+          const checkbox = card.querySelector('input[name="importProfiles"]');
+          card.classList.toggle("selected", !!checkbox && checkbox.checked);
         });
+
+        if (els.importPreviewUseBtn) {
+          const profiles = Array.isArray(state.importLinkPreview && state.importLinkPreview.profiles)
+            ? state.importLinkPreview.profiles
+            : [];
+          const selectedCount = state.importLinkSelectedProfileIds.length;
+          els.importPreviewUseBtn.disabled = profiles.length <= 0 || selectedCount <= 0;
+          if (profiles.length <= 0) {
+            els.importPreviewUseBtn.textContent = "Ingen profiler";
+          } else if (selectedCount > 0) {
+            els.importPreviewUseBtn.textContent = `Vælg profiler (${selectedCount})`;
+          } else {
+            els.importPreviewUseBtn.textContent = "Vælg profiler";
+          }
+        }
+
         showStatus(els.importPreviewStatus, "");
       });
       els.importPreviewBody.addEventListener("click", (event) => {
