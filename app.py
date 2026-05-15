@@ -126,6 +126,9 @@ SMS_SETTING_ENABLED_KEY = "sms_gateway_enabled"
 SMS_SETTING_TOKEN_KEY = "sms_gateway_token"  # legacy plaintext key
 SMS_SETTING_TOKEN_ENC_KEY = "sms_gateway_token_enc"
 SMS_SETTING_SENDER_KEY = "sms_gateway_sender"
+MAKERWORLD_SETTING_USERNAME_KEY = "makerworld_username"
+MAKERWORLD_SETTING_PASSWORD_KEY = "makerworld_password"  # legacy plaintext key
+MAKERWORLD_SETTING_PASSWORD_ENC_KEY = "makerworld_password_enc"
 SMS_SENDER_MAX_LENGTH = 11
 SMS_VERIFICATION_TTL_SECONDS = 60
 SMS_ONBOARDING_ENABLED = False
@@ -9340,6 +9343,64 @@ def _load_sms_gateway_settings() -> dict[str, Any]:
     }
 
 
+def _makerworld_password_preview(password: str) -> str:
+    value = str(password or "").strip()
+    if not value:
+        return ""
+    return f"{value[:3]}............"
+
+
+def _load_makerworld_password() -> str:
+    enc = str(get_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, "") or "").strip()
+    if enc:
+        plain = _decrypt_sms_token(enc)
+        if plain:
+            return plain
+        # Older installs could store plaintext in the encrypted setting when
+        # SMS_TOKEN_ENCRYPTION_KEY was not configured yet. Migrate that forward
+        # once a valid key becomes available, but do not treat real Fernet
+        # ciphertext as plaintext if the key was changed.
+        if _sms_token_fernet() is not None and not _looks_like_fernet_token(enc):
+            encrypted = _encrypt_sms_token(enc)
+            if encrypted and encrypted != enc:
+                set_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, encrypted)
+                set_setting(MAKERWORLD_SETTING_PASSWORD_KEY, "")
+            return enc
+
+    legacy_plain = str(get_setting(MAKERWORLD_SETTING_PASSWORD_KEY, "") or "").strip()
+    if not legacy_plain:
+        return ""
+
+    # Auto-migrate gammel plaintext kodeord til krypteret felt, hvis krypteringsnøgle er sat.
+    if _sms_token_fernet() is not None:
+        encrypted = _encrypt_sms_token(legacy_plain)
+        if encrypted and encrypted != legacy_plain:
+            set_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, encrypted)
+            set_setting(MAKERWORLD_SETTING_PASSWORD_KEY, "")
+    return legacy_plain
+
+
+def _store_makerworld_password(password: str) -> None:
+    plain = str(password or "").strip()
+    encrypted = _encrypt_sms_token(plain)
+    set_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, encrypted)
+    # Nulstil legacy plaintext-felt.
+    set_setting(MAKERWORLD_SETTING_PASSWORD_KEY, "")
+
+
+def _load_makerworld_settings() -> dict[str, Any]:
+    username = str(get_setting(MAKERWORLD_SETTING_USERNAME_KEY, "") or "").strip()
+    password = _load_makerworld_password()
+    encryption_active = _sms_token_fernet() is not None
+    return {
+        "username": username,
+        "password": password,
+        "password_configured": bool(password),
+        "password_preview": _makerworld_password_preview(password),
+        "encryption_active": encryption_active,
+    }
+
+
 def _sms_gateway_msisdn(phone_e164: str) -> str:
     return re.sub(r"\D", "", str(phone_e164 or ""))
 
@@ -15340,6 +15401,91 @@ def api_settings_sms_test():
     if ok:
         return jsonify({"ok": True, "sent": True, "recipient": _sms_gateway_msisdn(recipient_e164)})
     return jsonify({"ok": False, "sent": False, "error": error_text or "Kunne ikke sende test-SMS"}), 400
+
+
+@app.route("/api/settings/makerworld", methods=["GET", "POST"])
+@login_required
+def api_settings_makerworld():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan se eller ændre MakerWorld login"}), 403
+
+    if request.method == "GET":
+        settings_data = _load_makerworld_settings()
+        return jsonify(
+            {
+                "ok": True,
+                "username": str(settings_data.get("username") or ""),
+                "password_configured": bool(settings_data.get("password_configured")),
+                "password_preview": str(settings_data.get("password_preview") or ""),
+                "encryption_active": bool(settings_data.get("encryption_active")),
+            }
+        )
+
+    body = request.get_json(silent=True) or {}
+    username = str(body.get("username") or "").strip()
+    incoming_password = str(body.get("password") or "").strip()
+
+    if not username:
+        return jsonify({"ok": False, "error": "Indtast MakerWorld brugernavn eller e-mail"}), 400
+
+    current_settings = _load_makerworld_settings()
+    current_password_preview = str(current_settings.get("password_preview") or "").strip()
+    if incoming_password and incoming_password == current_password_preview:
+        incoming_password = ""
+
+    set_setting(MAKERWORLD_SETTING_USERNAME_KEY, username)
+    if incoming_password:
+        _store_makerworld_password(incoming_password)
+
+    log_activity(
+        kind="settings",
+        action="makerworld-update",
+        message="MakerWorld login opdateret",
+        level="info",
+        actor=str(current_user.username or ""),
+        target="makerworld",
+    )
+
+    settings_data = _load_makerworld_settings()
+    return jsonify(
+        {
+            "ok": True,
+            "username": str(settings_data.get("username") or ""),
+            "password_configured": bool(settings_data.get("password_configured")),
+            "password_preview": str(settings_data.get("password_preview") or ""),
+            "encryption_active": bool(settings_data.get("encryption_active")),
+        }
+    )
+
+
+@app.route("/api/settings/makerworld/password", methods=["DELETE"])
+@login_required
+def api_settings_makerworld_password_reset():
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan nulstille MakerWorld kodeord"}), 403
+
+    set_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, "")
+    set_setting(MAKERWORLD_SETTING_PASSWORD_KEY, "")
+
+    log_activity(
+        kind="settings",
+        action="makerworld-password-reset",
+        message="MakerWorld kodeord nulstillet",
+        level="info",
+        actor=str(current_user.username or ""),
+        target="makerworld",
+    )
+
+    settings_data = _load_makerworld_settings()
+    return jsonify(
+        {
+            "ok": True,
+            "username": str(settings_data.get("username") or ""),
+            "password_configured": bool(settings_data.get("password_configured")),
+            "password_preview": str(settings_data.get("password_preview") or ""),
+            "encryption_active": bool(settings_data.get("encryption_active")),
+        }
+    )
 
 
 @app.route("/api/settings/dns/effective", methods=["GET"])

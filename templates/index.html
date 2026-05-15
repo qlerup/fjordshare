@@ -216,6 +216,7 @@
           <button class="tab-btn active" data-settings-tab="shares">Delinger</button>
           <button class="tab-btn" data-settings-tab="dns">DNS</button>
           <button class="tab-btn" data-settings-tab="users">Brugere</button>
+          <button class="tab-btn" data-settings-tab="makerworld">MakerWorld</button>
           <button class="tab-btn" data-settings-tab="sms">SMS</button>
           <button class="tab-btn" data-settings-tab="logs">Logs</button>
           <button class="tab-btn" data-settings-tab="slicer">Slicer</button>
@@ -225,6 +226,7 @@
             <option value="shares" selected>Delinger</option>
             <option value="dns">DNS</option>
             <option value="users">Brugere</option>
+            <option value="makerworld">MakerWorld</option>
             <option value="sms">SMS</option>
             <option value="logs">Logs</option>
             <option value="slicer">Slicer</option>
@@ -357,6 +359,30 @@
             <button id="smsSaveBtn" class="btn primary" type="button">Gem SMS</button>
           </div>
           <div id="smsStatus" class="status hidden"></div>
+        </div>
+      </div>
+
+      <div id="settings-panel-makerworld" class="settings-subpanel hidden">
+        <div class="panel">
+          <h3>MakerWorld login</h3>
+          <p class="hint">Gem login til MakerWorld, så FjordShare kan bruge det til importer/downloads i næste trin.</p>
+          <p class="hint">Sæt <code>SMS_TOKEN_ENCRYPTION_KEY</code> i miljøet for krypteret lagring af kodeord.</p>
+          <div class="form-grid">
+            <div>
+              <label for="makerworldUsernameInput">Brugernavn eller e-mail</label>
+              <input id="makerworldUsernameInput" class="input" type="text" autocomplete="username" placeholder="fx navn@domain.com">
+            </div>
+            <div>
+              <label for="makerworldPasswordInput">Kodeord</label>
+              <input id="makerworldPasswordInput" class="input" type="password" autocomplete="current-password" placeholder="Indsæt kodeord">
+              <p class="hint">Når kodeord er gemt, vises kun de første tegn. Klik i feltet for at skrive et nyt.</p>
+            </div>
+          </div>
+          <div class="toolbar end">
+            <button id="makerworldResetPasswordBtn" class="btn danger" type="button">Nulstil kodeord</button>
+            <button id="makerworldSaveBtn" class="btn primary" type="button">Gem MakerWorld login</button>
+          </div>
+          <div id="makerworldStatus" class="status hidden"></div>
         </div>
       </div>
 

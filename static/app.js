@@ -135,6 +135,9 @@
     smsGatewayTokenConfigured: false,
     smsGatewayTokenPreview: "",
     smsGatewayTokenPreviewActive: false,
+    makerworldPasswordConfigured: false,
+    makerworldPasswordPreview: "",
+    makerworldPasswordPreviewActive: false,
     appOnboardingSeenPersisted: false,
     appOnboardingEnabled: true,
     appOnboardingPanelKey: "navigation",
@@ -197,6 +200,7 @@
     settingsPanelShares: document.getElementById("settings-panel-shares"),
     settingsPanelDns: document.getElementById("settings-panel-dns"),
     settingsPanelUsers: document.getElementById("settings-panel-users"),
+    settingsPanelMakerworld: document.getElementById("settings-panel-makerworld"),
     settingsPanelSms: document.getElementById("settings-panel-sms"),
     settingsPanelLogs: document.getElementById("settings-panel-logs"),
     settingsPanelSlicer: document.getElementById("settings-panel-slicer"),
@@ -456,6 +460,11 @@
     smsResetTokenBtn: document.getElementById("smsResetTokenBtn"),
     smsSaveBtn: document.getElementById("smsSaveBtn"),
     smsStatus: document.getElementById("smsStatus"),
+    makerworldUsernameInput: document.getElementById("makerworldUsernameInput"),
+    makerworldPasswordInput: document.getElementById("makerworldPasswordInput"),
+    makerworldResetPasswordBtn: document.getElementById("makerworldResetPasswordBtn"),
+    makerworldSaveBtn: document.getElementById("makerworldSaveBtn"),
+    makerworldStatus: document.getElementById("makerworldStatus"),
     openCreateUserModalBtn: document.getElementById("openCreateUserModalBtn"),
     createUserModal: document.getElementById("createUserModal"),
     createUserForm: document.getElementById("createUserForm"),
@@ -2585,6 +2594,7 @@
       shares: els.settingsPanelShares,
       dns: els.settingsPanelDns,
       users: els.settingsPanelUsers,
+      makerworld: els.settingsPanelMakerworld,
       sms: els.settingsPanelSms,
       logs: els.settingsPanelLogs,
       slicer: els.settingsPanelSlicer,
@@ -10638,6 +10648,134 @@
     }
   }
 
+  function setMakerworldSettingsFormState(options = {}) {
+    const busy = !!(options && options.busy);
+    const action = String((options && options.action) || "");
+    if (els.makerworldUsernameInput) els.makerworldUsernameInput.disabled = busy;
+    if (els.makerworldPasswordInput) els.makerworldPasswordInput.disabled = busy;
+    if (els.makerworldResetPasswordBtn) {
+      els.makerworldResetPasswordBtn.disabled = busy;
+      els.makerworldResetPasswordBtn.textContent = busy && action === "reset" ? "Nulstiller..." : "Nulstil kodeord";
+    }
+    if (els.makerworldSaveBtn) {
+      els.makerworldSaveBtn.disabled = busy;
+      els.makerworldSaveBtn.textContent = busy && action === "save" ? "Gemmer..." : "Gem MakerWorld login";
+    }
+  }
+
+  function showMakerworldPasswordPreview() {
+    if (!els.makerworldPasswordInput) return;
+    if (!state.makerworldPasswordConfigured || !state.makerworldPasswordPreview) {
+      state.makerworldPasswordPreviewActive = false;
+      els.makerworldPasswordInput.type = "password";
+      els.makerworldPasswordInput.value = "";
+      els.makerworldPasswordInput.placeholder = "Indsæt kodeord";
+      return;
+    }
+    state.makerworldPasswordPreviewActive = true;
+    els.makerworldPasswordInput.type = "text";
+    els.makerworldPasswordInput.value = state.makerworldPasswordPreview;
+    els.makerworldPasswordInput.placeholder = "Skriv nyt kodeord ved ændring";
+  }
+
+  function beginMakerworldPasswordEdit() {
+    if (!els.makerworldPasswordInput || !state.makerworldPasswordPreviewActive) return;
+    state.makerworldPasswordPreviewActive = false;
+    els.makerworldPasswordInput.type = "password";
+    els.makerworldPasswordInput.value = "";
+    els.makerworldPasswordInput.placeholder = "Skriv nyt kodeord";
+  }
+
+  function restoreMakerworldPasswordPreviewIfEmpty() {
+    if (!els.makerworldPasswordInput) return;
+    const value = String(els.makerworldPasswordInput.value || "").trim();
+    if (!value && state.makerworldPasswordConfigured) {
+      showMakerworldPasswordPreview();
+    }
+  }
+
+  function applyMakerworldSettings(data) {
+    const username = String((data && data.username) || "").trim();
+    const passwordConfigured = !!(data && data.password_configured);
+    const passwordPreview = String((data && data.password_preview) || "");
+
+    if (els.makerworldUsernameInput) els.makerworldUsernameInput.value = username;
+    state.makerworldPasswordConfigured = passwordConfigured;
+    state.makerworldPasswordPreview = passwordPreview;
+    showMakerworldPasswordPreview();
+  }
+
+  async function loadMakerworldSettings() {
+    if (state.role !== "admin") return;
+    try {
+      setMakerworldSettingsFormState({ busy: true });
+      const data = await api("/api/settings/makerworld");
+      applyMakerworldSettings(data || {});
+      if (!(data && data.encryption_active)) {
+        showStatus(els.makerworldStatus, "OBS: Sæt SMS_TOKEN_ENCRYPTION_KEY for krypteret lagring af kodeord.", "error");
+      } else {
+        showStatus(els.makerworldStatus, "");
+      }
+    } catch (err) {
+      showStatus(els.makerworldStatus, err.message || "Kunne ikke hente MakerWorld indstillinger", "error");
+    } finally {
+      setMakerworldSettingsFormState({ busy: false });
+    }
+  }
+
+  async function saveMakerworldSettings() {
+    if (state.role !== "admin") return;
+    const username = String((els.makerworldUsernameInput && els.makerworldUsernameInput.value) || "").trim();
+    const rawPassword = String((els.makerworldPasswordInput && els.makerworldPasswordInput.value) || "").trim();
+    const password = state.makerworldPasswordPreviewActive && rawPassword === state.makerworldPasswordPreview
+      ? ""
+      : rawPassword;
+
+    if (!username) {
+      showStatus(els.makerworldStatus, "Indtast MakerWorld brugernavn eller e-mail.", "error");
+      if (els.makerworldUsernameInput) els.makerworldUsernameInput.focus();
+      return;
+    }
+
+    try {
+      setMakerworldSettingsFormState({ busy: true, action: "save" });
+      const data = await api("/api/settings/makerworld", {
+        method: "POST",
+        body: { username, password },
+      });
+      applyMakerworldSettings(data || {});
+      const secure = !!(data && data.encryption_active);
+      showStatus(
+        els.makerworldStatus,
+        secure
+          ? "MakerWorld login gemt. Kodeord vises maskeret."
+          : "MakerWorld login gemt, men kodeord er ikke krypteret uden SMS_TOKEN_ENCRYPTION_KEY.",
+        secure ? "ok" : "error",
+      );
+    } catch (err) {
+      showStatus(els.makerworldStatus, err.message || "Kunne ikke gemme MakerWorld login", "error");
+    } finally {
+      setMakerworldSettingsFormState({ busy: false });
+    }
+  }
+
+  async function resetMakerworldPassword() {
+    if (state.role !== "admin") return;
+    const ok = window.confirm("Vil du nulstille MakerWorld kodeord? Du kan gemme et nyt bagefter.");
+    if (!ok) return;
+    try {
+      setMakerworldSettingsFormState({ busy: true, action: "reset" });
+      const data = await api("/api/settings/makerworld/password", { method: "DELETE" });
+      applyMakerworldSettings(data || {});
+      showStatus(els.makerworldStatus, "MakerWorld kodeord er nulstillet. Gem et nyt kodeord for login.", "ok");
+      if (els.makerworldPasswordInput) els.makerworldPasswordInput.focus();
+    } catch (err) {
+      showStatus(els.makerworldStatus, err.message || "Kunne ikke nulstille MakerWorld kodeord", "error");
+    } finally {
+      setMakerworldSettingsFormState({ busy: false });
+    }
+  }
+
   async function loadUsers() {
     if (state.role !== "admin" || !els.usersTableBody) return;
     const data = await api("/api/admin/users");
@@ -14102,6 +14240,7 @@
           if (state.currentSettingsTab === "shares") await loadShares();
           if (state.currentSettingsTab === "dns") await loadDns();
           if (state.currentSettingsTab === "users") await loadUsers();
+          if (state.currentSettingsTab === "makerworld") await loadMakerworldSettings();
           if (state.currentSettingsTab === "sms") await loadSmsSettings();
           if (state.currentSettingsTab === "logs") await loadAdminLogs();
           if (state.currentSettingsTab === "slicer") await loadSlicerSettings();
@@ -14135,6 +14274,7 @@
         if (tab === "shares") await loadShares();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
+        if (tab === "makerworld") await loadMakerworldSettings();
         if (tab === "sms") await loadSmsSettings();
         if (tab === "logs") await loadAdminLogs();
         if (tab === "slicer") await loadSlicerSettings();
@@ -14149,6 +14289,7 @@
         if (tab === "shares") await loadShares();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
+        if (tab === "makerworld") await loadMakerworldSettings();
         if (tab === "sms") await loadSmsSettings();
         if (tab === "logs") await loadAdminLogs();
         if (tab === "slicer") await loadSlicerSettings();
@@ -15719,6 +15860,32 @@
     }
     if (els.smsTestRecipientInput) {
       els.smsTestRecipientInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
+    }
+
+    if (els.makerworldSaveBtn) {
+      els.makerworldSaveBtn.addEventListener("click", () => {
+        saveMakerworldSettings().catch((err) => {
+          showStatus(els.makerworldStatus, err.message || "Kunne ikke gemme MakerWorld login", "error");
+        });
+      });
+    }
+    if (els.makerworldResetPasswordBtn) {
+      els.makerworldResetPasswordBtn.addEventListener("click", () => {
+        resetMakerworldPassword().catch((err) => {
+          showStatus(els.makerworldStatus, err.message || "Kunne ikke nulstille MakerWorld kodeord", "error");
+        });
+      });
+    }
+    if (els.makerworldUsernameInput) {
+      els.makerworldUsernameInput.addEventListener("input", () => showStatus(els.makerworldStatus, ""));
+    }
+    if (els.makerworldPasswordInput) {
+      els.makerworldPasswordInput.addEventListener("focus", beginMakerworldPasswordEdit);
+      els.makerworldPasswordInput.addEventListener("input", () => {
+        state.makerworldPasswordPreviewActive = false;
+        showStatus(els.makerworldStatus, "");
+      });
+      els.makerworldPasswordInput.addEventListener("blur", restoreMakerworldPasswordPreviewIfEmpty);
     }
 
     if (els.openCreateUserModalBtn) {
