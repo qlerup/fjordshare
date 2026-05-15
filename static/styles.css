@@ -3671,6 +3671,25 @@ input[type="checkbox"] {
   padding: clamp(12px, 1.1vw, 18px);
 }
 
+.app-onboarding-head {
+  justify-content: space-between;
+}
+
+.app-onboarding-head h3 {
+  margin: 0;
+}
+
+.app-onboarding-lock-logout {
+  display: none;
+  text-decoration: none;
+}
+
+.app-onboarding-required .app-onboarding-lock-logout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .app-onboarding-layout {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
