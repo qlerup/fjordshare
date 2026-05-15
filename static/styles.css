@@ -2669,6 +2669,18 @@ input[type="checkbox"] {
   transform: translateY(0);
 }
 
+@media (hover: none), (pointer: coarse), (max-width: 760px) {
+  .print-ready-project-file-download {
+    cursor: default;
+    pointer-events: none;
+  }
+
+  .print-ready-project-file-download::after {
+    content: none;
+    display: none;
+  }
+}
+
 .print-ready-project-file-name {
   overflow: hidden;
   text-overflow: ellipsis;

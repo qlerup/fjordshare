@@ -599,6 +599,35 @@
     return !!(window.matchMedia && window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 1001px)").matches);
   }
 
+  function isTouchOrNarrowViewport() {
+    try {
+      return !!(window.matchMedia && window.matchMedia("(pointer: coarse), (max-width: 760px)").matches);
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  function triggerHiddenDownload(url) {
+    const safeUrl = String(url || "").trim();
+    if (!safeUrl || safeUrl === "#") return false;
+
+    const iframe = document.createElement("iframe");
+    iframe.src = safeUrl;
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.tabIndex = -1;
+    iframe.style.position = "fixed";
+    iframe.style.left = "-9999px";
+    iframe.style.width = "1px";
+    iframe.style.height = "1px";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+    document.body.appendChild(iframe);
+    window.setTimeout(() => {
+      iframe.remove();
+    }, 60000);
+    return true;
+  }
+
   function bindHoverMarqueeCards(rootEl, cardSelector, lineSelector) {
     if (!rootEl) return;
     const cards = Array.from(rootEl.querySelectorAll(cardSelector));
@@ -9984,7 +10013,7 @@
     const rows = files.map((file) => `
       <tr class="print-ready-file-row">
         <td>${esc(file.display_path || file.folder_path || "-")}</td>
-        <td><a href="${esc(file.download_url || "#")}" target="_blank" rel="noopener">${esc(file.filename || "-")}</a></td>
+        <td><a class="print-ready-file-download-link" href="${esc(file.download_url || "#")}" download="${esc(file.filename || "")}" data-print-ready-file-download="1">${esc(file.filename || "-")}</a></td>
         <td>${printReadyInfoHtml(file)}</td>
         <td>${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : `<span class="print-ready-status-muted">Ikke printet</span>`}</td>
         <td>${Number(file.quantity || 1)}</td>
@@ -10161,14 +10190,27 @@
   }
 
   async function onPrintReadyAdminClick(event) {
-    const btn = event.target.closest("[data-print-ready-action]");
+    const target = event.target && event.target.closest ? event.target : null;
+    const statusEl = els.finishedProjectsList && target && els.finishedProjectsList.contains(target)
+      ? els.finishedProjectsStatus
+      : els.printReadyStatus;
+    const downloadLink = target ? target.closest("[data-print-ready-file-download]") : null;
+    if (downloadLink) {
+      if (isTouchOrNarrowViewport()) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (triggerHiddenDownload(downloadLink.href)) {
+          showStatus(statusEl, "Downloader fil...", "ok");
+        }
+      }
+      return;
+    }
+
+    const btn = target ? target.closest("[data-print-ready-action]") : null;
     if (!btn) return;
     const action = String(btn.dataset.printReadyAction || "");
     const id = Number(btn.dataset.id || 0);
     if (!id) return;
-    const statusEl = els.finishedProjectsList && els.finishedProjectsList.contains(btn)
-      ? els.finishedProjectsStatus
-      : els.printReadyStatus;
 
     if (action === "resend-project") {
       const ok = window.confirm("Vil du sende dette projekt til print igen?");
