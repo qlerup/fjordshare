@@ -15689,45 +15689,125 @@
       });
     }
     if (els.importPreviewUseBtn) {
-      els.importPreviewUseBtn.addEventListener("click", () => {
-        const selectedProfiles = importSelectedProfiles(state.importLinkPreview || {});
+      els.importPreviewUseBtn.addEventListener("click", async () => {
+        const preview = state.importLinkPreview || {};
+        const selectedProfiles = importSelectedProfiles(preview);
         if (!selectedProfiles.length) {
           showStatus(els.importPreviewStatus, "Vælg mindst en printprofil først.", "error");
           return;
         }
 
-        const downloadUrls = importSelectedProfileDownloadUrls(state.importLinkPreview || {});
-        if (!downloadUrls.length) {
-          showStatus(els.importPreviewStatus, "Download er ikke understøttet for den valgte kilde/profil.", "error");
+        const selectedProfileIds = selectedProfiles
+          .map((profile) => String((profile && profile.id) || "").trim())
+          .filter(Boolean);
+        if (!selectedProfileIds.length) {
+          showStatus(els.importPreviewStatus, "Vælg mindst en gyldig printprofil.", "error");
           return;
         }
 
-        let started = 0;
-        downloadUrls.forEach((url) => {
-          if (triggerTopLevelDownload(url)) started += 1;
-        });
+        const sourceUrl = String((preview && preview.url) || "").trim();
+        const folder = importLinkTargetFolder();
+        if (!sourceUrl) {
+          showStatus(els.importPreviewStatus, "Mangler kilde-link til import.", "error");
+          return;
+        }
+        if (!folder) {
+          showStatus(els.importPreviewStatus, "Vælg en mappe før import.", "error");
+          return;
+        }
 
-        const source = String((state.importLinkPreview && state.importLinkPreview.source_label) || "MakerWorld").trim() || "MakerWorld";
+        if (els.importPreviewUseBtn.dataset.busy === "1") return;
+        els.importPreviewUseBtn.dataset.busy = "1";
+        els.importPreviewUseBtn.disabled = true;
+        els.importPreviewUseBtn.textContent = "Henter...";
+
         const selectedCount = selectedProfiles.length;
-        const plannedCount = downloadUrls.length;
+        const source = String((preview && preview.source_label) || "MakerWorld").trim() || "MakerWorld";
         showStatus(
           els.importPreviewStatus,
-          `Starter download af ${plannedCount} valgt${plannedCount === 1 ? "" : "e"} profil${plannedCount === 1 ? "" : "er"} fra ${source}. Hvis der åbner en JSON-side med felterne 'name' og 'url', så åbnes selve filen via værdien i 'url'.`,
+          `Henter ${selectedCount} valgt${selectedCount === 1 ? "" : "e"} profil${selectedCount === 1 ? "" : "er"} fra ${source} til den valgte mappe...`,
           "ok"
         );
 
-        if (started <= 0) {
-          showStatus(
-            els.importPreviewStatus,
-            "Browseren blokerede åbning af download-faner. Tillad popups for siden og prøv igen.",
-            "error"
-          );
-        } else if (started < plannedCount) {
-          showStatus(
-            els.importPreviewStatus,
-            `Download delvist startet (${started}/${plannedCount}) for ${selectedCount} valgte profiler. Tillad flere popups/faner, og brug evt. 'url'-feltet på JSON-siden for at hente filen direkte.`,
-            "ok"
-          );
+        try {
+          const data = await api("/api/import-link/commit", {
+            method: "POST",
+            body: {
+              url: sourceUrl,
+              folder,
+              selected_profile_ids: selectedProfileIds,
+            },
+          });
+
+          const importedCount = Math.max(0, Number((data && data.imported_count) || 0));
+          const importErrors = Array.isArray(data && data.errors) ? data.errors.map((e) => String(e || "").trim()).filter(Boolean) : [];
+
+          if (importedCount <= 0) {
+            showStatus(els.importPreviewStatus, "Ingen filer blev importeret fra MakerWorld.", "error");
+            return;
+          }
+
+          if (importErrors.length) {
+            showStatus(
+              els.importPreviewStatus,
+              `Importeret ${importedCount} fil${importedCount === 1 ? "" : "er"}, men ${importErrors.length} profil${importErrors.length === 1 ? "" : "er"} fejlede.`,
+              "ok"
+            );
+          } else {
+            showStatus(
+              els.importPreviewStatus,
+              `Importeret ${importedCount} fil${importedCount === 1 ? "" : "er"} fra ${source} til mappen.`,
+              "ok"
+            );
+          }
+
+          await loadFiles();
+        } catch (err) {
+          const errData = err && err.data && typeof err.data === "object" ? err.data : {};
+          const details = Array.isArray(errData.details)
+            ? errData.details.map((entry) => String(entry || "").trim()).filter(Boolean)
+            : [];
+
+          if (errData && errData.requires_browser_download) {
+            const downloadUrls = importSelectedProfileDownloadUrls(preview);
+            let started = 0;
+            downloadUrls.forEach((url) => {
+              if (triggerTopLevelDownload(url)) started += 1;
+            });
+
+            if (started > 0) {
+              const detailPrefix = details.length ? `${details[0]}. ` : "";
+              showStatus(
+                els.importPreviewStatus,
+                `${detailPrefix}Server-import blev blokeret, så browser-download blev startet for ${started}/${downloadUrls.length} profiler.`,
+                "ok"
+              );
+            } else {
+              const detailText = details.length ? ` ${details[0]}` : "";
+              showStatus(
+                els.importPreviewStatus,
+                `Server-import fejlede, og browser-download kunne ikke startes.${detailText}`,
+                "error"
+              );
+            }
+          } else {
+            const detailText = details.length ? ` (${details.slice(0, 2).join(" | ")})` : "";
+            showStatus(els.importPreviewStatus, `${err.message || "Kunne ikke importere valgte profiler."}${detailText}`, "error");
+          }
+        } finally {
+          delete els.importPreviewUseBtn.dataset.busy;
+          const profiles = Array.isArray(state.importLinkPreview && state.importLinkPreview.profiles)
+            ? state.importLinkPreview.profiles
+            : [];
+          const currentSelectedCount = state.importLinkSelectedProfileIds.length;
+          els.importPreviewUseBtn.disabled = profiles.length <= 0 || currentSelectedCount <= 0;
+          if (profiles.length <= 0) {
+            els.importPreviewUseBtn.textContent = "Ingen profiler";
+          } else if (currentSelectedCount > 0) {
+            els.importPreviewUseBtn.textContent = `Download profiler (${currentSelectedCount})`;
+          } else {
+            els.importPreviewUseBtn.textContent = "Download profiler";
+          }
         }
       });
     }

@@ -3,6 +3,7 @@
 import base64
 import configparser
 import hashlib
+import http.cookiejar
 import html
 import io
 import json
@@ -12137,6 +12138,14 @@ def share_folder_allowed(folder_path: str, allowed_folders: list[str]) -> bool:
 
 MAKERWORLD_DESIGN_API = "https://api.bambulab.com/v1/design-service/design/{design_id}?trafficSource=browse&visitHistory=false"
 MAKERWORLD_INSTANCE_DOWNLOAD_API = "https://makerworld.com/api/v1/design-service/instance/{instance_id}/f3mf?type=download&fileType="
+MAKERWORLD_INSTANCE_FILE_API = "https://makerworld.com/api/v1/design-service/instance/{instance_id}/f3mf"
+MAKERWORLD_BAMBU_SIGNIN_PAGE_URL = "https://bambulab.com/en/sign-in"
+MAKERWORLD_BAMBU_SIGNIN_API_URL = "https://bambulab.com/api/sign-in/form"
+MAKERWORLD_HTTP_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 MAKERWORLD_LICENSE_LABELS = {
     "BY": "Creative Commons Attribution",
     "BY-SA": "Creative Commons Attribution-ShareAlike",
@@ -12340,6 +12349,292 @@ def makerworld_preview_from_url(raw_url: str) -> dict[str, Any]:
         "categories": _unique_strings(categories, limit=6),
         "profiles": profiles,
     }
+
+
+def _makerworld_cloudflare_blocked(payload_text: str) -> bool:
+    text = str(payload_text or "").strip().lower()
+    if not text:
+        return False
+    return "just a moment" in text and "cloudflare" in text
+
+
+def _makerworld_json_request(
+    url: str,
+    opener: Optional[Any] = None,
+    method: str = "GET",
+    json_payload: Optional[dict[str, Any]] = None,
+    headers: Optional[dict[str, str]] = None,
+    timeout: int = 35,
+) -> dict[str, Any]:
+    req_headers: dict[str, str] = {
+        "Accept": "application/json, text/plain, */*",
+        "User-Agent": MAKERWORLD_HTTP_USER_AGENT,
+    }
+    if headers:
+        req_headers.update(headers)
+
+    data_bytes: Optional[bytes] = None
+    if json_payload is not None:
+        req_headers["Content-Type"] = "application/json"
+        data_bytes = json.dumps(json_payload, ensure_ascii=False).encode("utf-8")
+
+    req = urllib_request.Request(url, data=data_bytes, headers=req_headers, method=str(method or "GET").upper())
+    open_fn = opener.open if opener is not None else urllib_request.urlopen
+
+    try:
+        with open_fn(req, timeout=timeout) as resp:
+            raw = resp.read(2_000_000)
+            text = raw.decode("utf-8", "ignore")
+            content_type = str(resp.headers.get("content-type") or "").lower()
+            if "text/html" in content_type and _makerworld_cloudflare_blocked(text):
+                raise ValueError("MakerWorld login blev blokeret af Cloudflare challenge på serveren.")
+
+            if not text:
+                return {}
+
+            try:
+                data = json.loads(text)
+            except Exception as exc:
+                raise ValueError("Ugyldigt svar fra MakerWorld/Bambu API.") from exc
+
+            if not isinstance(data, dict):
+                raise ValueError("Ugyldigt svar fra MakerWorld/Bambu API.")
+
+            code = data.get("code")
+            if code not in (None, 0):
+                err = str(data.get("error") or data.get("message") or "").strip()
+                raise ValueError(err or "MakerWorld/Bambu returnerede en fejl.")
+
+            return data
+    except urllib_error.HTTPError as exc:
+        body_text = ""
+        try:
+            body_text = exc.read(2_000_000).decode("utf-8", "ignore")
+        except Exception:
+            body_text = ""
+
+        if int(exc.code or 0) == 403 and _makerworld_cloudflare_blocked(body_text):
+            raise ValueError("MakerWorld login blev blokeret af Cloudflare challenge på serveren.") from exc
+
+        err = ""
+        if body_text:
+            try:
+                body_data = json.loads(body_text)
+                if isinstance(body_data, dict):
+                    err = str(body_data.get("error") or body_data.get("message") or "").strip()
+            except Exception:
+                err = ""
+        if not err:
+            err = f"MakerWorld/Bambu svarede med HTTP {int(exc.code or 0)}."
+        raise ValueError(err) from exc
+    except urllib_error.URLError as exc:
+        raise ValueError("Kunne ikke kontakte MakerWorld/Bambu fra serveren.") from exc
+
+
+def _makerworld_authenticated_opener(username: str, password: str) -> Any:
+    account = str(username or "").strip()
+    secret = str(password or "").strip()
+    if not account or not secret:
+        raise ValueError("Gem MakerWorld brugernavn og kodeord først.")
+
+    cookie_jar = http.cookiejar.CookieJar()
+    opener = urllib_request.build_opener(urllib_request.HTTPCookieProcessor(cookie_jar))
+
+    warmup_req = urllib_request.Request(
+        MAKERWORLD_BAMBU_SIGNIN_PAGE_URL,
+        headers={
+            "User-Agent": MAKERWORLD_HTTP_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+        method="GET",
+    )
+    try:
+        with opener.open(warmup_req, timeout=25) as resp:
+            text = resp.read(300_000).decode("utf-8", "ignore")
+            if _makerworld_cloudflare_blocked(text):
+                raise ValueError("Bambu login-side blev blokeret af Cloudflare challenge på serveren.")
+    except urllib_error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read(500_000).decode("utf-8", "ignore")
+        except Exception:
+            body = ""
+        if int(exc.code or 0) == 403 and _makerworld_cloudflare_blocked(body):
+            raise ValueError("Bambu login-side blev blokeret af Cloudflare challenge på serveren.") from exc
+
+    consent_body = {
+        "consents": [
+            {
+                "consent_type": "useragreement",
+                "is_consent": True,
+                "consent_version": "v4.0.0",
+                "consent_content": "User Agreement",
+            },
+            {
+                "consent_type": "privacyPolicy",
+                "is_consent": True,
+                "consent_version": "v4.0.0",
+                "consent_content": "Privacy Policy",
+            },
+        ]
+    }
+
+    _makerworld_json_request(
+        MAKERWORLD_BAMBU_SIGNIN_API_URL,
+        opener=opener,
+        method="POST",
+        json_payload={
+            "account": account,
+            "password": secret,
+            "consentBody": json.dumps(consent_body, ensure_ascii=False),
+        },
+        headers={
+            "Origin": "https://bambulab.com",
+            "Referer": "https://bambulab.com/en/sign-in",
+            "X-BBL-Webview-Kind": "native",
+        },
+        timeout=35,
+    )
+    return opener
+
+
+def _makerworld_fetch_instance_download_payload(instance_id: int, opener: Any, referer_url: str = "") -> dict[str, Any]:
+    instance = int(instance_id or 0)
+    if instance <= 0:
+        raise ValueError("Ugyldigt MakerWorld profile-id.")
+
+    api_url = MAKERWORLD_INSTANCE_FILE_API.format(instance_id=instance)
+    query = urllib_parse.urlencode({"type": "download", "fileType": ""})
+    full_url = f"{api_url}?{query}"
+
+    return _makerworld_json_request(
+        full_url,
+        opener=opener,
+        method="GET",
+        headers={
+            "Origin": "https://makerworld.com",
+            "Referer": str(referer_url or "https://makerworld.com/en").strip() or "https://makerworld.com/en",
+        },
+        timeout=35,
+    )
+
+
+def _makerworld_extract_signed_download(payload: dict[str, Any]) -> tuple[str, str]:
+    data = payload if isinstance(payload, dict) else {}
+    nested_data = data.get("data") if isinstance(data.get("data"), dict) else {}
+    f3mf_obj = data.get("f3mf") if isinstance(data.get("f3mf"), dict) else {}
+    nested_f3mf = nested_data.get("f3mf") if isinstance(nested_data.get("f3mf"), dict) else {}
+
+    candidates = [
+        (data.get("url"), data.get("name")),
+        (f3mf_obj.get("url"), f3mf_obj.get("name") or data.get("name")),
+        (nested_data.get("url"), nested_data.get("name") or data.get("name")),
+        (nested_f3mf.get("url"), nested_f3mf.get("name") or nested_data.get("name") or data.get("name")),
+    ]
+
+    for candidate_url, candidate_name in candidates:
+        download_url = str(candidate_url or "").strip()
+        if not download_url:
+            continue
+        return download_url, str(candidate_name or "").strip()
+
+    raise ValueError("MakerWorld returnerede ingen fil-URL til download.")
+
+
+def _makerworld_safe_download_name(name: str, signed_url: str, instance_id: int, fallback_title: str = "") -> str:
+    candidates = [
+        str(name or "").strip(),
+        Path(urllib_parse.urlparse(str(signed_url or "").strip()).path).name,
+        str(fallback_title or "").strip(),
+    ]
+    filename = ""
+    for value in candidates:
+        safe = sanitize_filename(value)
+        if safe:
+            filename = safe
+            break
+
+    if not filename:
+        filename = f"makerworld-{int(instance_id or 0)}.3mf"
+
+    if not Path(filename).suffix:
+        filename = f"{filename}.3mf"
+
+    return sanitize_filename(filename)
+
+
+def _makerworld_download_signed_file(signed_url: str, target_path: Path, timeout: int = 180) -> None:
+    url = str(signed_url or "").strip()
+    if not url:
+        raise ValueError("MakerWorld signerede fil-URL mangler.")
+
+    req = urllib_request.Request(
+        url,
+        headers={
+            "Accept": "*/*",
+            "User-Agent": MAKERWORLD_HTTP_USER_AGENT,
+            "Referer": "https://makerworld.com/",
+        },
+        method="GET",
+    )
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    with urllib_request.urlopen(req, timeout=timeout) as resp:
+        content_type = str(resp.headers.get("content-type") or "").lower()
+        if "application/json" in content_type or content_type.startswith("text/"):
+            body = resp.read(500_000).decode("utf-8", "ignore")
+            err = ""
+            if body:
+                try:
+                    data = json.loads(body)
+                    if isinstance(data, dict):
+                        err = str(data.get("error") or data.get("message") or body).strip()
+                except Exception:
+                    err = body.strip()
+            raise ValueError(err or "MakerWorld returnerede ikke en binær fil til download.")
+
+        with target_path.open("wb") as out_file:
+            shutil.copyfileobj(resp, out_file, length=1024 * 1024)
+
+    if not target_path.exists() or not target_path.is_file() or int(target_path.stat().st_size) <= 0:
+        raise ValueError("MakerWorld fil-download gav tom fil.")
+
+
+def _makerworld_import_instance_to_folder(
+    instance_id: int,
+    opener: Any,
+    folder_path: str,
+    uploaded_by: str,
+    referer_url: str = "",
+    fallback_title: str = "",
+) -> sqlite3.Row:
+    payload = _makerworld_fetch_instance_download_payload(instance_id, opener=opener, referer_url=referer_url)
+    signed_url, suggested_name = _makerworld_extract_signed_download(payload)
+    filename = _makerworld_safe_download_name(suggested_name, signed_url, instance_id, fallback_title=fallback_title)
+
+    if not _is_allowed_primary_3d_upload(filename):
+        raise ValueError(_unsupported_primary_3d_upload_error(filename))
+
+    suffix = str(Path(filename).suffix or ".3mf").lower()
+    tmp_path = (TUS_TMP_DIR / f"makerworld-import-{int(instance_id)}-{secrets.token_hex(8)}{suffix}").resolve()
+    if not _is_relative_to(TUS_TMP_DIR, tmp_path):
+        raise ValueError("Ugyldig intern download-sti.")
+
+    try:
+        _makerworld_download_signed_file(signed_url, tmp_path)
+        return commit_uploaded_file(
+            source_path=tmp_path,
+            folder_path=folder_path,
+            original_name=filename,
+            uploaded_by=str(uploaded_by or ""),
+            upload_client_id=None,
+        )
+    finally:
+        try:
+            if tmp_path.exists() and tmp_path.is_file():
+                tmp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def get_share_folders(conn: sqlite3.Connection, share_id: int, fallback_folder: str) -> list[str]:
@@ -17612,6 +17907,143 @@ def api_import_link_preview():
         return jsonify({"ok": False, "error": f"Kunne ikke hente link-oplysninger: {exc}"}), 500
 
     return jsonify({"ok": True, "preview": preview})
+
+
+@app.route("/api/import-link/commit", methods=["POST"])
+@login_required
+def api_import_link_commit():
+    body = request.get_json(silent=True) or {}
+    raw_url = str(body.get("url") or "").strip()
+    folder = normalize_folder_path(str(body.get("folder") or ""))
+    selected_raw = body.get("selected_profile_ids")
+
+    if not raw_url:
+        return jsonify({"ok": False, "error": "Indsæt et link først."}), 400
+    if not folder:
+        return jsonify({"ok": False, "error": "Vælg en mappe før import."}), 400
+
+    selected_ids: list[str] = []
+    seen_ids: set[str] = set()
+    if isinstance(selected_raw, list):
+        for value in selected_raw:
+            profile_id = str(value or "").strip()
+            if not profile_id or profile_id in seen_ids:
+                continue
+            seen_ids.add(profile_id)
+            selected_ids.append(profile_id)
+    if not selected_ids:
+        return jsonify({"ok": False, "error": "Vælg mindst en printprofil først."}), 400
+
+    if folder:
+        if not permission_allows(permission_for_user_folder(current_user, folder), "upload"):
+            return jsonify({"ok": False, "error": "Ingen upload-adgang til valgt mappe"}), 403
+        if not folder_allows_upload_target(folder, allow_users_subfolders=current_user.is_admin):
+            return jsonify({"ok": False, "error": "Upload er ikke tilladt i denne mappe."}), 403
+
+    try:
+        parsed = urllib_parse.urlparse(raw_url)
+        host = parsed.netloc.lower().split(":")[0]
+        if host not in {"makerworld.com", "www.makerworld.com"}:
+            return jsonify({"ok": False, "error": "Denne link-kilde er ikke understøttet endnu."}), 400
+
+        preview = makerworld_preview_from_url(raw_url)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke hente link-oplysninger: {exc}"}), 500
+
+    profiles = preview.get("profiles") if isinstance(preview.get("profiles"), list) else []
+    profile_map: dict[str, dict[str, Any]] = {}
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        profile_id = str(profile.get("id") or "").strip()
+        if not profile_id:
+            continue
+        profile_map[profile_id] = profile
+
+    target_profile_ids = [profile_id for profile_id in selected_ids if profile_id in profile_map]
+    if not target_profile_ids:
+        return jsonify({"ok": False, "error": "Ingen gyldige printprofiler valgt."}), 400
+
+    makerworld_settings = _load_makerworld_settings()
+    username = str(makerworld_settings.get("username") or "").strip()
+    password = str(makerworld_settings.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({
+            "ok": False,
+            "error": "Gem MakerWorld login i indstillinger først.",
+            "requires_browser_download": True,
+        }), 400
+
+    try:
+        opener = _makerworld_authenticated_opener(username, password)
+    except Exception as exc:
+        err = str(exc) or "Kunne ikke logge ind på MakerWorld fra serveren."
+        return jsonify(
+            {
+                "ok": False,
+                "error": err,
+                "requires_browser_download": True,
+            }
+        ), 502
+
+    imported_rows: list[sqlite3.Row] = []
+    errors: list[str] = []
+    actor = str(current_user.username or "")
+    for profile_id in target_profile_ids:
+        profile = profile_map.get(profile_id) or {}
+        instance_id = int(profile.get("id") or 0)
+        profile_title = str(profile.get("title") or f"Profile {profile_id}").strip() or f"Profile {profile_id}"
+        if instance_id <= 0:
+            errors.append(f"{profile_title}: Ugyldigt profile-id")
+            continue
+
+        try:
+            row = _makerworld_import_instance_to_folder(
+                instance_id=instance_id,
+                opener=opener,
+                folder_path=folder,
+                uploaded_by=actor,
+                referer_url=raw_url,
+                fallback_title=profile_title,
+            )
+            imported_rows.append(row)
+        except Exception as exc:
+            errors.append(f"{profile_title}: {exc}")
+
+    if not imported_rows:
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Kunne ikke hente filer fra MakerWorld.",
+                "details": errors,
+                "requires_browser_download": True,
+            }
+        ), 502
+
+    items = [serialize_file_row(row) for row in imported_rows]
+    try:
+        log_activity(
+            kind="upload",
+            action="makerworld-import",
+            message=f"MakerWorld import gennemført ({len(items)} fil(er))",
+            level="info",
+            folder_path=folder,
+            actor=actor,
+            target=str(preview.get("title") or "makerworld"),
+        )
+    except Exception:
+        pass
+
+    return jsonify(
+        {
+            "ok": True,
+            "imported_count": len(items),
+            "items": items,
+            "errors": errors,
+        }
+    )
 
 
 @app.route("/api/upload/tus", methods=["OPTIONS"])
