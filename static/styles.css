@@ -1095,6 +1095,10 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+.mapper-desktop-upload-btn {
+  display: inline-flex;
+}
+
 .mapper-current {
   color: var(--muted);
   font-size: 0.95rem;
@@ -4214,6 +4218,10 @@ input[type="checkbox"] {
 
   .mapper-dropzone {
     display: none;
+  }
+
+  .mapper-desktop-upload-btn {
+    display: none !important;
   }
 
   .sidebar-footer {

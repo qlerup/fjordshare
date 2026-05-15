@@ -195,6 +195,7 @@
     folderSelect: document.getElementById("folderSelect"),
     refreshFilesBtn: document.getElementById("refreshFilesBtn"),
     uploadBtn: document.getElementById("uploadBtn"),
+    mapperDesktopUploadBtn: document.getElementById("mapperDesktopUploadBtn"),
     fileInput: document.getElementById("fileInput"),
     newFolderInput: document.getElementById("newFolderInput"),
     createFolderBtn: document.getElementById("createFolderBtn"),
@@ -3151,6 +3152,10 @@
     }
     if (els.mapperMenuUpload) {
       els.mapperMenuUpload.disabled = writeDisabled;
+    }
+    if (els.mapperDesktopUploadBtn) {
+      els.mapperDesktopUploadBtn.classList.toggle("hidden", on);
+      els.mapperDesktopUploadBtn.disabled = writeDisabled;
     }
     if (els.mapperMenuCreateFolder) {
       els.mapperMenuCreateFolder.disabled = writeDisabled;
@@ -13604,6 +13609,15 @@
     els.mapperMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
   }
 
+  function openMapperUploadPicker() {
+    if (state.selectMode) return;
+    if (!currentFolderAllowsUserWrites()) {
+      showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
+      return;
+    }
+    if (els.fileInput) els.fileInput.click();
+  }
+
   async function onMapperMenuAction(action) {
     const cmd = String(action || "").trim().toLowerCase();
     if (!cmd) return;
@@ -13614,12 +13628,7 @@
     }
 
     if (cmd === "upload") {
-      if (state.selectMode) return;
-      if (!currentFolderAllowsUserWrites()) {
-        showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
-        return;
-      }
-      if (els.fileInput) els.fileInput.click();
+      openMapperUploadPicker();
       return;
     }
 
@@ -13975,11 +13984,7 @@
 
     if (els.uploadBtn && els.fileInput) {
       els.uploadBtn.addEventListener("click", () => {
-        if (!currentFolderAllowsUserWrites()) {
-          showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
-          return;
-        }
-        els.fileInput.click();
+        openMapperUploadPicker();
       });
       els.fileInput.addEventListener("change", async () => {
         const files = Array.from(els.fileInput.files || []);
@@ -13988,15 +13993,16 @@
       });
     }
 
+    if (els.mapperDesktopUploadBtn) {
+      els.mapperDesktopUploadBtn.addEventListener("click", () => {
+        openMapperUploadPicker();
+      });
+    }
+
     if (els.mapperDropZone) {
       const dropZone = els.mapperDropZone;
       dropZone.addEventListener("click", () => {
-        if (state.selectMode) return;
-        if (!currentFolderAllowsUserWrites()) {
-          showStatus(els.uploadStatus, "Upload kan kun ske inde i en datomappe.", "error");
-          return;
-        }
-        if (els.fileInput) els.fileInput.click();
+        openMapperUploadPicker();
       });
       dropZone.addEventListener("dragenter", (event) => {
         event.preventDefault();
