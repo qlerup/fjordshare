@@ -15712,7 +15712,7 @@
         const plannedCount = downloadUrls.length;
         showStatus(
           els.importPreviewStatus,
-          `Starter download af ${plannedCount} valgt${plannedCount === 1 ? "" : "e"} profil${plannedCount === 1 ? "" : "er"} fra ${source}. Downloads åbnes i nye faner/vinduer.`,
+          `Starter download af ${plannedCount} valgt${plannedCount === 1 ? "" : "e"} profil${plannedCount === 1 ? "" : "er"} fra ${source}. Hvis der åbner en JSON-side med felterne 'name' og 'url', så åbnes selve filen via værdien i 'url'.`,
           "ok"
         );
 
@@ -15725,7 +15725,7 @@
         } else if (started < plannedCount) {
           showStatus(
             els.importPreviewStatus,
-            `Download delvist startet (${started}/${plannedCount}) for ${selectedCount} valgte profiler. Tillad flere popups/faner for at hente alle.`,
+            `Download delvist startet (${started}/${plannedCount}) for ${selectedCount} valgte profiler. Tillad flere popups/faner, og brug evt. 'url'-feltet på JSON-siden for at hente filen direkte.`,
             "ok"
           );
         }
