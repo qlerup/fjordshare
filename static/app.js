@@ -13945,7 +13945,7 @@
           ${categoryHtml ? `<div class="import-categories">${categoryHtml}</div>` : ""}
           <div class="import-license">
             <div class="import-section-title">Licens</div>
-            <div>${esc(license.label || license.code || "Ukendt licens")}</div>
+            <div class="import-license-value">${esc(license.label || license.code || "Ukendt licens")}</div>
           </div>
         </div>
       </div>

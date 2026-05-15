@@ -3144,6 +3144,13 @@ input[type="checkbox"] {
   gap: 4px;
 }
 
+.import-license-value {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.4;
+}
+
 .import-description {
   color: var(--muted);
   line-height: 1.55;
