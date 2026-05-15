@@ -9182,8 +9182,8 @@ def _load_user_onboarding_profile(user_id: int) -> dict[str, bool]:
         ).fetchone()
 
     return {
-        "app_onboarding_seen_v1": bool(int(row["seen"] or 0)) if row else False,
-        "app_onboarding_enabled": bool(int(row["enabled"] or 1)) if row else True,
+        "app_onboarding_seen_v1": bool(int(row["seen"] if row["seen"] is not None else 0)) if row else False,
+        "app_onboarding_enabled": bool(int(row["enabled"] if row["enabled"] is not None else 1)) if row else True,
     }
 
 
@@ -16049,6 +16049,9 @@ def api_admin_profile_signup_request_cancel(request_id: int):
 
 def serialize_admin_user_row(row: sqlite3.Row) -> dict[str, Any]:
     user_id = int(row["id"])
+    onboarding_seen = bool(int(_row_value(row, "app_onboarding_seen_v1", 0) or 0))
+    onboarding_enabled_raw = _row_value(row, "app_onboarding_enabled", 1)
+    onboarding_enabled = bool(int(onboarding_enabled_raw if onboarding_enabled_raw is not None else 1))
     return {
         "id": user_id,
         "username": str(row["username"]),
@@ -16058,6 +16061,9 @@ def serialize_admin_user_row(row: sqlite3.Row) -> dict[str, Any]:
         "role": str(row["role"] or "user"),
         "home_folder": str(row["home_folder"] or ""),
         "created_at": str(row["created_at"] or ""),
+        "app_onboarding_seen_v1": onboarding_seen,
+        "app_onboarding_enabled": onboarding_enabled,
+        "app_onboarding_forced": bool(onboarding_enabled and not onboarding_seen),
         "is_current_user": user_id == int(current_user.id),
     }
 
@@ -16071,7 +16077,12 @@ def api_admin_users():
     if request.method == "GET":
         with closing(get_conn()) as conn:
             rows = conn.execute(
-                "SELECT id, username, first_name, last_initial, role, home_folder, created_at FROM users ORDER BY id"
+                """
+                SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+                       app_onboarding_seen_v1, app_onboarding_enabled
+                FROM users
+                ORDER BY id
+                """
             ).fetchall()
         return jsonify(
             {
@@ -16095,7 +16106,12 @@ def api_admin_users():
         user_id = create_user(username, password, role, first_name=first_name, last_name=last_name, require_name=True)
         with closing(get_conn()) as conn:
             user_row = conn.execute(
-                "SELECT id, username, first_name, last_initial, role, home_folder, created_at FROM users WHERE id=?",
+                """
+                SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+                       app_onboarding_seen_v1, app_onboarding_enabled
+                FROM users
+                WHERE id=?
+                """,
                 (int(user_id),),
             ).fetchone()
         return jsonify(
@@ -16208,7 +16224,12 @@ def api_admin_users_update(user_id: int):
             )
 
         updated = conn.execute(
-            "SELECT id, username, first_name, last_initial, role, home_folder, created_at FROM users WHERE id=?",
+            """
+            SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+                   app_onboarding_seen_v1, app_onboarding_enabled
+            FROM users
+            WHERE id=?
+            """,
             (int(user_id),),
         ).fetchone()
         conn.commit()
@@ -16217,6 +16238,57 @@ def api_admin_users_update(user_id: int):
         kind="admin",
         action="user-update",
         message=f"Bruger opdateret: {username}",
+        level="info",
+        actor=str(current_user.username or ""),
+        target=username,
+    )
+    return jsonify({"ok": True, "item": serialize_admin_user_row(updated) if updated is not None else None})
+
+
+@app.route("/api/admin/users/<int:user_id>/force-guide", methods=["POST"])
+@login_required
+def api_admin_users_force_guide(user_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+                   app_onboarding_seen_v1, app_onboarding_enabled
+            FROM users
+            WHERE id=?
+            """,
+            (int(user_id),),
+        ).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Bruger findes ikke"}), 404
+
+        conn.execute(
+            """
+            UPDATE users
+            SET app_onboarding_seen_v1=0,
+                app_onboarding_enabled=1
+            WHERE id=?
+            """,
+            (int(user_id),),
+        )
+        updated = conn.execute(
+            """
+            SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+                   app_onboarding_seen_v1, app_onboarding_enabled
+            FROM users
+            WHERE id=?
+            """,
+            (int(user_id),),
+        ).fetchone()
+        conn.commit()
+
+    username = str(row["username"] or "")
+    log_activity(
+        kind="admin",
+        action="user-force-guide",
+        message=f"Guide nulstillet for bruger: {username}",
         level="info",
         actor=str(current_user.username or ""),
         target=username,

@@ -9,7 +9,6 @@
   const SLICE_ACTIONS_DISABLED = String((boot && boot.dataset.slicingDisabled) || "0").trim() === "1";
   const SLICE_DISABLED_TITLE = "Slicing er midlertidigt slået fra";
   const SMS_ONBOARDING_LOGIN_PROMPT_ENABLED = false;
-  const APP_ONBOARDING_DESKTOP_MIN_WIDTH = 861;
   const APP_ONBOARDING_FALLBACK_STEP_MS = 5000;
   const APP_ONBOARDING_STEP_BUFFER_MS = 450;
   const UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY = "fjordshare.unseenUploadsOverlayExpanded.v1";
@@ -992,13 +991,6 @@
     }
   }
 
-  function isDesktopAppOnboardingViewport() {
-    if (window.matchMedia) {
-      return window.matchMedia(`(min-width: ${APP_ONBOARDING_DESKTOP_MIN_WIDTH}px)`).matches;
-    }
-    return window.innerWidth >= APP_ONBOARDING_DESKTOP_MIN_WIDTH;
-  }
-
   function isRequiredAppOnboarding() {
     return state.appOnboardingMode === "required";
   }
@@ -1327,7 +1319,7 @@
       if (state.appOnboardingEnabled) {
         openAppOnboarding({
           force: true,
-          required: !state.appOnboardingSeenPersisted && isDesktopAppOnboardingViewport(),
+          required: !state.appOnboardingSeenPersisted,
         });
       }
     } catch (err) {
@@ -10511,6 +10503,10 @@
         const isCurrentUser = !!u.is_current_user || String(u.username || "") === state.username;
         const canDelete = !isCurrentUser;
         const name = String(u.display_name || u.first_name || "").trim() || "-";
+        const guideForced = !!u.app_onboarding_forced;
+        const guideTitle = guideForced
+          ? "Guiden er allerede sat til næste login"
+          : `Vis hele guiden for ${name} ved næste login`;
         return `
           <tr>
             <td>${id}</td>
@@ -10521,6 +10517,7 @@
             <td>
               <div class="toolbar">
                 <button class="btn" data-user-action="edit" data-user-id="${id}">Rediger</button>
+                <button class="btn" data-user-action="force-guide" data-user-id="${id}" title="${esc(guideTitle)}" ${guideForced ? "disabled" : ""}>${guideForced ? "Guide klar" : "Force guide"}</button>
                 ${canDelete ? `<button class="btn danger" data-user-action="delete" data-user-id="${id}">Slet</button>` : ""}
               </div>
             </td>
@@ -10803,6 +10800,21 @@
     if (!id) return;
     if (action === "edit") {
       openEditUserModal(id);
+      return;
+    }
+    if (action === "force-guide") {
+      const user = userById(id);
+      const name = String((user && (user.display_name || user.username)) || "brugeren");
+      if (!window.confirm(`Vil du tvinge guiden frem for ${name} ved næste login? Brugeren skal se hele guiden igennem, før systemet kan bruges.`)) return;
+      const data = await api(`/api/admin/users/${id}/force-guide`, { method: "POST" });
+      if (data && data.item) {
+        const index = state.users.findIndex((entry) => Number(entry && entry.id ? entry.id : 0) === id);
+        if (index >= 0) state.users[index] = data.item;
+      } else {
+        await loadUsers();
+      }
+      renderUsers();
+      showStatus(els.userStatus, `Guiden vises ved næste login for ${name}.`, "ok");
       return;
     }
     if (action === "delete") {
