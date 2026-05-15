@@ -216,7 +216,6 @@ When model-to-file mapping is configured, the UI can switch plate assets automat
 
 Helper scripts are included here:
 
-- `Useful Scripts/fjordshare-start.sh`
 - `Useful Scripts/fjordshare-update.sh`
 - `Useful Scripts/fjordshare-cleanup.sh`
 - `Useful Scripts/README.md`

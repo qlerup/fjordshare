@@ -4,7 +4,6 @@ These scripts are helper scripts for operating and maintaining FjordShare on NAS
 
 ## Scripts
 
-- `fjordshare-start.sh`: starts/builds FjordShare (`--fresh` for no-cache rebuild).
 - `fjordshare-update.sh`: normal update path. Backs up `.env` and the SQLite DB when possible, pulls the current Git branch, asks about optional Docker cleanup, rebuilds, starts, and waits for health.
 - `fjordshare-cleanup.sh`: removes containers/images/volumes/networks for FjordShare (destructive).
 
