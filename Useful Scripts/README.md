@@ -5,7 +5,7 @@ These scripts are helper scripts for operating and maintaining FjordShare on NAS
 ## Scripts
 
 - `fjordshare-start.sh`: starts/builds FjordShare (`--fresh` for no-cache rebuild).
-- `fjordshare-update.sh`: normal update path. Backs up `.env` and the SQLite DB when possible, pulls the current Git branch, prunes unused Docker build/image/container/network data, rebuilds, starts, and waits for health.
+- `fjordshare-update.sh`: normal update path. Backs up `.env` and the SQLite DB when possible, pulls the current Git branch, asks about optional Docker cleanup, rebuilds, starts, and waits for health.
 - `fjordshare-cleanup.sh`: removes containers/images/volumes/networks for FjordShare (destructive).
 
 ## Usage
@@ -25,11 +25,12 @@ Useful options:
 ```sh
 sh "Useful Scripts/fjordshare-update.sh" --no-cache
 sh "Useful Scripts/fjordshare-update.sh" --no-build
-sh "Useful Scripts/fjordshare-update.sh" --no-prune
+sh "Useful Scripts/fjordshare-update.sh" --cleanup
+sh "Useful Scripts/fjordshare-update.sh" --no-cleanup
 sh "Useful Scripts/fjordshare-update.sh" --branch main
 ```
 
-The automatic Docker prune does not remove volumes, so FjordShare data paths such as appdata, uploads, and thumbnails are preserved.
+The update script asks before pruning Docker build-cache and unused objects. Answering yes can make the update take a little longer. Use `fjordshare-cleanup.sh` only when you actively want the larger, destructive cleanup.
 
 ## Bambu Studio presets (BBL)
 

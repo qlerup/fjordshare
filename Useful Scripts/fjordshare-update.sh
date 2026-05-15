@@ -22,7 +22,7 @@ DO_BUILD=1
 NO_CACHE=0
 SKIP_DB_BACKUP=0
 SHOW_LOGS=1
-PRUNE_DOCKER=1
+CLEANUP_DOCKER="${CLEANUP_DOCKER:-ask}"
 
 usage() {
 	cat <<EOF
@@ -31,6 +31,7 @@ Usage: $0 [options]
 Normal FjordShare update:
   - backs up .env and fjordshare.db when possible
   - pulls the current Git branch with --ff-only
+  - asks whether to run optional Docker cleanup
   - runs docker compose up -d --build
   - waits for /api/health
 
@@ -39,13 +40,14 @@ Options:
   --branch BRANCH     Git branch to pull (default: current branch, then main)
   --no-build          Do not build image; only docker compose up -d
   --no-cache          Rebuild image without Docker cache
-  --no-prune          Skip Docker prune before update
+  --cleanup           Run optional Docker cleanup without asking
+  --no-cleanup        Skip optional Docker cleanup without asking
   --skip-db-backup    Skip SQLite backup before updating
   --no-logs           Do not print recent container logs at the end
   -h, --help          Show this help
 
 Environment:
-  APP_DIR, REPO_BRANCH, SERVICE_NAME, WAIT_TIMEOUT_SEC, WAIT_INTERVAL_SEC
+  APP_DIR, REPO_BRANCH, SERVICE_NAME, WAIT_TIMEOUT_SEC, WAIT_INTERVAL_SEC, CLEANUP_DOCKER
 EOF
 }
 
@@ -74,8 +76,11 @@ while [ "$#" -gt 0 ]; do
 			NO_CACHE=1
 			DO_BUILD=1
 			;;
-		--no-prune)
-			PRUNE_DOCKER=0
+		--cleanup)
+			CLEANUP_DOCKER="yes"
+			;;
+		--no-cleanup)
+			CLEANUP_DOCKER="no"
 			;;
 		--skip-db-backup)
 			SKIP_DB_BACKUP=1
@@ -134,17 +139,50 @@ docker_cmd() {
 	fi
 }
 
-prune_docker_space() {
-	if [ "$PRUNE_DOCKER" != "1" ]; then
-		return 0
-	fi
-
+cleanup_docker_space() {
 	echo "==> Rydder Docker build-cache og ubrugte objekter (bevarer volumes/data)"
 	docker_cmd builder prune -af || true
 	docker_cmd image prune -af || true
 	docker_cmd container prune -f || true
 	docker_cmd network prune -f || true
 	docker_cmd system df || true
+}
+
+run_optional_cleanup() {
+	case "$CLEANUP_DOCKER" in
+		yes|YES|true|TRUE|1)
+			cleanup_docker_space
+			return 0
+			;;
+		no|NO|false|FALSE|0)
+			echo "==> Springer Docker oprydning over"
+			return 0
+			;;
+		ask|"")
+			;;
+		*)
+			echo "Fejl: CLEANUP_DOCKER skal vaere ask, yes eller no."
+			exit 1
+			;;
+	esac
+
+	if [ ! -t 0 ]; then
+		echo "==> Springer Docker oprydning over (ingen interaktiv terminal). Brug --cleanup hvis den skal koeres."
+		return 0
+	fi
+
+	echo "==> Docker oprydning er valgfri."
+	printf "Vil du rydde Docker build-cache og ubrugte objekter nu? Svarer du ja, tager updaten lidt laengere tid. [y/N]: "
+	answer=""
+	read answer || answer=""
+	case "$answer" in
+		y|Y|yes|YES|j|J|ja|JA)
+			cleanup_docker_space
+			;;
+		*)
+			echo "==> Springer Docker oprydning over"
+			;;
+	esac
 }
 
 read_env_value() {
@@ -384,7 +422,7 @@ else
 	echo "==> Opdateret: ${OLD_REV:-unknown} -> $NEW_REV"
 fi
 
-prune_docker_space
+run_optional_cleanup
 
 if [ "$NO_CACHE" = "1" ]; then
 	echo "==> Bygger uden Docker cache"
