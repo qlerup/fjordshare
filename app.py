@@ -909,12 +909,16 @@ def normalize_folder_path(raw: str) -> str:
     return "/".join(segments)
 
 
-def folder_allows_upload_target(folder_path: str) -> bool:
+def folder_allows_upload_target(folder_path: str, allow_users_subfolders: bool = False) -> bool:
     folder = normalize_folder_path(folder_path)
     if not folder:
         return False
     parts = [part for part in folder.split("/") if part]
     if parts and parts[0].lower() == "users":
+        if len(parts) == 1:
+            return False
+        if allow_users_subfolders:
+            return True
         return len(parts) >= 3 and bool(DATE_FOLDER_RE.match(parts[2]))
     return True
 
@@ -10113,7 +10117,10 @@ def list_accessible_folders(user: User) -> list[dict]:
             {
                 "path": path,
                 "permission": perm,
-                "can_upload": permission_allows(perm, "upload") and folder_allows_upload_target(path),
+                "can_upload": permission_allows(perm, "upload") and folder_allows_upload_target(
+                    path,
+                    allow_users_subfolders=user.is_admin,
+                ),
                 "can_manage": permission_allows(perm, "manage"),
                 "folder_kind": folder_kind,
                 "is_app_daily": folder_kind == FOLDER_KIND_APP_DAILY,
@@ -17171,7 +17178,12 @@ def _tus_options_response() -> Any:
     return resp
 
 
-def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) -> Tuple[bool, Optional[sqlite3.Row], str]:
+def _finalize_tus_upload(
+    upload_id: str,
+    meta: Dict[str, Any],
+    data_path: Path,
+    allow_users_subfolders: bool = False,
+) -> Tuple[bool, Optional[sqlite3.Row], str]:
     folder = normalize_folder_path(str(meta.get("folder") or ""))
     filename = str(meta.get("filename") or "")
     uploaded_by = str(meta.get("uploaded_by") or "")
@@ -17182,7 +17194,7 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
         last_modified_ms = 0
 
     try:
-        if not folder_allows_upload_target(folder):
+        if not folder_allows_upload_target(folder, allow_users_subfolders=allow_users_subfolders):
             try:
                 data_path.unlink(missing_ok=True)
             except Exception:
@@ -17350,7 +17362,7 @@ def api_import_link_preview():
     if folder:
         if not permission_allows(permission_for_user_folder(current_user, folder), "upload"):
             return jsonify({"ok": False, "error": "Ingen upload-adgang til valgt mappe"}), 403
-        if not folder_allows_upload_target(folder):
+        if not folder_allows_upload_target(folder, allow_users_subfolders=current_user.is_admin):
             return jsonify({"ok": False, "error": "Upload er ikke tilladt i denne mappe."}), 403
 
     try:
@@ -17428,7 +17440,7 @@ def api_upload_tus_create():
     folder_perm = permission_for_user_folder(current_user, folder)
     if not permission_allows(folder_perm, "upload"):
         return jsonify({"ok": False, "error": "Ingen upload-adgang til valgt mappe"}), 403, tus_headers()
-    if not folder_allows_upload_target(folder):
+    if not folder_allows_upload_target(folder, allow_users_subfolders=current_user.is_admin):
         return jsonify({"ok": False, "error": "Upload er ikke tilladt i rodmappen."}), 403, tus_headers()
 
     try:
@@ -17564,7 +17576,12 @@ def api_upload_tus_patch(upload_id: str):
 
     file_row: Optional[sqlite3.Row] = None
     if total_length > 0 and new_offset >= total_length:
-        ok, file_row, err = _finalize_tus_upload(upload_id, meta, data_path)
+        ok, file_row, err = _finalize_tus_upload(
+            upload_id,
+            meta,
+            data_path,
+            allow_users_subfolders=current_user.is_admin,
+        )
         if not ok:
             return jsonify({"ok": False, "error": err}), 500, tus_headers({"Upload-Offset": str(new_offset)})
 

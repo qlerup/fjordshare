@@ -2650,11 +2650,13 @@
     return /^\d{2}-\d{2}-\d{4}$/.test(segment) || /^\d{4}-\d{2}-\d{2}$/.test(segment);
   }
 
-  function folderAllowsUploadTarget(folderPath) {
+  function folderAllowsUploadTarget(folderPath, allowUsersSubfolders = false) {
     const folder = normalizeFolderPath(folderPath);
     if (!folder) return false;
     const parts = folder.split("/").filter(Boolean);
     if (String(parts[0] || "").toLowerCase() === "users") {
+      if (parts.length === 1) return false;
+      if (allowUsersSubfolders) return true;
       return parts.length >= 3 && isDateFolderSegment(parts[2]);
     }
     return true;
@@ -2662,7 +2664,8 @@
 
   function folderAllowsUserWrites(folderPath) {
     const folder = normalizeFolderPath(folderPath);
-    if (!folderAllowsUploadTarget(folder)) return false;
+    const allowUsersSubfolders = state.role === "admin";
+    if (!folderAllowsUploadTarget(folder, allowUsersSubfolders)) return false;
     if (state.role === "admin") return true;
     const home = normalizeFolderPath(state.homeFolder);
     if (!home || !folder || folder === home || !folder.startsWith(`${home}/`)) return false;
