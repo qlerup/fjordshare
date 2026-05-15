@@ -10869,7 +10869,7 @@
             ? "MakerWorld login gemt. Login-flow er startet."
             : "MakerWorld login gemt, men popup blev blokeret. Brug 'Åbn MakerWorld login'.")
           : "MakerWorld login gemt, men kodeord er ikke krypteret uden MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY.",
-        secure && launched ? "ok" : "error",
+        secure ? "ok" : "error",
       );
     } catch (err) {
       try {
