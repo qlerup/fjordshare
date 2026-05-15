@@ -151,6 +151,7 @@
     appOnboardingDurationCache: Object.create(null),
     importLinkPreview: null,
     importLinkSelectedProfileId: "",
+    importLinkSelectedImageUrl: "",
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
   };
@@ -13851,14 +13852,29 @@
       els.importPreviewUseBtn.textContent = selected ? "Vælg profil" : "Ingen profiler";
     }
 
-    const images = Array.isArray(data.image_urls) ? data.image_urls.filter(Boolean).slice(0, 8) : [];
-    const cover = String(data.cover_url || images[0] || "").trim();
-    const imageHtml = cover
+    const images = Array.isArray(data.image_urls) ? data.image_urls.filter(Boolean).slice(0, 12) : [];
+    const cover = String(data.cover_url || "").trim();
+    const galleryImages = [];
+    if (cover) galleryImages.push(cover);
+    images.forEach((url) => {
+      const normalized = String(url || "").trim();
+      if (!normalized || galleryImages.includes(normalized)) return;
+      galleryImages.push(normalized);
+    });
+    const selectedImage = String(state.importLinkSelectedImageUrl || "").trim();
+    const activeImage = galleryImages.includes(selectedImage) ? selectedImage : (galleryImages[0] || "");
+    state.importLinkSelectedImageUrl = activeImage;
+    const imageHtml = activeImage
       ? `
         <div class="import-preview-gallery">
-          <img class="import-preview-cover" src="${esc(cover)}" alt="${esc(data.title || "Model billede")}" loading="lazy" decoding="async">
+          <button class="import-preview-cover-btn" type="button" data-import-preview-open="${esc(activeImage)}" aria-label="Åbn billede i stor visning">
+            <img class="import-preview-cover" src="${esc(activeImage)}" alt="${esc(data.title || "Model billede")}" loading="lazy" decoding="async">
+          </button>
           <div class="import-preview-thumbs">
-            ${images.map((url) => `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">`).join("")}
+            ${galleryImages.map((url, index) => {
+              const isActive = url === activeImage;
+              return `<button class="import-preview-thumb-btn${isActive ? " is-active" : ""}" type="button" data-import-preview-image="${esc(url)}" aria-label="Vis billede ${index + 1}"><img src="${esc(url)}" alt="" loading="lazy" decoding="async"></button>`;
+            }).join("")}
           </div>
         </div>
       `
@@ -13949,6 +13965,7 @@
     const profiles = Array.isArray(preview && preview.profiles) ? preview.profiles : [];
     const selected = profiles.find((profile) => profile && profile.selected) || profiles[0] || null;
     state.importLinkSelectedProfileId = selected ? String(selected.id || "") : "";
+    state.importLinkSelectedImageUrl = "";
     renderImportPreview(preview);
     showStatus(els.importPreviewStatus, "");
     if (els.importPreviewModal) els.importPreviewModal.classList.remove("hidden");
@@ -15344,6 +15361,23 @@
           card.classList.toggle("selected", !!radio && radio.checked);
         });
         showStatus(els.importPreviewStatus, "");
+      });
+      els.importPreviewBody.addEventListener("click", (event) => {
+        const thumb = event.target && event.target.closest ? event.target.closest(".import-preview-thumb-btn") : null;
+        if (thumb) {
+          const imageUrl = String((thumb.dataset && thumb.dataset.importPreviewImage) || "").trim();
+          if (!imageUrl || imageUrl === String(state.importLinkSelectedImageUrl || "")) return;
+          state.importLinkSelectedImageUrl = imageUrl;
+          renderImportPreview(state.importLinkPreview || {});
+          return;
+        }
+
+        const cover = event.target && event.target.closest ? event.target.closest(".import-preview-cover-btn") : null;
+        if (!cover) return;
+        const imageUrl = String((cover.dataset && cover.dataset.importPreviewOpen) || "").trim();
+        if (!imageUrl) return;
+        const imageName = String((state.importLinkPreview && state.importLinkPreview.title) || "MakerWorld billede").trim() || "MakerWorld billede";
+        openImagePreviewModal(imageUrl, imageName);
       });
     }
     if (els.importPreviewModal) {
