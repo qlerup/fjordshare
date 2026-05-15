@@ -142,6 +142,9 @@
     appOnboardingBusy: false,
     appOnboardingStepComplete: false,
     appOnboardingStepTimer: null,
+    appOnboardingStepCountdownTimer: null,
+    appOnboardingStepEndsAt: 0,
+    appOnboardingCountdownLastSeconds: null,
     appOnboardingStepToken: 0,
     appOnboardingDurationCache: Object.create(null),
     trackingExpandedIds: new Set(),
@@ -421,6 +424,7 @@
     appOnboardingEnabledChk: document.getElementById("appOnboardingEnabledChk"),
     appOnboardingDoneBtn: document.getElementById("appOnboardingDoneBtn"),
     appOnboardingStatus: document.getElementById("appOnboardingStatus"),
+    appOnboardingCountdown: document.getElementById("appOnboardingCountdown"),
     printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
     printReadyStatus: document.getElementById("printReadyStatus"),
     printReadyAdminList: document.getElementById("printReadyAdminList"),
@@ -1016,11 +1020,51 @@
     ) || null;
   }
 
+  function hideAppOnboardingCountdown() {
+    if (!els.appOnboardingCountdown) return;
+    els.appOnboardingCountdown.classList.add("hidden");
+    els.appOnboardingCountdown.textContent = "";
+    els.appOnboardingCountdown.removeAttribute("aria-label");
+  }
+
+  function clearAppOnboardingCountdownTimer() {
+    if (state.appOnboardingStepCountdownTimer) {
+      window.clearInterval(state.appOnboardingStepCountdownTimer);
+      state.appOnboardingStepCountdownTimer = null;
+    }
+    state.appOnboardingStepEndsAt = 0;
+    state.appOnboardingCountdownLastSeconds = null;
+    hideAppOnboardingCountdown();
+  }
+
   function clearAppOnboardingStepTimer() {
     if (state.appOnboardingStepTimer) {
       window.clearTimeout(state.appOnboardingStepTimer);
       state.appOnboardingStepTimer = null;
     }
+    clearAppOnboardingCountdownTimer();
+  }
+
+  function ensureAppOnboardingGuideMedia(gif) {
+    if (!gif || !gif.parentElement) return null;
+    if (gif.parentElement.classList && gif.parentElement.classList.contains("app-onboarding-guide-media")) {
+      return gif.parentElement;
+    }
+    const frame = document.createElement("div");
+    frame.className = "app-onboarding-guide-media";
+    gif.parentElement.insertBefore(frame, gif);
+    frame.appendChild(gif);
+    return frame;
+  }
+
+  function appOnboardingSecondsLabel(seconds) {
+    const value = Math.max(0, Number(seconds || 0));
+    return value === 1 ? "1 sekund" : `${value} sekunder`;
+  }
+
+  function appOnboardingCountdownText(seconds) {
+    const value = Math.max(0, Number(seconds || 0));
+    return value === 1 ? "1 sek" : `${value} sek`;
   }
 
   function rememberAppOnboardingGifSrc(gif) {
@@ -1049,6 +1093,29 @@
     const src = rememberAppOnboardingGifSrc(gif);
     if (!src) return;
     gif.src = appOnboardingReplaySrc(src, state.appOnboardingStepToken);
+  }
+
+  function updateAppOnboardingCountdown(token, index, total, gif) {
+    if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding()) return;
+    const seconds = Math.max(0, Math.ceil(Math.max(0, state.appOnboardingStepEndsAt - Date.now()) / 1000));
+    if (seconds === state.appOnboardingCountdownLastSeconds) return;
+    state.appOnboardingCountdownLastSeconds = seconds;
+
+    const frame = ensureAppOnboardingGuideMedia(gif);
+    if (frame && els.appOnboardingCountdown && els.appOnboardingCountdown.parentElement !== frame) {
+      frame.appendChild(els.appOnboardingCountdown);
+    }
+    if (els.appOnboardingCountdown) {
+      const countdownText = appOnboardingCountdownText(seconds);
+      els.appOnboardingCountdown.textContent = countdownText;
+      els.appOnboardingCountdown.setAttribute("aria-label", `${appOnboardingSecondsLabel(seconds)} tilbage af guiden`);
+      els.appOnboardingCountdown.classList.remove("hidden");
+    }
+    showStatus(
+      els.appOnboardingStatus,
+      `Guide ${index + 1} af ${total} afspilles. ${appOnboardingSecondsLabel(seconds)} tilbage, før knappen åbner.`,
+      "ok",
+    );
   }
 
   function skipGifSubBlocks(bytes, pos) {
@@ -1200,8 +1267,16 @@
 
     appOnboardingGifDurationMs(gif).then((duration) => {
       if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding()) return;
+      state.appOnboardingStepEndsAt = Date.now() + duration;
+      state.appOnboardingCountdownLastSeconds = null;
+      updateAppOnboardingCountdown(token, index, keys.length, gif);
+      state.appOnboardingStepCountdownTimer = window.setInterval(() => {
+        updateAppOnboardingCountdown(token, index, keys.length, gif);
+      }, 250);
       state.appOnboardingStepTimer = window.setTimeout(() => {
         if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding()) return;
+        clearAppOnboardingCountdownTimer();
+        state.appOnboardingStepTimer = null;
         state.appOnboardingStepComplete = true;
         renderAppOnboardingControls();
         showStatus(
@@ -15493,6 +15568,7 @@
     }
     if (els.appOnboardingGuideGifs && els.appOnboardingGuideGifs.length) {
       els.appOnboardingGuideGifs.forEach((gif) => {
+        ensureAppOnboardingGuideMedia(gif);
         rememberAppOnboardingGifSrc(gif);
         gif.addEventListener("error", () => {
           const fallbackSrc = String(gif.dataset.fallbackSrc || "").trim();
