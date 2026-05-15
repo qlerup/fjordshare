@@ -2633,10 +2633,17 @@
     return /^\d{2}-\d{2}-\d{4}$/.test(segment) || /^\d{4}-\d{2}-\d{2}$/.test(segment);
   }
 
+  function isUsersRootFolder(folderPath) {
+    const folder = normalizeFolderPath(folderPath);
+    const usersRoot = adminUsersRootFolderPath();
+    return !!folder && (folder === "users" || (!!usersRoot && folder === usersRoot));
+  }
+
   function folderAllowsUserWrites(folderPath) {
+    const folder = normalizeFolderPath(folderPath);
+    if (isUsersRootFolder(folder)) return false;
     if (state.role === "admin") return true;
     const home = normalizeFolderPath(state.homeFolder);
-    const folder = normalizeFolderPath(folderPath);
     if (!home || !folder || folder === home || !folder.startsWith(`${home}/`)) return false;
     const relative = folder.slice(home.length + 1);
     const daySegment = relative.split("/").filter(Boolean)[0] || "";
@@ -3273,7 +3280,7 @@
       els.mapperMenuUpload.disabled = writeDisabled;
     }
     if (els.mapperDesktopUploadBtn) {
-      els.mapperDesktopUploadBtn.classList.toggle("hidden", on);
+      els.mapperDesktopUploadBtn.classList.toggle("hidden", on || !writeAllowed);
       els.mapperDesktopUploadBtn.disabled = writeDisabled;
     }
     if (els.mapperMenuCreateFolder) {

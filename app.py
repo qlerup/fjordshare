@@ -907,6 +907,13 @@ def normalize_folder_path(raw: str) -> str:
     return "/".join(segments)
 
 
+def folder_allows_upload_target(folder_path: str) -> bool:
+    folder = normalize_folder_path(folder_path)
+    if not folder:
+        return False
+    return folder.lower() != "users"
+
+
 def folder_abs_path(folder_path: str) -> Tuple[str, Path]:
     normalized = normalize_folder_path(folder_path)
     absolute = (UPLOAD_ROOT / normalized).resolve() if normalized else UPLOAD_ROOT.resolve()
@@ -10073,7 +10080,7 @@ def list_accessible_folders(user: User) -> list[dict]:
             {
                 "path": path,
                 "permission": perm,
-                "can_upload": permission_allows(perm, "upload"),
+                "can_upload": permission_allows(perm, "upload") and folder_allows_upload_target(path),
                 "can_manage": permission_allows(perm, "manage"),
                 "folder_kind": folder_kind,
                 "is_app_daily": folder_kind == FOLDER_KIND_APP_DAILY,
@@ -16937,6 +16944,12 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
         last_modified_ms = 0
 
     try:
+        if not folder_allows_upload_target(folder):
+            try:
+                data_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return False, None, "Upload er ikke tilladt i rodmappen."
         ext = str(Path(filename).suffix or "").lower()
         if not _is_allowed_primary_3d_upload(filename):
             reason = _unsupported_primary_3d_upload_error(filename)
@@ -17147,6 +17160,8 @@ def api_upload_tus_create():
     folder_perm = permission_for_user_folder(current_user, folder)
     if not permission_allows(folder_perm, "upload"):
         return jsonify({"ok": False, "error": "Ingen upload-adgang til valgt mappe"}), 403, tus_headers()
+    if not folder_allows_upload_target(folder):
+        return jsonify({"ok": False, "error": "Upload er ikke tilladt i rodmappen."}), 403, tus_headers()
 
     try:
         _, abs_folder = folder_abs_path(folder)
@@ -17351,6 +17366,9 @@ def api_share_upload_tus_create(token: str):
     if not folder:
         folder = folders[0] if folders else ""
 
+    if not folder_allows_upload_target(folder):
+        return jsonify({"ok": False, "error": "Upload er ikke tilladt i rodmappen."}), 403, tus_headers()
+
     if not share_folder_allowed(folder, folders):
         return jsonify({"ok": False, "error": "Mappen er ikke en del af delingen"}), 403, tus_headers()
 
@@ -17459,6 +17477,8 @@ def api_share_upload_tus_patch(token: str, upload_id: str):
         return jsonify(err), status, tus_headers()
 
     folder = normalize_folder_path(str(meta.get("folder") or ""))
+    if not folder_allows_upload_target(folder):
+        return jsonify({"ok": False, "error": "Upload er ikke tilladt i rodmappen."}), 403, tus_headers()
     if not share_folder_allowed(folder, folders):
         return jsonify({"ok": False, "error": "Mappen er ikke en del af delingen"}), 403, tus_headers()
 
