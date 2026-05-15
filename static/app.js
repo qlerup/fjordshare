@@ -15993,6 +15993,15 @@
         });
       });
     }
+    if (els.makerworldLoginOpenLink) {
+      els.makerworldLoginOpenLink.addEventListener("click", (event) => {
+        if (els.makerworldLoginOpenLink.classList.contains("disabled") || !state.makerworldLoginFlowUrl) {
+          event.preventDefault();
+          return;
+        }
+        showStatus(els.makerworldLoginLiveStatus, "MakerWorld login er åbnet i ny fane.", "ok");
+      });
+    }
     if (els.makerworldResetPasswordBtn) {
       els.makerworldResetPasswordBtn.addEventListener("click", () => {
         resetMakerworldPassword().catch((err) => {
