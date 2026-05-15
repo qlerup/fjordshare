@@ -139,6 +139,7 @@
     makerworldPasswordConfigured: false,
     makerworldPasswordPreview: "",
     makerworldPasswordPreviewActive: false,
+    makerworldLoginFlowUrl: "",
     appOnboardingSeenPersisted: false,
     appOnboardingEnabled: true,
     appOnboardingPanelKey: "navigation",
@@ -465,6 +466,10 @@
     makerworldPasswordInput: document.getElementById("makerworldPasswordInput"),
     makerworldResetPasswordBtn: document.getElementById("makerworldResetPasswordBtn"),
     makerworldSaveBtn: document.getElementById("makerworldSaveBtn"),
+    makerworldLoginBrowserWrap: document.getElementById("makerworldLoginBrowserWrap"),
+    makerworldLoginBrowserFrame: document.getElementById("makerworldLoginBrowserFrame"),
+    makerworldLoginOpenLink: document.getElementById("makerworldLoginOpenLink"),
+    makerworldLoginLiveStatus: document.getElementById("makerworldLoginLiveStatus"),
     makerworldStatus: document.getElementById("makerworldStatus"),
     openCreateUserModalBtn: document.getElementById("openCreateUserModalBtn"),
     createUserModal: document.getElementById("createUserModal"),
@@ -10665,7 +10670,18 @@
       if (locked) {
         els.makerworldSaveBtn.textContent = "Kryptering mangler";
       } else {
-        els.makerworldSaveBtn.textContent = busy && action === "save" ? "Gemmer..." : "Gem MakerWorld login";
+        els.makerworldSaveBtn.textContent = busy && action === "login" ? "Logger ind..." : "Login";
+      }
+    }
+    if (els.makerworldLoginOpenLink) {
+      if (busy || locked || !state.makerworldLoginFlowUrl) {
+        els.makerworldLoginOpenLink.classList.add("disabled");
+        els.makerworldLoginOpenLink.setAttribute("aria-disabled", "true");
+        els.makerworldLoginOpenLink.setAttribute("tabindex", "-1");
+      } else {
+        els.makerworldLoginOpenLink.classList.remove("disabled");
+        els.makerworldLoginOpenLink.removeAttribute("aria-disabled");
+        els.makerworldLoginOpenLink.removeAttribute("tabindex");
       }
     }
   }
@@ -10695,6 +10711,88 @@
     if (!value && state.makerworldPasswordConfigured) {
       showMakerworldPasswordPreview();
     }
+  }
+
+  function buildMakerworldLoginFlowUrl() {
+    const makerworldTarget = "https://makerworld.com/en";
+    const ticketTarget = `https://makerworld.com/api/sign-in/ticket?to=${encodeURIComponent(makerworldTarget)}`;
+    return `https://bambulab.com/en/sign-in?ticket=1&to=${encodeURIComponent(ticketTarget)}`;
+  }
+
+  function openMakerworldLoginWindowPlaceholder() {
+    try {
+      const popup = window.open("", "makerworld_login", "width=1280,height=900");
+      if (popup && popup.document) {
+        popup.document.title = "MakerWorld login";
+        popup.document.body.innerHTML = "<p style='font-family: sans-serif; padding: 16px'>Klargør MakerWorld login...</p>";
+      }
+      return popup;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function updateMakerworldLoginBrowser(loginUrl) {
+    const url = String(loginUrl || "").trim();
+    state.makerworldLoginFlowUrl = url;
+
+    if (els.makerworldLoginOpenLink) {
+      els.makerworldLoginOpenLink.href = url || "#";
+    }
+    if (els.makerworldLoginBrowserWrap) {
+      if (url) {
+        els.makerworldLoginBrowserWrap.classList.remove("hidden");
+      } else {
+        els.makerworldLoginBrowserWrap.classList.add("hidden");
+      }
+    }
+    if (els.makerworldLoginBrowserFrame && url) {
+      if (els.makerworldLoginBrowserFrame.src !== url) {
+        els.makerworldLoginBrowserFrame.src = url;
+      }
+    }
+  }
+
+  function launchMakerworldLoginFlow(loginWindow = null) {
+    const loginUrl = buildMakerworldLoginFlowUrl();
+    updateMakerworldLoginBrowser(loginUrl);
+
+    let opened = false;
+    try {
+      if (loginWindow && !loginWindow.closed) {
+        loginWindow.location.replace(loginUrl);
+        opened = true;
+      }
+    } catch (_err) {
+      opened = false;
+    }
+
+    if (!opened) {
+      try {
+        const popup = window.open(loginUrl, "makerworld_login", "width=1280,height=900");
+        opened = !!popup;
+      } catch (_err) {
+        opened = false;
+      }
+    }
+
+    if (els.makerworldLoginLiveStatus) {
+      if (opened) {
+        showStatus(
+          els.makerworldLoginLiveStatus,
+          "MakerWorld login er åbnet. Hvis browser-rammen er tom, brug 'Åbn MakerWorld login'.",
+          "ok",
+        );
+      } else {
+        showStatus(
+          els.makerworldLoginLiveStatus,
+          "Browseren blokerede popup-login. Brug 'Åbn MakerWorld login' ovenfor.",
+          "error",
+        );
+      }
+    }
+
+    return opened;
   }
 
   function applyMakerworldSettings(data) {
@@ -10744,23 +10842,42 @@
       return;
     }
 
+    const loginWindow = openMakerworldLoginWindowPlaceholder();
+
     try {
-      setMakerworldSettingsFormState({ busy: true, action: "save" });
+      setMakerworldSettingsFormState({ busy: true, action: "login" });
       const data = await api("/api/settings/makerworld", {
         method: "POST",
         body: { username, password },
       });
       applyMakerworldSettings(data || {});
       const secure = !!(data && data.encryption_active);
+      let launched = false;
+      if (secure) {
+        launched = launchMakerworldLoginFlow(loginWindow);
+      } else {
+        try {
+          if (loginWindow && !loginWindow.closed) loginWindow.close();
+        } catch (_err) {
+          // Ignore popup close errors.
+        }
+      }
       showStatus(
         els.makerworldStatus,
         secure
-          ? "MakerWorld login gemt. Kodeord vises ikke i feltet."
+          ? (launched
+            ? "MakerWorld login gemt. Login-flow er startet."
+            : "MakerWorld login gemt, men popup blev blokeret. Brug 'Åbn MakerWorld login'.")
           : "MakerWorld login gemt, men kodeord er ikke krypteret uden MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY.",
-        secure ? "ok" : "error",
+        secure && launched ? "ok" : "error",
       );
     } catch (err) {
-      showStatus(els.makerworldStatus, err.message || "Kunne ikke gemme MakerWorld login", "error");
+      try {
+        if (loginWindow && !loginWindow.closed) loginWindow.close();
+      } catch (_err) {
+        // Ignore popup close errors.
+      }
+      showStatus(els.makerworldStatus, err.message || "Kunne ikke gemme/login på MakerWorld", "error");
     } finally {
       setMakerworldSettingsFormState({ busy: false });
     }
@@ -15872,7 +15989,7 @@
     if (els.makerworldSaveBtn) {
       els.makerworldSaveBtn.addEventListener("click", () => {
         saveMakerworldSettings().catch((err) => {
-          showStatus(els.makerworldStatus, err.message || "Kunne ikke gemme MakerWorld login", "error");
+          showStatus(els.makerworldStatus, err.message || "Kunne ikke logge ind på MakerWorld", "error");
         });
       });
     }

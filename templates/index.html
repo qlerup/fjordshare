@@ -365,7 +365,7 @@
       <div id="settings-panel-makerworld" class="settings-subpanel hidden">
         <div class="panel">
           <h3>MakerWorld login</h3>
-          <p class="hint">Gem login til MakerWorld, så FjordShare kan bruge det til importer/downloads i næste trin.</p>
+          <p class="hint">Gem login til MakerWorld og start login-flow herfra.</p>
           <p class="hint">Sæt <code>MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY</code> i miljøet. MakerWorld kodeord gemmes kun krypteret.</p>
           <div class="form-grid">
             <div>
@@ -380,7 +380,16 @@
           </div>
           <div class="toolbar end">
             <button id="makerworldResetPasswordBtn" class="btn danger" type="button">Nulstil kodeord</button>
-            <button id="makerworldSaveBtn" class="btn primary" type="button">Gem MakerWorld login</button>
+            <button id="makerworldSaveBtn" class="btn primary" type="button">Login</button>
+          </div>
+          <div id="makerworldLoginBrowserWrap" class="makerworld-login-browser-wrap hidden">
+            <div class="toolbar">
+              <strong>MakerWorld login browser</strong>
+              <a id="makerworldLoginOpenLink" class="btn small" href="#" target="_blank" rel="noopener">Åbn MakerWorld login</a>
+            </div>
+            <iframe id="makerworldLoginBrowserFrame" class="makerworld-login-browser-frame" title="MakerWorld login browser" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+            <p class="hint">Hvis browser-rammen er tom, blokerer MakerWorld/Bambu indlejring af sikkerhedsgrunde. Brug knappen “Åbn MakerWorld login”.</p>
+            <div id="makerworldLoginLiveStatus" class="status hidden"></div>
           </div>
           <div id="makerworldStatus" class="status hidden"></div>
         </div>

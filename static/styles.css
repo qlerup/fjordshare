@@ -2064,6 +2064,38 @@ input[type="checkbox"] {
   margin-bottom: 10px;
 }
 
+.makerworld-login-browser-wrap {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.makerworld-login-browser-wrap .toolbar {
+  margin: 0;
+}
+
+.makerworld-login-browser-wrap strong {
+  font-size: 0.92rem;
+}
+
+.makerworld-login-browser-frame {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0f1622;
+}
+
+@media (max-width: 900px) {
+  .makerworld-login-browser-frame {
+    min-height: 300px;
+  }
+}
+
 .checks {
   display: grid;
   gap: 6px;
