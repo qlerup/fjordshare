@@ -14102,6 +14102,30 @@
     return importSelectedProfiles(preview)[0] || null;
   }
 
+  function importProfileDownloadUrl(preview, profile) {
+    const item = profile && typeof profile === "object" ? profile : {};
+    const directUrl = String(item.download_url || "").trim();
+    if (directUrl) return directUrl;
+
+    const source = String((preview && preview.source) || "").trim().toLowerCase();
+    if (source !== "makerworld") return "";
+
+    const instanceId = Number(item.id || 0);
+    if (!Number.isFinite(instanceId) || instanceId <= 0) return "";
+
+    return `https://makerworld.com/api/v1/design-service/instance/${encodeURIComponent(String(instanceId))}/f3mf?type=download&fileType=`;
+  }
+
+  function importSelectedProfileDownloadUrls(preview) {
+    const selectedProfiles = importSelectedProfiles(preview || {});
+    if (!selectedProfiles.length) return [];
+    const urls = selectedProfiles
+      .map((profile) => importProfileDownloadUrl(preview || {}, profile))
+      .map((url) => String(url || "").trim())
+      .filter(Boolean);
+    return Array.from(new Set(urls));
+  }
+
   function renderImportPreview(preview) {
     if (!els.importPreviewBody) return;
     const data = preview && typeof preview === "object" ? preview : {};
@@ -14125,9 +14149,9 @@
       if (profiles.length <= 0) {
         els.importPreviewUseBtn.textContent = "Ingen profiler";
       } else if (selectedCount > 0) {
-        els.importPreviewUseBtn.textContent = `Vælg profiler (${selectedCount})`;
+        els.importPreviewUseBtn.textContent = `Download profiler (${selectedCount})`;
       } else {
-        els.importPreviewUseBtn.textContent = "Vælg profiler";
+        els.importPreviewUseBtn.textContent = "Download profiler";
       }
     }
 
@@ -15638,17 +15662,40 @@
           showStatus(els.importPreviewStatus, "Vælg mindst en printprofil først.", "error");
           return;
         }
-        const titles = selectedProfiles
-          .map((profile) => String((profile && profile.title) || "Printprofil").trim() || "Printprofil")
-          .filter(Boolean);
-        const previewTitles = titles.slice(0, 3).join(", ");
-        const remaining = Math.max(0, titles.length - 3);
-        const suffix = remaining > 0 ? ` +${remaining} flere` : "";
+
+        const downloadUrls = importSelectedProfileDownloadUrls(state.importLinkPreview || {});
+        if (!downloadUrls.length) {
+          showStatus(els.importPreviewStatus, "Download er ikke understøttet for den valgte kilde/profil.", "error");
+          return;
+        }
+
+        let started = 0;
+        downloadUrls.forEach((url, index) => {
+          window.setTimeout(() => {
+            if (triggerHiddenDownload(url)) started += 1;
+          }, index * 220);
+        });
+
+        const source = String((state.importLinkPreview && state.importLinkPreview.source_label) || "MakerWorld").trim() || "MakerWorld";
+        const selectedCount = selectedProfiles.length;
+        const plannedCount = downloadUrls.length;
         showStatus(
           els.importPreviewStatus,
-          `Printprofiler valgt (${selectedProfiles.length}): ${previewTitles}${suffix}. Download/import kommer i næste trin.`,
+          `Starter download af ${plannedCount} valgt${plannedCount === 1 ? "" : "e"} profil${plannedCount === 1 ? "" : "er"} fra ${source}. Hvis intet hentes, så log ind på MakerWorld først og prøv igen.`,
           "ok"
         );
+
+        window.setTimeout(() => {
+          if (started <= 0) {
+            showStatus(els.importPreviewStatus, "Browseren blokerede download. Prøv igen eller tillad download/popups.", "error");
+          } else if (started < plannedCount) {
+            showStatus(
+              els.importPreviewStatus,
+              `Download delvist startet (${started}/${plannedCount}) for ${selectedCount} valgte profiler.`,
+              "ok"
+            );
+          }
+        }, Math.max(1200, plannedCount * 260));
       });
     }
     if (els.importPreviewBody) {
@@ -15676,9 +15723,9 @@
           if (profiles.length <= 0) {
             els.importPreviewUseBtn.textContent = "Ingen profiler";
           } else if (selectedCount > 0) {
-            els.importPreviewUseBtn.textContent = `Vælg profiler (${selectedCount})`;
+            els.importPreviewUseBtn.textContent = `Download profiler (${selectedCount})`;
           } else {
-            els.importPreviewUseBtn.textContent = "Vælg profiler";
+            els.importPreviewUseBtn.textContent = "Download profiler";
           }
         }
 

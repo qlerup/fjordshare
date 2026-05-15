@@ -12136,6 +12136,7 @@ def share_folder_allowed(folder_path: str, allowed_folders: list[str]) -> bool:
 
 
 MAKERWORLD_DESIGN_API = "https://api.bambulab.com/v1/design-service/design/{design_id}?trafficSource=browse&visitHistory=false"
+MAKERWORLD_INSTANCE_DOWNLOAD_API = "https://makerworld.com/api/v1/design-service/instance/{instance_id}/f3mf?type=download&fileType="
 MAKERWORLD_LICENSE_LABELS = {
     "BY": "Creative Commons Attribution",
     "BY-SA": "Creative Commons Attribution-ShareAlike",
@@ -12240,6 +12241,7 @@ def _makerworld_profile_summary(
     return {
         "id": profile_instance_id,
         "profile_id": profile_id,
+        "download_url": MAKERWORLD_INSTANCE_DOWNLOAD_API.format(instance_id=profile_instance_id),
         "title": str(instance.get("title") or instance.get("titleTranslated") or "Printprofil").strip(),
         "creator": str(creator.get("name") or creator.get("handle") or "").strip(),
         "cover_url": _makerworld_image_url(instance.get("cover")),
