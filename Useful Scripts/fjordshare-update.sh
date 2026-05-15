@@ -221,6 +221,10 @@ PY
 	return 1
 }
 
+generate_makerworld_credentials_encryption_key() {
+	generate_sms_token_encryption_key
+}
+
 ensure_sms_token_encryption_key() {
 	file="$APP_DIR/.env"
 	[ -f "$file" ] || return 0
@@ -249,6 +253,36 @@ ensure_sms_token_encryption_key() {
 	' "$file" > "$tmp"
 	mv "$tmp" "$file"
 	echo "==> Tilføjede SMS_TOKEN_ENCRYPTION_KEY til .env"
+}
+
+ensure_makerworld_credentials_encryption_key() {
+	file="$APP_DIR/.env"
+	[ -f "$file" ] || return 0
+	current="$(read_env_value MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY || true)"
+	if [ -n "$current" ]; then
+		return 0
+	fi
+	key="$(generate_makerworld_credentials_encryption_key)" || {
+		echo "Advarsel: kunne ikke generere MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY. Installér openssl eller python3 for krypteret MakerWorld-login."
+		return 0
+	}
+	tmp="${file}.tmp.$$"
+	awk -v key="$key" '
+		BEGIN { done = 0 }
+		/^[[:space:]]*MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY[[:space:]]*=/ && done == 0 {
+			print "MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY=" key
+			done = 1
+			next
+		}
+		{ print }
+		END {
+			if (done == 0) {
+				print "MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY=" key
+			}
+		}
+	' "$file" > "$tmp"
+	mv "$tmp" "$file"
+	echo "==> Tilføjede MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY til .env"
 }
 
 backup_env_file() {
@@ -409,6 +443,7 @@ OLD_REV="$(git rev-parse HEAD 2>/dev/null || true)"
 
 backup_env_file
 ensure_sms_token_encryption_key
+ensure_makerworld_credentials_encryption_key
 backup_database
 
 echo "==> Henter seneste kode fra origin/$REPO_BRANCH"

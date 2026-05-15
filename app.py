@@ -133,6 +133,7 @@ SMS_SENDER_MAX_LENGTH = 11
 SMS_VERIFICATION_TTL_SECONDS = 60
 SMS_ONBOARDING_ENABLED = False
 SMS_TOKEN_ENCRYPTION_KEY = str(os.getenv("SMS_TOKEN_ENCRYPTION_KEY", "") or "").strip()
+MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY = str(os.getenv("MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY", "") or "").strip()
 SMS_GATEWAY_URL = "https://gatewayapi.com/rest/mtsms"
 try:
     TRACKING_LABEL_PDF_MAX_BYTES = int(str(os.getenv("TRACKING_LABEL_PDF_MAX_BYTES", str(8 * 1024 * 1024))) or str(8 * 1024 * 1024))
@@ -9350,25 +9351,88 @@ def _makerworld_password_preview(password: str) -> str:
     return f"{value[:3]}............"
 
 
+def _makerworld_token_fernet() -> Optional[Any]:
+    if not MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY or Fernet is None:
+        return None
+    try:
+        return Fernet(MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY.encode("utf-8"))
+    except Exception:
+        return None
+
+
+def _makerworld_legacy_token_fernet() -> Optional[Any]:
+    if (
+        not SMS_TOKEN_ENCRYPTION_KEY
+        or not MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY
+        or SMS_TOKEN_ENCRYPTION_KEY == MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY
+        or Fernet is None
+    ):
+        return None
+    try:
+        return Fernet(SMS_TOKEN_ENCRYPTION_KEY.encode("utf-8"))
+    except Exception:
+        return None
+
+
 def _makerworld_encryption_active() -> bool:
-    return _sms_token_fernet() is not None
+    return _makerworld_token_fernet() is not None
+
+
+def _encrypt_makerworld_password(password: str) -> str:
+    value = str(password or "").strip()
+    if not value:
+        return ""
+    fernet = _makerworld_token_fernet()
+    if fernet is None:
+        return ""
+    try:
+        return str(fernet.encrypt(value.encode("utf-8")), "utf-8")
+    except Exception:
+        return ""
+
+
+def _decrypt_makerworld_password(token_value: str) -> str:
+    value = str(token_value or "").strip()
+    if not value:
+        return ""
+
+    fernet = _makerworld_token_fernet()
+    if fernet is None:
+        return ""
+
+    try:
+        return str(fernet.decrypt(value.encode("utf-8")), "utf-8")
+    except FernetInvalidToken:
+        # Backward compatibility: migrate credentials previously encrypted
+        # with SMS_TOKEN_ENCRYPTION_KEY to the dedicated MakerWorld key.
+        legacy = _makerworld_legacy_token_fernet()
+        if legacy is None:
+            return ""
+        try:
+            plain = str(legacy.decrypt(value.encode("utf-8")), "utf-8")
+        except Exception:
+            return ""
+        migrated = _encrypt_makerworld_password(plain)
+        if migrated and migrated != value:
+            set_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, migrated)
+            set_setting(MAKERWORLD_SETTING_PASSWORD_KEY, "")
+        return plain
+    except Exception:
+        return ""
 
 
 def _load_makerworld_password() -> str:
-    encryption_active = _makerworld_encryption_active()
     enc = str(get_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, "") or "").strip()
     if enc:
-        if not encryption_active:
-            return ""
-        plain = _decrypt_sms_token(enc)
+        plain = _decrypt_makerworld_password(enc)
         if plain:
             return plain
         # Older installs could store plaintext in the encrypted setting when
-        # SMS_TOKEN_ENCRYPTION_KEY was not configured yet. Migrate that forward
+        # encryption was not configured yet. Migrate that forward
         # once a valid key becomes available, but do not treat real Fernet
         # ciphertext as plaintext if the key was changed.
-        if encryption_active and not _looks_like_fernet_token(enc):
-            encrypted = _encrypt_sms_token(enc)
+        if _makerworld_encryption_active() and not _looks_like_fernet_token(enc):
+            encrypted = _encrypt_makerworld_password(enc)
             if encrypted and encrypted != enc:
                 set_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, encrypted)
                 set_setting(MAKERWORLD_SETTING_PASSWORD_KEY, "")
@@ -9378,11 +9442,11 @@ def _load_makerworld_password() -> str:
     if not legacy_plain:
         return ""
 
-    if not encryption_active:
+    if not _makerworld_encryption_active():
         return ""
 
     # Auto-migrate gammel plaintext kodeord til krypteret felt, hvis krypteringsnøgle er sat.
-    encrypted = _encrypt_sms_token(legacy_plain)
+    encrypted = _encrypt_makerworld_password(legacy_plain)
     if encrypted and encrypted != legacy_plain:
         set_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, encrypted)
         set_setting(MAKERWORLD_SETTING_PASSWORD_KEY, "")
@@ -9397,11 +9461,11 @@ def _store_makerworld_password(password: str) -> None:
         return
 
     if not _makerworld_encryption_active():
-        raise ValueError("Krypteringsnøgle mangler")
+        raise ValueError("MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY mangler")
 
-    encrypted = _encrypt_sms_token(plain)
+    encrypted = _encrypt_makerworld_password(plain)
     if not encrypted or encrypted == plain:
-        raise ValueError("Kunne ikke kryptere MakerWorld kodeord")
+        raise ValueError("Kunne ikke kryptere MakerWorld kodeord med MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY")
 
     set_setting(MAKERWORLD_SETTING_PASSWORD_ENC_KEY, encrypted)
     # Nulstil legacy plaintext-felt.
@@ -15448,7 +15512,7 @@ def api_settings_makerworld():
     if not _makerworld_encryption_active():
         return jsonify({
             "ok": False,
-            "error": "MakerWorld login kan kun gemmes krypteret. Sæt SMS_TOKEN_ENCRYPTION_KEY først.",
+            "error": "MakerWorld login kan kun gemmes krypteret. Sæt MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY først.",
         }), 400
 
     if not username:

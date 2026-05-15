@@ -222,12 +222,26 @@ PY
   return 1
 }
 
+generate_makerworld_credentials_encryption_key() {
+  generate_sms_token_encryption_key
+}
+
 ensure_sms_token_encryption_key() {
   if [ -n "${SMS_TOKEN_ENCRYPTION_KEY:-}" ]; then
     return 0
   fi
   SMS_TOKEN_ENCRYPTION_KEY="$(generate_sms_token_encryption_key)" || {
     echo "ERROR: Could not generate SMS_TOKEN_ENCRYPTION_KEY. Install openssl or python3 and rerun setup."
+    exit 1
+  }
+}
+
+ensure_makerworld_credentials_encryption_key() {
+  if [ -n "${MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY:-}" ]; then
+    return 0
+  fi
+  MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY="$(generate_makerworld_credentials_encryption_key)" || {
+    echo "ERROR: Could not generate MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY. Install openssl or python3 and rerun setup."
     exit 1
   }
 }
@@ -274,8 +288,10 @@ load_env_with_defaults() {
   : "${BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK:=0}"
   : "${BAMBUSTUDIO_SLICE_DEBUG_ALWAYS:=0}"
   : "${SMS_TOKEN_ENCRYPTION_KEY:=}"
+  : "${MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY:=}"
   : "${UI_VERSION_MARKER:=TMP-2026-04-12-07}"
   ensure_sms_token_encryption_key
+  ensure_makerworld_credentials_encryption_key
 
   : "${EXPECT_DATA_FSTYPES:=}"
   : "${EXPECT_UPLOADS_FSTYPES:=}"
@@ -310,6 +326,7 @@ BAMBUSTUDIO_LOAD_FILAMENTS=${BAMBUSTUDIO_LOAD_FILAMENTS}
 BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK=${BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK}
 BAMBUSTUDIO_SLICE_DEBUG_ALWAYS=${BAMBUSTUDIO_SLICE_DEBUG_ALWAYS}
 SMS_TOKEN_ENCRYPTION_KEY=${SMS_TOKEN_ENCRYPTION_KEY}
+MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY=${MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY}
 UI_VERSION_MARKER=${UI_VERSION_MARKER}
 EXPECT_DATA_FSTYPES=${EXPECT_DATA_FSTYPES}
 EXPECT_UPLOADS_FSTYPES=${EXPECT_UPLOADS_FSTYPES}
@@ -470,6 +487,7 @@ print_summary() {
   echo "  BAMBUSTUDIO_TIMEOUT_SEC=${BAMBUSTUDIO_TIMEOUT_SEC}"
   echo "  BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK=${BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK}"
   echo "  SMS_TOKEN_ENCRYPTION_KEY=set"
+  echo "  MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY=set"
   echo "  SETUP_NFS_UPLOADS_ENABLED=${SETUP_NFS_UPLOADS_ENABLED}"
   if is_truthy "$SETUP_NFS_UPLOADS_ENABLED"; then
     echo "  SETUP_NFS_EXPORT=${SETUP_NFS_EXPORT}"

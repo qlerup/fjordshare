@@ -10721,7 +10721,7 @@
       const data = await api("/api/settings/makerworld");
       applyMakerworldSettings(data || {});
       if (!(data && data.encryption_active)) {
-        showStatus(els.makerworldStatus, "OBS: Sæt SMS_TOKEN_ENCRYPTION_KEY for krypteret lagring af kodeord.", "error");
+        showStatus(els.makerworldStatus, "OBS: Sæt MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY for krypteret lagring af kodeord.", "error");
       } else {
         showStatus(els.makerworldStatus, "");
       }
@@ -10735,7 +10735,7 @@
   async function saveMakerworldSettings() {
     if (state.role !== "admin") return;
     if (!state.makerworldEncryptionActive) {
-      showStatus(els.makerworldStatus, "MakerWorld login kræver kryptering. Sæt SMS_TOKEN_ENCRYPTION_KEY først.", "error");
+      showStatus(els.makerworldStatus, "MakerWorld login kræver kryptering. Sæt MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY først.", "error");
       return;
     }
     const username = String((els.makerworldUsernameInput && els.makerworldUsernameInput.value) || "").trim();
@@ -10762,7 +10762,7 @@
         els.makerworldStatus,
         secure
           ? "MakerWorld login gemt. Kodeord vises maskeret."
-          : "MakerWorld login gemt, men kodeord er ikke krypteret uden SMS_TOKEN_ENCRYPTION_KEY.",
+          : "MakerWorld login gemt, men kodeord er ikke krypteret uden MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY.",
         secure ? "ok" : "error",
       );
     } catch (err) {
