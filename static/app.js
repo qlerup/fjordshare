@@ -135,6 +135,7 @@
     smsGatewayTokenConfigured: false,
     smsGatewayTokenPreview: "",
     smsGatewayTokenPreviewActive: false,
+    makerworldEncryptionActive: false,
     makerworldPasswordConfigured: false,
     makerworldPasswordPreview: "",
     makerworldPasswordPreviewActive: false,
@@ -10651,15 +10652,21 @@
   function setMakerworldSettingsFormState(options = {}) {
     const busy = !!(options && options.busy);
     const action = String((options && options.action) || "");
-    if (els.makerworldUsernameInput) els.makerworldUsernameInput.disabled = busy;
-    if (els.makerworldPasswordInput) els.makerworldPasswordInput.disabled = busy;
+    const encryptionActive = !!state.makerworldEncryptionActive;
+    const locked = !encryptionActive;
+    if (els.makerworldUsernameInput) els.makerworldUsernameInput.disabled = busy || locked;
+    if (els.makerworldPasswordInput) els.makerworldPasswordInput.disabled = busy || locked;
     if (els.makerworldResetPasswordBtn) {
-      els.makerworldResetPasswordBtn.disabled = busy;
+      els.makerworldResetPasswordBtn.disabled = busy || locked;
       els.makerworldResetPasswordBtn.textContent = busy && action === "reset" ? "Nulstiller..." : "Nulstil kodeord";
     }
     if (els.makerworldSaveBtn) {
-      els.makerworldSaveBtn.disabled = busy;
-      els.makerworldSaveBtn.textContent = busy && action === "save" ? "Gemmer..." : "Gem MakerWorld login";
+      els.makerworldSaveBtn.disabled = busy || locked;
+      if (locked) {
+        els.makerworldSaveBtn.textContent = "Kryptering mangler";
+      } else {
+        els.makerworldSaveBtn.textContent = busy && action === "save" ? "Gemmer..." : "Gem MakerWorld login";
+      }
     }
   }
 
@@ -10696,10 +10703,12 @@
 
   function applyMakerworldSettings(data) {
     const username = String((data && data.username) || "").trim();
+    const encryptionActive = !!(data && data.encryption_active);
     const passwordConfigured = !!(data && data.password_configured);
     const passwordPreview = String((data && data.password_preview) || "");
 
     if (els.makerworldUsernameInput) els.makerworldUsernameInput.value = username;
+    state.makerworldEncryptionActive = encryptionActive;
     state.makerworldPasswordConfigured = passwordConfigured;
     state.makerworldPasswordPreview = passwordPreview;
     showMakerworldPasswordPreview();
@@ -10725,6 +10734,10 @@
 
   async function saveMakerworldSettings() {
     if (state.role !== "admin") return;
+    if (!state.makerworldEncryptionActive) {
+      showStatus(els.makerworldStatus, "MakerWorld login kræver kryptering. Sæt SMS_TOKEN_ENCRYPTION_KEY først.", "error");
+      return;
+    }
     const username = String((els.makerworldUsernameInput && els.makerworldUsernameInput.value) || "").trim();
     const rawPassword = String((els.makerworldPasswordInput && els.makerworldPasswordInput.value) || "").trim();
     const password = state.makerworldPasswordPreviewActive && rawPassword === state.makerworldPasswordPreview
