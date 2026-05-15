@@ -3,6 +3,7 @@
 import base64
 import configparser
 import hashlib
+import html
 import io
 import json
 import math
@@ -19,6 +20,7 @@ import time
 import threading
 import zipfile
 from urllib import error as urllib_error
+from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 from contextlib import closing
 from dataclasses import dataclass
@@ -915,6 +917,34 @@ def folder_allows_upload_target(folder_path: str) -> bool:
     if parts and parts[0].lower() == "users":
         return len(parts) >= 3 and bool(DATE_FOLDER_RE.match(parts[2]))
     return True
+
+
+def _plain_text_from_html(raw: Any, max_len: int = 4000) -> str:
+    text = str(raw or "")
+    if not text:
+        return ""
+    text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", text)
+    text = re.sub(r"(?i)</\s*p\s*>", "\n", text)
+    text = re.sub(r"(?i)</\s*li\s*>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = html.unescape(text).replace("\xa0", " ")
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines()]
+    text = "\n".join(line for line in lines if line)
+    return text[:max_len].strip()
+
+
+def _unique_strings(values: Iterable[Any], limit: int = 20) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def folder_abs_path(folder_path: str) -> Tuple[str, Path]:
@@ -11955,6 +11985,211 @@ def share_folder_allowed(folder_path: str, allowed_folders: list[str]) -> bool:
     return False
 
 
+MAKERWORLD_DESIGN_API = "https://api.bambulab.com/v1/design-service/design/{design_id}?trafficSource=browse&visitHistory=false"
+MAKERWORLD_LICENSE_LABELS = {
+    "BY": "Creative Commons Attribution",
+    "BY-SA": "Creative Commons Attribution-ShareAlike",
+    "BY-ND": "Creative Commons Attribution-NoDerivatives",
+    "BY-NC": "Creative Commons Attribution-NonCommercial",
+    "BY-NC-SA": "Creative Commons Attribution-NonCommercial-ShareAlike",
+    "BY-NC-ND": "Creative Commons Attribution-NonCommercial-NoDerivatives",
+    "CC0": "Public Domain",
+    "PUBLIC_DOMAIN": "Public Domain",
+}
+
+
+def _makerworld_ids_from_url(raw_url: str) -> tuple[int, Optional[int]]:
+    parsed = urllib_parse.urlparse(str(raw_url or "").strip())
+    host = parsed.netloc.lower().split(":")[0]
+    if host not in {"makerworld.com", "www.makerworld.com"}:
+        raise ValueError("Indsæt et MakerWorld-link.")
+    match = re.search(r"/models/(\d+)", parsed.path or "")
+    if not match:
+        raise ValueError("Kunne ikke finde MakerWorld model-id i linket.")
+    profile_match = re.search(r"profileId-(\d+)", parsed.fragment or "", re.IGNORECASE)
+    return int(match.group(1)), int(profile_match.group(1)) if profile_match else None
+
+
+def _makerworld_fetch_design(design_id: int) -> dict[str, Any]:
+    api_url = MAKERWORLD_DESIGN_API.format(design_id=int(design_id))
+    req = urllib_request.Request(
+        api_url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "FjordShare/1.0 (+https://fjordshare.local)",
+        },
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            raw = resp.read(4_000_000)
+    except urllib_error.HTTPError as exc:
+        if int(exc.code or 0) == 404:
+            raise ValueError("MakerWorld-modellen blev ikke fundet.") from exc
+        raise ValueError(f"MakerWorld svarede med HTTP {int(exc.code or 0)}.") from exc
+    except urllib_error.URLError as exc:
+        raise ValueError("Kunne ikke kontakte MakerWorld lige nu.") from exc
+    except Exception as exc:
+        raise ValueError("Kunne ikke hente MakerWorld-oplysninger.") from exc
+
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise ValueError("MakerWorld sendte et ugyldigt svar.") from exc
+    if not isinstance(data, dict) or not data.get("id"):
+        raise ValueError("MakerWorld-linket gav ikke en gyldig model.")
+    return data
+
+
+def _makerworld_image_url(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("url") or "").strip()
+    return str(value or "").strip()
+
+
+def _makerworld_profile_summary(
+    instance: dict[str, Any],
+    selected_profile_hint: Optional[int],
+    design_creator_uid: Any = None,
+) -> dict[str, Any]:
+    ext = instance.get("extention") if isinstance(instance.get("extention"), dict) else {}
+    model_info = ext.get("modelInfo") if isinstance(ext.get("modelInfo"), dict) else {}
+    settings = model_info.get("projectSettings") if isinstance(model_info.get("projectSettings"), dict) else {}
+    plates = model_info.get("plates") if isinstance(model_info.get("plates"), list) else []
+    compatibility = model_info.get("compatibility") if isinstance(model_info.get("compatibility"), dict) else {}
+    other_compat = model_info.get("otherCompatibility") if isinstance(model_info.get("otherCompatibility"), list) else []
+    creator = instance.get("instanceCreator") if isinstance(instance.get("instanceCreator"), dict) else {}
+    pictures = instance.get("pictures") if isinstance(instance.get("pictures"), list) else []
+    filaments = instance.get("instanceFilaments") if isinstance(instance.get("instanceFilaments"), list) else []
+    rating_count = int(instance.get("ratingCount") or 0)
+    rating_total = float(instance.get("ratingScoreTotal") or 0)
+    profile_instance_id = int(instance.get("id") or 0)
+    profile_id = int(instance.get("profileId") or 0)
+    creator_uid = str(creator.get("uid") or "").strip()
+
+    printer_names = []
+    for item in [compatibility, *[x for x in other_compat if isinstance(x, dict)]]:
+        name = str(item.get("devProductName") or item.get("devModelName") or "").strip()
+        nozzle = item.get("nozzleDiameter")
+        if name and nozzle:
+            name = f"{name} {nozzle}mm"
+        if name:
+            printer_names.append(name)
+
+    plate_images = []
+    for plate in plates[:6]:
+        if not isinstance(plate, dict):
+            continue
+        plate_images.extend(
+            [
+                _makerworld_image_url(plate.get("thumbnail")),
+                _makerworld_image_url(plate.get("top_picture")),
+                _makerworld_image_url(plate.get("pick_picture")),
+            ]
+        )
+
+    return {
+        "id": profile_instance_id,
+        "profile_id": profile_id,
+        "title": str(instance.get("title") or instance.get("titleTranslated") or "Printprofil").strip(),
+        "creator": str(creator.get("name") or creator.get("handle") or "").strip(),
+        "cover_url": _makerworld_image_url(instance.get("cover")),
+        "picture_urls": _unique_strings([*[_makerworld_image_url(p) for p in pictures], *plate_images], limit=8),
+        "is_default": bool(instance.get("isDefault")),
+        "is_designer": bool(creator_uid and creator_uid == str(design_creator_uid or "").strip()),
+        "selected": bool(selected_profile_hint and selected_profile_hint in {profile_instance_id, profile_id}),
+        "print_time_seconds": int(instance.get("prediction") or 0),
+        "plate_count": len(plates),
+        "weight_g": int(instance.get("weight") or 0),
+        "download_count": int(instance.get("downloadCount") or 0),
+        "print_count": int(instance.get("printCount") or 0),
+        "rating": round(rating_total / rating_count, 1) if rating_count > 0 else None,
+        "rating_count": rating_count,
+        "need_ams": bool(instance.get("needAms")),
+        "material_count": int(instance.get("materialCnt") or 0),
+        "filaments": [
+            {
+                "type": str(item.get("type") or "").strip(),
+                "color": str(item.get("color") or "").strip(),
+                "used_g": str(item.get("usedG") or "").strip(),
+            }
+            for item in filaments[:6]
+            if isinstance(item, dict)
+        ],
+        "settings": {
+            "layer_height": str(settings.get("layerHeight") or "").strip(),
+            "wall_loops": str(settings.get("wallLoops") or "").strip(),
+            "infill": str(settings.get("sparseInfillDensity") or "").strip(),
+        },
+        "compatible_printers": _unique_strings(printer_names, limit=12),
+    }
+
+
+def makerworld_preview_from_url(raw_url: str) -> dict[str, Any]:
+    design_id, selected_profile_hint = _makerworld_ids_from_url(raw_url)
+    data = _makerworld_fetch_design(design_id)
+    creator = data.get("designCreator") if isinstance(data.get("designCreator"), dict) else {}
+    extension = data.get("designExtension") if isinstance(data.get("designExtension"), dict) else {}
+    design_pictures = extension.get("design_pictures") if isinstance(extension.get("design_pictures"), list) else []
+    license_code = str(data.get("license") or "").strip()
+    profiles = [
+        _makerworld_profile_summary(instance, selected_profile_hint, creator.get("uid"))
+        for instance in (data.get("instances") if isinstance(data.get("instances"), list) else [])
+        if isinstance(instance, dict)
+    ]
+    if profiles and not any(p.get("selected") for p in profiles):
+        default_id = int(data.get("defaultInstanceId") or 0)
+        for profile in profiles:
+            if int(profile.get("id") or 0) == default_id:
+                profile["selected"] = True
+                break
+        if not any(p.get("selected") for p in profiles):
+            profiles[0]["selected"] = True
+
+    image_urls = _unique_strings(
+        [
+            data.get("coverUrl"),
+            data.get("coverPortrait"),
+            data.get("coverLandscape"),
+            *[_makerworld_image_url(item) for item in design_pictures],
+            *[profile.get("cover_url") for profile in profiles],
+        ],
+        limit=12,
+    )
+    categories = []
+    for category in data.get("categories") if isinstance(data.get("categories"), list) else []:
+        if isinstance(category, dict):
+            name = str(category.get("name") or category.get("title") or "").strip()
+            if name:
+                categories.append(name)
+
+    return {
+        "source": "makerworld",
+        "source_label": "MakerWorld",
+        "url": str(raw_url or "").strip(),
+        "design_id": int(data.get("id") or design_id),
+        "model_id": str(data.get("modelId") or "").strip(),
+        "title": str(data.get("title") or data.get("titleTranslated") or "MakerWorld model").strip(),
+        "creator": str(creator.get("name") or creator.get("handle") or "").strip(),
+        "creator_handle": str(creator.get("handle") or "").strip(),
+        "cover_url": image_urls[0] if image_urls else "",
+        "image_urls": image_urls,
+        "description": _plain_text_from_html(data.get("summary") or data.get("summaryTranslated") or ""),
+        "license": {
+            "code": license_code,
+            "label": MAKERWORLD_LICENSE_LABELS.get(license_code, license_code or "Ukendt licens"),
+        },
+        "stats": {
+            "likes": int(data.get("likeCount") or 0),
+            "downloads": int(data.get("downloadCount") or 0),
+            "prints": int(data.get("printCount") or 0),
+            "comments": int(data.get("commentCount") or 0),
+            "collections": int(data.get("collectionCount") or 0),
+        },
+        "categories": _unique_strings(categories, limit=6),
+        "profiles": profiles,
+    }
+
+
 def get_share_folders(conn: sqlite3.Connection, share_id: int, fallback_folder: str) -> list[str]:
     rows = conn.execute(
         "SELECT folder_path FROM share_link_folders WHERE share_id=? ORDER BY folder_path",
@@ -17101,6 +17336,36 @@ def _finalize_tus_upload(upload_id: str, meta: Dict[str, Any], data_path: Path) 
         pass
 
     return True, row, ""
+
+
+@app.route("/api/import-link/preview", methods=["POST"])
+@login_required
+def api_import_link_preview():
+    data = request.get_json(silent=True) or {}
+    raw_url = str(data.get("url") or "").strip()
+    folder = normalize_folder_path(str(data.get("folder") or ""))
+    if not raw_url:
+        return jsonify({"ok": False, "error": "Indsæt et link først."}), 400
+
+    if folder:
+        if not permission_allows(permission_for_user_folder(current_user, folder), "upload"):
+            return jsonify({"ok": False, "error": "Ingen upload-adgang til valgt mappe"}), 403
+        if not folder_allows_upload_target(folder):
+            return jsonify({"ok": False, "error": "Upload er ikke tilladt i denne mappe."}), 403
+
+    try:
+        parsed = urllib_parse.urlparse(raw_url)
+        host = parsed.netloc.lower().split(":")[0]
+        if host in {"makerworld.com", "www.makerworld.com"}:
+            preview = makerworld_preview_from_url(raw_url)
+        else:
+            return jsonify({"ok": False, "error": "Denne link-kilde er ikke understøttet endnu."}), 400
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke hente link-oplysninger: {exc}"}), 500
+
+    return jsonify({"ok": True, "preview": preview})
 
 
 @app.route("/api/upload/tus", methods=["OPTIONS"])

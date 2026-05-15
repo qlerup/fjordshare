@@ -65,6 +65,7 @@
         <div class="mapper-current-row">
           <div class="mapper-current-actions">
             <span id="mapperSelectSummary" class="mapper-select-summary hidden" aria-live="polite"></span>
+            <button id="mapperImportLinkBtn" class="btn mapper-import-link-btn" type="button">Hent fra link</button>
             <button id="mapperDesktopUploadBtn" class="btn primary mapper-desktop-upload-btn" type="button">Upload</button>
             <button id="mapperSelectPrintReadyBtn" class="btn primary" type="button">Vælg filer til print</button>
             <button id="mapperSelectClearBtn" class="btn hidden" type="button">Fravælg alle</button>
@@ -823,6 +824,43 @@
         <button id="nonUserFolderCreateBtn" class="btn primary" type="submit">Opret mappe</button>
       </div>
     </form>
+  </div>
+</div>
+
+<div id="importLinkModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card import-link-modal-card">
+    <div class="toolbar">
+      <h3>Hent model fra link</h3>
+      <button id="importLinkCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <p class="hint">Indsæt et link til en model. FjordShare genkender kilden og henter de oplysninger, der kan bruges til import.</p>
+    <label for="importLinkInput">Download link</label>
+    <input id="importLinkInput" class="input" type="url" placeholder="https://makerworld.com/en/models/..." autocomplete="off">
+    <div id="importLinkStatus" class="status hidden"></div>
+    <div class="toolbar end">
+      <button id="importLinkCancelBtn" class="btn" type="button">Annuller</button>
+      <button id="importLinkNextBtn" class="btn primary" type="button">Næste</button>
+    </div>
+  </div>
+</div>
+
+<div id="importPreviewModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card import-preview-modal-card">
+    <div class="toolbar import-preview-head">
+      <div>
+        <h3 id="importPreviewTitle">Model fra link</h3>
+        <div id="importPreviewSubtitle" class="hint"></div>
+      </div>
+      <button id="importPreviewCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <div id="importPreviewBody" class="import-preview-body"></div>
+    <div id="importPreviewStatus" class="status hidden"></div>
+    <div class="toolbar end">
+      <button id="importPreviewBackBtn" class="btn" type="button">Tilbage</button>
+      <button id="importPreviewUseBtn" class="btn primary" type="button">Vælg profil</button>
+    </div>
   </div>
 </div>
 

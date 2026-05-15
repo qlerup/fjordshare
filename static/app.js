@@ -149,6 +149,8 @@
     appOnboardingButtonCountdownSeconds: null,
     appOnboardingStepToken: 0,
     appOnboardingDurationCache: Object.create(null),
+    importLinkPreview: null,
+    importLinkSelectedProfileId: "",
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
   };
@@ -200,6 +202,7 @@
     folderSelect: document.getElementById("folderSelect"),
     refreshFilesBtn: document.getElementById("refreshFilesBtn"),
     uploadBtn: document.getElementById("uploadBtn"),
+    mapperImportLinkBtn: document.getElementById("mapperImportLinkBtn"),
     mapperDesktopUploadBtn: document.getElementById("mapperDesktopUploadBtn"),
     fileInput: document.getElementById("fileInput"),
     newFolderInput: document.getElementById("newFolderInput"),
@@ -481,6 +484,20 @@
     nonUserFolderStatus: document.getElementById("nonUserFolderStatus"),
     nonUserFolderCancelBtn: document.getElementById("nonUserFolderCancelBtn"),
     nonUserFolderCreateBtn: document.getElementById("nonUserFolderCreateBtn"),
+    importLinkModal: document.getElementById("importLinkModal"),
+    importLinkCloseBtn: document.getElementById("importLinkCloseBtn"),
+    importLinkCancelBtn: document.getElementById("importLinkCancelBtn"),
+    importLinkNextBtn: document.getElementById("importLinkNextBtn"),
+    importLinkInput: document.getElementById("importLinkInput"),
+    importLinkStatus: document.getElementById("importLinkStatus"),
+    importPreviewModal: document.getElementById("importPreviewModal"),
+    importPreviewCloseBtn: document.getElementById("importPreviewCloseBtn"),
+    importPreviewBackBtn: document.getElementById("importPreviewBackBtn"),
+    importPreviewUseBtn: document.getElementById("importPreviewUseBtn"),
+    importPreviewTitle: document.getElementById("importPreviewTitle"),
+    importPreviewSubtitle: document.getElementById("importPreviewSubtitle"),
+    importPreviewBody: document.getElementById("importPreviewBody"),
+    importPreviewStatus: document.getElementById("importPreviewStatus"),
     userStatus: document.getElementById("userStatus"),
     usersTableBody: document.getElementById("usersTableBody"),
     signupRequestsStatus: document.getElementById("signupRequestsStatus"),
@@ -3282,6 +3299,10 @@
     }
     if (els.mapperMenuUpload) {
       els.mapperMenuUpload.disabled = writeDisabled;
+    }
+    if (els.mapperImportLinkBtn) {
+      els.mapperImportLinkBtn.classList.toggle("hidden", on || !writeAllowed);
+      els.mapperImportLinkBtn.disabled = writeDisabled;
     }
     if (els.mapperDesktopUploadBtn) {
       els.mapperDesktopUploadBtn.classList.toggle("hidden", on || !writeAllowed);
@@ -13748,6 +13769,224 @@
     if (els.fileInput) els.fileInput.click();
   }
 
+  function importLinkTargetFolder() {
+    return currentFolder() || state.homeFolder || "";
+  }
+
+  function openImportLinkModal() {
+    if (state.selectMode) return;
+    if (!currentFolderAllowsUserWrites()) {
+      showStatus(els.uploadStatus, "Link-import kan kun ske inde i en datomappe.", "error");
+      return;
+    }
+    if (!els.importLinkModal) return;
+    showStatus(els.importLinkStatus, "");
+    if (els.importLinkInput) {
+      els.importLinkInput.value = "";
+    }
+    els.importLinkModal.classList.remove("hidden");
+    window.setTimeout(() => {
+      if (els.importLinkInput) els.importLinkInput.focus();
+    }, 0);
+  }
+
+  function closeImportLinkModal() {
+    if (els.importLinkModal) els.importLinkModal.classList.add("hidden");
+    showStatus(els.importLinkStatus, "");
+  }
+
+  function closeImportPreviewModal() {
+    if (els.importPreviewModal) els.importPreviewModal.classList.add("hidden");
+    showStatus(els.importPreviewStatus, "");
+  }
+
+  function formatImportDuration(seconds) {
+    const total = Math.max(0, Number(seconds || 0));
+    if (!Number.isFinite(total) || total <= 0) return "-";
+    const hours = total / 3600;
+    if (hours >= 1) return `${hours.toFixed(hours >= 10 ? 0 : 1)} t`;
+    const minutes = Math.max(1, Math.round(total / 60));
+    return `${minutes} min`;
+  }
+
+  function formatImportNumber(value) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return "0";
+    return n.toLocaleString("da-DK");
+  }
+
+  function importMetaChip(label, value) {
+    const text = String(value || "").trim();
+    if (!text || text === "0") return "";
+    return `<span class="import-meta-chip"><strong>${esc(label)}</strong>${esc(text)}</span>`;
+  }
+
+  function importSelectedProfile(preview) {
+    const profiles = Array.isArray(preview && preview.profiles) ? preview.profiles : [];
+    const selectedId = String(state.importLinkSelectedProfileId || "");
+    return profiles.find((profile) => String(profile.id || "") === selectedId) || profiles[0] || null;
+  }
+
+  function renderImportPreview(preview) {
+    if (!els.importPreviewBody) return;
+    const data = preview && typeof preview === "object" ? preview : {};
+    const profiles = Array.isArray(data.profiles) ? data.profiles : [];
+    const selected = importSelectedProfile(data);
+    if (selected) {
+      state.importLinkSelectedProfileId = String(selected.id || "");
+    }
+    if (els.importPreviewTitle) {
+      els.importPreviewTitle.textContent = String(data.title || "Model fra link");
+    }
+    if (els.importPreviewSubtitle) {
+      const creator = String(data.creator || "").trim();
+      const source = String(data.source_label || "Link").trim();
+      els.importPreviewSubtitle.textContent = creator ? `${source} · ${creator}` : source;
+    }
+    if (els.importPreviewUseBtn) {
+      els.importPreviewUseBtn.disabled = profiles.length <= 0;
+      els.importPreviewUseBtn.textContent = selected ? "Vælg profil" : "Ingen profiler";
+    }
+
+    const images = Array.isArray(data.image_urls) ? data.image_urls.filter(Boolean).slice(0, 8) : [];
+    const cover = String(data.cover_url || images[0] || "").trim();
+    const imageHtml = cover
+      ? `
+        <div class="import-preview-gallery">
+          <img class="import-preview-cover" src="${esc(cover)}" alt="${esc(data.title || "Model billede")}" loading="lazy" decoding="async">
+          <div class="import-preview-thumbs">
+            ${images.map((url) => `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">`).join("")}
+          </div>
+        </div>
+      `
+      : `<div class="import-preview-empty-media">Intet billede fundet</div>`;
+
+    const stats = data.stats || {};
+    const statsHtml = [
+      importMetaChip("Downloads", formatImportNumber(stats.downloads)),
+      importMetaChip("Print", formatImportNumber(stats.prints)),
+      importMetaChip("Likes", formatImportNumber(stats.likes)),
+      importMetaChip("Kommentarer", formatImportNumber(stats.comments)),
+    ].join("");
+    const license = data.license || {};
+    const categoryHtml = (Array.isArray(data.categories) ? data.categories : [])
+      .map((item) => `<span class="import-category">${esc(item)}</span>`)
+      .join("");
+    const description = String(data.description || "Ingen beskrivelse fundet.").trim();
+    const profileHtml = profiles.length
+      ? profiles.map((profile, index) => {
+          const id = String(profile.id || "");
+          const checked = id === String(state.importLinkSelectedProfileId || "") ? "checked" : "";
+          const settings = profile.settings || {};
+          const filamentHtml = (Array.isArray(profile.filaments) ? profile.filaments : [])
+            .slice(0, 4)
+            .map((filament) => {
+              const color = String(filament.color || "").trim();
+              const type = String(filament.type || "Filament").trim();
+              const used = String(filament.used_g || "").trim();
+              return `<span class="import-filament"><span style="background:${esc(color || "#6b7280")}"></span>${esc(type)}${used ? ` ${esc(used)}g` : ""}</span>`;
+            })
+            .join("");
+          const printers = (Array.isArray(profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 4).join(", ");
+          const coverUrl = String(profile.cover_url || (Array.isArray(profile.picture_urls) && profile.picture_urls[0]) || "").trim();
+          return `
+            <label class="import-profile-card ${checked ? "selected" : ""}">
+              <input type="radio" name="importProfile" value="${esc(id)}" ${checked}>
+              ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${index + 1}</div>`}
+              <div class="import-profile-main">
+                <div class="import-profile-title">${esc(profile.title || "Printprofil")}</div>
+                <div class="import-profile-meta">
+                  ${profile.is_designer ? `<span>Designer</span>` : ""}
+                  <span>${esc(formatImportDuration(profile.print_time_seconds))}</span>
+                  <span>${esc(formatImportNumber(profile.plate_count))} plade${Number(profile.plate_count || 0) === 1 ? "" : "r"}</span>
+                  ${profile.rating ? `<span>${esc(profile.rating)} (${esc(formatImportNumber(profile.rating_count))})</span>` : ""}
+                </div>
+                <div class="import-profile-settings">
+                  ${settings.layer_height ? `<span>${esc(settings.layer_height)}mm lag</span>` : ""}
+                  ${settings.wall_loops ? `<span>${esc(settings.wall_loops)} vægge</span>` : ""}
+                  ${settings.infill ? `<span>${esc(settings.infill)} infill</span>` : ""}
+                  ${profile.need_ams ? `<span>AMS</span>` : ""}
+                </div>
+                ${filamentHtml ? `<div class="import-filaments">${filamentHtml}</div>` : ""}
+                ${printers ? `<div class="import-profile-printers">${esc(printers)}</div>` : ""}
+              </div>
+            </label>
+          `;
+        }).join("")
+      : `<div class="empty-note">Ingen printprofiler fundet på linket.</div>`;
+
+    els.importPreviewBody.innerHTML = `
+      <div class="import-preview-grid">
+        ${imageHtml}
+        <div class="import-preview-summary">
+          <div class="import-preview-source">${esc(data.source_label || "Link")}</div>
+          <h4>${esc(data.title || "Model fra link")}</h4>
+          ${data.creator ? `<div class="import-preview-creator">Af ${esc(data.creator)}</div>` : ""}
+          ${statsHtml ? `<div class="import-meta-chips">${statsHtml}</div>` : ""}
+          ${categoryHtml ? `<div class="import-categories">${categoryHtml}</div>` : ""}
+          <div class="import-license">
+            <div class="import-section-title">Licens</div>
+            <div>${esc(license.label || license.code || "Ukendt licens")}</div>
+          </div>
+        </div>
+      </div>
+      <div class="import-preview-section">
+        <div class="import-section-title">Beskrivelse</div>
+        <div class="import-description">${esc(description).replace(/\n/g, "<br>")}</div>
+      </div>
+      <div class="import-preview-section">
+        <div class="import-section-title">Printprofiler</div>
+        <div class="import-profiles">${profileHtml}</div>
+      </div>
+    `;
+  }
+
+  function openImportPreviewModal(preview) {
+    state.importLinkPreview = preview || null;
+    const profiles = Array.isArray(preview && preview.profiles) ? preview.profiles : [];
+    const selected = profiles.find((profile) => profile && profile.selected) || profiles[0] || null;
+    state.importLinkSelectedProfileId = selected ? String(selected.id || "") : "";
+    renderImportPreview(preview);
+    showStatus(els.importPreviewStatus, "");
+    if (els.importPreviewModal) els.importPreviewModal.classList.remove("hidden");
+  }
+
+  async function fetchImportLinkPreview() {
+    if (!els.importLinkInput) return;
+    const url = String(els.importLinkInput.value || "").trim();
+    if (!url) {
+      showStatus(els.importLinkStatus, "Indsæt et link først.", "error");
+      return;
+    }
+    if (!currentFolderAllowsUserWrites()) {
+      showStatus(els.importLinkStatus, "Link-import kan kun ske inde i en datomappe.", "error");
+      return;
+    }
+    if (els.importLinkNextBtn) {
+      els.importLinkNextBtn.disabled = true;
+      els.importLinkNextBtn.textContent = "Henter...";
+    }
+    showStatus(els.importLinkStatus, "Henter oplysninger...", "ok");
+    try {
+      const data = await api("/api/import-link/preview", {
+        method: "POST",
+        body: {
+          url,
+          folder: importLinkTargetFolder(),
+        },
+      });
+      closeImportLinkModal();
+      openImportPreviewModal(data.preview || {});
+    } catch (err) {
+      showStatus(els.importLinkStatus, err.message || "Kunne ikke hente link-oplysninger", "error");
+    } finally {
+      if (els.importLinkNextBtn) {
+        els.importLinkNextBtn.disabled = false;
+        els.importLinkNextBtn.textContent = "Næste";
+      }
+    }
+  }
+
   async function onMapperMenuAction(action) {
     const cmd = String(action || "").trim().toLowerCase();
     if (!cmd) return;
@@ -14126,6 +14365,12 @@
     if (els.mapperDesktopUploadBtn) {
       els.mapperDesktopUploadBtn.addEventListener("click", () => {
         openMapperUploadPicker();
+      });
+    }
+
+    if (els.mapperImportLinkBtn) {
+      els.mapperImportLinkBtn.addEventListener("click", () => {
+        openImportLinkModal();
       });
     }
 
@@ -15035,6 +15280,74 @@
     if (els.shareFoldersSelect) {
       els.shareFoldersSelect.addEventListener("change", () => {
         updateShareModalSelectionSummary();
+      });
+    }
+
+    if (els.importLinkCloseBtn) {
+      els.importLinkCloseBtn.addEventListener("click", closeImportLinkModal);
+    }
+    if (els.importLinkCancelBtn) {
+      els.importLinkCancelBtn.addEventListener("click", closeImportLinkModal);
+    }
+    if (els.importLinkNextBtn) {
+      els.importLinkNextBtn.addEventListener("click", () => {
+        fetchImportLinkPreview().catch((err) => {
+          showStatus(els.importLinkStatus, err.message || "Kunne ikke hente link-oplysninger", "error");
+        });
+      });
+    }
+    if (els.importLinkInput) {
+      els.importLinkInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        fetchImportLinkPreview().catch((err) => {
+          showStatus(els.importLinkStatus, err.message || "Kunne ikke hente link-oplysninger", "error");
+        });
+      });
+    }
+    if (els.importLinkModal) {
+      els.importLinkModal.addEventListener("click", (event) => {
+        if (event.target === els.importLinkModal || event.target.classList.contains("modal-backdrop")) {
+          closeImportLinkModal();
+        }
+      });
+    }
+    if (els.importPreviewCloseBtn) {
+      els.importPreviewCloseBtn.addEventListener("click", closeImportPreviewModal);
+    }
+    if (els.importPreviewBackBtn) {
+      els.importPreviewBackBtn.addEventListener("click", () => {
+        closeImportPreviewModal();
+        openImportLinkModal();
+      });
+    }
+    if (els.importPreviewUseBtn) {
+      els.importPreviewUseBtn.addEventListener("click", () => {
+        const selected = importSelectedProfile(state.importLinkPreview || {});
+        if (!selected) {
+          showStatus(els.importPreviewStatus, "Vælg en printprofil først.", "error");
+          return;
+        }
+        showStatus(els.importPreviewStatus, `Printprofil valgt: ${selected.title || "Printprofil"}. Download/import kommer i næste trin.`, "ok");
+      });
+    }
+    if (els.importPreviewBody) {
+      els.importPreviewBody.addEventListener("change", (event) => {
+        const input = event.target && event.target.closest ? event.target.closest('input[name="importProfile"]') : null;
+        if (!input) return;
+        state.importLinkSelectedProfileId = String(input.value || "");
+        els.importPreviewBody.querySelectorAll(".import-profile-card").forEach((card) => {
+          const radio = card.querySelector('input[name="importProfile"]');
+          card.classList.toggle("selected", !!radio && radio.checked);
+        });
+        showStatus(els.importPreviewStatus, "");
+      });
+    }
+    if (els.importPreviewModal) {
+      els.importPreviewModal.addEventListener("click", (event) => {
+        if (event.target === els.importPreviewModal || event.target.classList.contains("modal-backdrop")) {
+          closeImportPreviewModal();
+        }
       });
     }
 
