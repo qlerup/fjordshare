@@ -144,7 +144,9 @@
     appOnboardingStepTimer: null,
     appOnboardingStepCountdownTimer: null,
     appOnboardingStepEndsAt: 0,
+    appOnboardingStepDurationMs: 0,
     appOnboardingCountdownLastSeconds: null,
+    appOnboardingButtonCountdownSeconds: null,
     appOnboardingStepToken: 0,
     appOnboardingDurationCache: Object.create(null),
     trackingExpandedIds: new Set(),
@@ -1033,7 +1035,9 @@
       state.appOnboardingStepCountdownTimer = null;
     }
     state.appOnboardingStepEndsAt = 0;
+    state.appOnboardingStepDurationMs = 0;
     state.appOnboardingCountdownLastSeconds = null;
+    state.appOnboardingButtonCountdownSeconds = null;
     hideAppOnboardingCountdown();
   }
 
@@ -1067,6 +1071,15 @@
     return value === 1 ? "1 sek" : `${value} sek`;
   }
 
+  function appOnboardingRequiredButtonLabel(isLast) {
+    const base = isLast ? "Færdig" : "Næste";
+    const seconds = Number(state.appOnboardingButtonCountdownSeconds);
+    if (!state.appOnboardingStepComplete && Number.isFinite(seconds) && seconds > 0) {
+      return `${base} (${seconds})`;
+    }
+    return base;
+  }
+
   function rememberAppOnboardingGifSrc(gif) {
     if (!gif) return "";
     if (!gif.dataset.originalSrc) {
@@ -1095,9 +1108,38 @@
     gif.src = appOnboardingReplaySrc(src, state.appOnboardingStepToken);
   }
 
+  function completeRequiredAppOnboardingStep(token, index, total) {
+    if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding() || state.appOnboardingStepComplete) return;
+    if (state.appOnboardingStepTimer) {
+      window.clearTimeout(state.appOnboardingStepTimer);
+      state.appOnboardingStepTimer = null;
+    }
+    state.appOnboardingStepComplete = true;
+    state.appOnboardingButtonCountdownSeconds = null;
+    renderAppOnboardingControls();
+    showStatus(
+      els.appOnboardingStatus,
+      index >= total - 1 ? "Sidste guide er færdig. Tryk Færdig for at fortsætte." : "Guiden er færdig. Tryk Næste for at fortsætte.",
+      "ok",
+    );
+  }
+
   function updateAppOnboardingCountdown(token, index, total, gif) {
     if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding()) return;
-    const seconds = Math.max(0, Math.ceil(Math.max(0, state.appOnboardingStepEndsAt - Date.now()) / 1000));
+    const duration = Math.max(1000, Number(state.appOnboardingStepDurationMs || 0));
+    const endsAt = Number(state.appOnboardingStepEndsAt || 0);
+    if (!duration || !endsAt) return;
+
+    const now = Date.now();
+    if (!state.appOnboardingStepComplete && now >= endsAt) {
+      completeRequiredAppOnboardingStep(token, index, total);
+    }
+
+    const startedAt = Math.max(0, endsAt - duration);
+    const elapsed = Math.max(0, now - startedAt);
+    const cycleElapsed = duration ? (elapsed % duration) : 0;
+    const loopRemainingMs = cycleElapsed <= 0 ? duration : duration - cycleElapsed;
+    const seconds = Math.max(1, Math.ceil(loopRemainingMs / 1000));
     if (seconds === state.appOnboardingCountdownLastSeconds) return;
     state.appOnboardingCountdownLastSeconds = seconds;
 
@@ -1111,11 +1153,19 @@
       els.appOnboardingCountdown.setAttribute("aria-label", `${appOnboardingSecondsLabel(seconds)} tilbage af guiden`);
       els.appOnboardingCountdown.classList.remove("hidden");
     }
-    showStatus(
-      els.appOnboardingStatus,
-      `Guide ${index + 1} af ${total} afspilles. ${appOnboardingSecondsLabel(seconds)} tilbage, før knappen åbner.`,
-      "ok",
-    );
+
+    if (!state.appOnboardingStepComplete) {
+      const unlockSeconds = Math.max(0, Math.ceil(Math.max(0, endsAt - now) / 1000));
+      if (unlockSeconds !== state.appOnboardingButtonCountdownSeconds) {
+        state.appOnboardingButtonCountdownSeconds = unlockSeconds;
+        renderAppOnboardingControls();
+      }
+      showStatus(
+        els.appOnboardingStatus,
+        `Guide ${index + 1} af ${total} afspilles. ${appOnboardingSecondsLabel(unlockSeconds)} tilbage, før knappen åbner.`,
+        "ok",
+      );
+    }
   }
 
   function skipGifSubBlocks(bytes, pos) {
@@ -1231,7 +1281,7 @@
     }
     if (els.appOnboardingDoneBtn) {
       if (required) {
-        els.appOnboardingDoneBtn.textContent = busy ? "Gemmer..." : (isLast ? "Færdig" : "Næste");
+        els.appOnboardingDoneBtn.textContent = busy ? "Gemmer..." : appOnboardingRequiredButtonLabel(isLast);
         els.appOnboardingDoneBtn.disabled = busy || !state.appOnboardingStepComplete;
       } else {
         els.appOnboardingDoneBtn.textContent = busy ? "Gemmer..." : "Færdig";
@@ -1267,23 +1317,17 @@
 
     appOnboardingGifDurationMs(gif).then((duration) => {
       if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding()) return;
+      state.appOnboardingStepDurationMs = duration;
       state.appOnboardingStepEndsAt = Date.now() + duration;
       state.appOnboardingCountdownLastSeconds = null;
+      state.appOnboardingButtonCountdownSeconds = null;
       updateAppOnboardingCountdown(token, index, keys.length, gif);
       state.appOnboardingStepCountdownTimer = window.setInterval(() => {
         updateAppOnboardingCountdown(token, index, keys.length, gif);
       }, 250);
       state.appOnboardingStepTimer = window.setTimeout(() => {
         if (state.appOnboardingStepToken !== token || !isRequiredAppOnboarding()) return;
-        clearAppOnboardingCountdownTimer();
-        state.appOnboardingStepTimer = null;
-        state.appOnboardingStepComplete = true;
-        renderAppOnboardingControls();
-        showStatus(
-          els.appOnboardingStatus,
-          index >= keys.length - 1 ? "Sidste guide er færdig. Tryk Færdig for at fortsætte." : "Guiden er færdig. Tryk Næste for at fortsætte.",
-          "ok",
-        );
+        completeRequiredAppOnboardingStep(token, index, keys.length);
       }, duration);
     });
   }
