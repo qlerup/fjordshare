@@ -1137,6 +1137,14 @@ def _ancestor_paths(path: str) -> list[str]:
     return out
 
 
+def _is_print_ready_project_files_folder_path(path: str) -> bool:
+    folder = normalize_folder_path(path)
+    if not folder:
+        return False
+    target = PRINT_READY_PROJECT_FILES_FOLDER_NAME.lower()
+    return any(part.lower() == target for part in folder.split("/"))
+
+
 def _folder_clauses(prefixes: Iterable[str]) -> Tuple[str, list[str]]:
     parts: list[str] = []
     params: list[str] = []
@@ -10016,6 +10024,8 @@ def permission_for_user_folder(user: User, folder_path: str) -> str:
 
 def user_can_access_file(user: User, file_row: sqlite3.Row, needed: str = "view") -> bool:
     folder = normalize_folder_path(str(file_row["folder_path"] or ""))
+    if _is_print_ready_project_files_folder_path(folder):
+        return False
     return permission_allows(permission_for_user_folder(user, folder), needed)
 
 
@@ -10028,13 +10038,13 @@ def list_accessible_folders(user: User) -> list[dict]:
             ).fetchall()
         for row in rows:
             path = normalize_folder_path(str(row["folder_path"] or ""))
-            if path:
+            if path and not _is_print_ready_project_files_folder_path(path):
                 candidates.add(path)
     else:
         rows = user_acl_rows(user.id)
         for row in rows:
             path = normalize_folder_path(str(row["folder_path"] or ""))
-            if path:
+            if path and not _is_print_ready_project_files_folder_path(path):
                 candidates.add(path)
 
         with closing(get_conn()) as conn:
@@ -10044,7 +10054,7 @@ def list_accessible_folders(user: User) -> list[dict]:
 
         for row in folder_rows:
             path = normalize_folder_path(str(row["folder_path"] or ""))
-            if not path:
+            if not path or _is_print_ready_project_files_folder_path(path):
                 continue
             if permission_allows(permission_for_user_folder(user, path), "view"):
                 candidates.add(path)
@@ -10159,7 +10169,7 @@ def _unseen_folder_counts_for_user(conn: sqlite3.Connection, user: User) -> dict
         if file_id not in unseen_ids:
             continue
         folder = normalize_folder_path(str(row["folder_path"] or ""))
-        if not folder:
+        if not folder or _is_print_ready_project_files_folder_path(folder):
             continue
 
         lineage = _ancestor_paths(folder)
@@ -10804,6 +10814,8 @@ def _append_accessible_preview_rows(
 
 def folder_preview_file_rows(conn: sqlite3.Connection, user: User, folder_path: str, limit: int = FOLDER_PREVIEW_THUMB_LIMIT) -> list[sqlite3.Row]:
     folder = normalize_folder_path(folder_path)
+    if _is_print_ready_project_files_folder_path(folder):
+        return []
     safe_limit = max(1, min(FOLDER_PREVIEW_THUMB_LIMIT, int(limit or FOLDER_PREVIEW_THUMB_LIMIT)))
     candidate_clause, candidate_params = _folder_preview_candidate_clause()
     order_sql = "((id * 1103515245 + ?) % 2147483647), id"
@@ -10952,6 +10964,8 @@ def _selected_print_ready_rows(
     for row in selected_rows:
         fid = int(row["id"])
         if fid in rows_by_id:
+            continue
+        if _is_print_ready_project_files_folder_path(str(row["folder_path"] or "")):
             continue
         if not user_can_access_file(user, row, "view"):
             raise PermissionError("Ingen adgang til en eller flere filer")
@@ -12869,6 +12883,9 @@ def api_folders_create():
 @login_required
 def api_files_list():
     folder = normalize_folder_path(str(request.args.get("folder") or ""))
+
+    if _is_print_ready_project_files_folder_path(folder):
+        return jsonify({"ok": True, "folder": folder, "items": [], "zip_jobs": []})
 
     if folder and not permission_allows(permission_for_user_folder(current_user, folder), "view"):
         return jsonify({"ok": False, "error": "Ingen adgang til mappe"}), 403
@@ -16684,6 +16701,8 @@ def api_share_files(token: str):
     with closing(get_conn()) as conn:
         rows = conn.execute(query, params).fetchall()
 
+    rows = [r for r in rows if not _is_print_ready_project_files_folder_path(str(r["folder_path"] or ""))]
+
     allowed_ids = _share_row_file_ids(row)
     if allowed_ids:
         allowed_set = set(int(v) for v in allowed_ids)
@@ -16713,6 +16732,8 @@ def _share_file_row(token: str, file_id: int, needed: str) -> Tuple[Optional[sql
         return None, {"ok": False, "error": "Filen findes ikke"}, share_row, folders
 
     file_folder = normalize_folder_path(str(file_row["folder_path"] or ""))
+    if _is_print_ready_project_files_folder_path(file_folder):
+        return None, {"ok": False, "error": "Filen findes ikke"}, share_row, folders
     if not share_folder_allowed(file_folder, folders):
         return None, {"ok": False, "error": "Filen tilhører ikke denne deling"}, share_row, folders
     if not _share_row_allows_file_id(share_row, int(file_id)):
