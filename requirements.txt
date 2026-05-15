@@ -9,3 +9,4 @@ pillow-heif>=0.16,<1.0
 pypdf>=5.0,<6.0
 cryptography>=42.0,<45.0
 pygltflib>=1.16,<2.0
+cloudscraper>=1.2.71,<2.0

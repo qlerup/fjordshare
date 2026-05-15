@@ -83,6 +83,11 @@ except Exception:
     PdfLink = None
     PdfFit = None
 
+try:
+    import cloudscraper
+except Exception:
+    cloudscraper = None
+
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data")).resolve()
 _UPLOAD_ROOT_ENV = str(os.getenv("UPLOAD_ROOT", os.getenv("UPLOAD_DIR", "")) or "").strip()
@@ -12378,7 +12383,62 @@ def _makerworld_json_request(
         req_headers["Content-Type"] = "application/json"
         data_bytes = json.dumps(json_payload, ensure_ascii=False).encode("utf-8")
 
-    req = urllib_request.Request(url, data=data_bytes, headers=req_headers, method=str(method or "GET").upper())
+    method_upper = str(method or "GET").upper()
+
+    if opener is not None and hasattr(opener, "request") and not hasattr(opener, "open"):
+        try:
+            response = opener.request(
+                method_upper,
+                url,
+                headers=req_headers,
+                json=json_payload if json_payload is not None else None,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            raise ValueError("Kunne ikke kontakte MakerWorld/Bambu fra serveren.") from exc
+
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        content_type = str(getattr(response, "headers", {}).get("content-type") or "").lower()
+        text = str(getattr(response, "text", "") or "")
+
+        if "text/html" in content_type and _makerworld_cloudflare_blocked(text):
+            raise ValueError("MakerWorld login blev blokeret af Cloudflare challenge på serveren.")
+
+        if status_code >= 400:
+            if status_code == 403 and _makerworld_cloudflare_blocked(text):
+                raise ValueError("MakerWorld login blev blokeret af Cloudflare challenge på serveren.")
+
+            err = ""
+            if text:
+                try:
+                    body_data = json.loads(text)
+                    if isinstance(body_data, dict):
+                        err = str(body_data.get("error") or body_data.get("message") or "").strip()
+                except Exception:
+                    err = ""
+            if not err:
+                err = f"MakerWorld/Bambu svarede med HTTP {status_code}."
+            raise ValueError(err)
+
+        if not text:
+            return {}
+
+        try:
+            data = json.loads(text)
+        except Exception as exc:
+            raise ValueError("Ugyldigt svar fra MakerWorld/Bambu API.") from exc
+
+        if not isinstance(data, dict):
+            raise ValueError("Ugyldigt svar fra MakerWorld/Bambu API.")
+
+        code = data.get("code")
+        if code not in (None, 0):
+            err = str(data.get("error") or data.get("message") or "").strip()
+            raise ValueError(err or "MakerWorld/Bambu returnerede en fejl.")
+
+        return data
+
+    req = urllib_request.Request(url, data=data_bytes, headers=req_headers, method=method_upper)
     open_fn = opener.open if opener is not None else urllib_request.urlopen
 
     try:
@@ -12437,6 +12497,72 @@ def _makerworld_authenticated_opener(username: str, password: str) -> Any:
     if not account or not secret:
         raise ValueError("Gem MakerWorld brugernavn og kodeord først.")
 
+    consent_body = {
+        "consents": [
+            {
+                "consent_type": "useragreement",
+                "is_consent": True,
+                "consent_version": "v4.0.0",
+                "consent_content": "User Agreement",
+            },
+            {
+                "consent_type": "privacyPolicy",
+                "is_consent": True,
+                "consent_version": "v4.0.0",
+                "consent_content": "Privacy Policy",
+            },
+        ]
+    }
+
+    if cloudscraper is not None:
+        try:
+            scraper = cloudscraper.create_scraper(
+                browser={
+                    "browser": "chrome",
+                    "platform": "windows",
+                    "mobile": False,
+                }
+            )
+            warmup_resp = scraper.get(
+                MAKERWORLD_BAMBU_SIGNIN_PAGE_URL,
+                headers={
+                    "User-Agent": MAKERWORLD_HTTP_USER_AGENT,
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
+                timeout=10,
+            )
+            warmup_text = str(getattr(warmup_resp, "text", "") or "")
+            warmup_status = int(getattr(warmup_resp, "status_code", 0) or 0)
+            if _makerworld_cloudflare_blocked(warmup_text):
+                raise ValueError("Bambu login-side blev blokeret af Cloudflare challenge på serveren.")
+            if warmup_status >= 400:
+                raise ValueError(f"Bambu login-side svarede med HTTP {warmup_status}.")
+
+            _makerworld_json_request(
+                MAKERWORLD_BAMBU_SIGNIN_API_URL,
+                opener=scraper,
+                method="POST",
+                json_payload={
+                    "account": account,
+                    "password": secret,
+                    "consentBody": json.dumps(consent_body, ensure_ascii=False),
+                },
+                headers={
+                    "Origin": "https://bambulab.com",
+                    "Referer": "https://bambulab.com/en/sign-in",
+                    "X-BBL-Webview-Kind": "native",
+                },
+                timeout=15,
+            )
+            return scraper
+        except ValueError as exc:
+            # Preserve clear credential errors immediately; otherwise try urllib fallback below.
+            err_text = str(exc or "").strip().lower()
+            if "incorrect account or password" in err_text or "forkert" in err_text:
+                raise
+        except Exception:
+            pass
+
     cookie_jar = http.cookiejar.CookieJar()
     opener = urllib_request.build_opener(urllib_request.HTTPCookieProcessor(cookie_jar))
 
@@ -12461,23 +12587,6 @@ def _makerworld_authenticated_opener(username: str, password: str) -> Any:
             body = ""
         if int(exc.code or 0) == 403 and _makerworld_cloudflare_blocked(body):
             raise ValueError("Bambu login-side blev blokeret af Cloudflare challenge på serveren.") from exc
-
-    consent_body = {
-        "consents": [
-            {
-                "consent_type": "useragreement",
-                "is_consent": True,
-                "consent_version": "v4.0.0",
-                "consent_content": "User Agreement",
-            },
-            {
-                "consent_type": "privacyPolicy",
-                "is_consent": True,
-                "consent_version": "v4.0.0",
-                "consent_content": "Privacy Policy",
-            },
-        ]
-    }
 
     _makerworld_json_request(
         MAKERWORLD_BAMBU_SIGNIN_API_URL,
@@ -12563,18 +12672,83 @@ def _makerworld_safe_download_name(name: str, signed_url: str, instance_id: int,
     return sanitize_filename(filename)
 
 
-def _makerworld_download_signed_file(signed_url: str, target_path: Path, timeout: int = 60) -> None:
+def _makerworld_download_signed_file(
+    signed_url: str,
+    target_path: Path,
+    timeout: int = 60,
+    opener: Optional[Any] = None,
+) -> None:
     url = str(signed_url or "").strip()
     if not url:
         raise ValueError("MakerWorld signerede fil-URL mangler.")
 
+    request_headers = {
+        "Accept": "*/*",
+        "User-Agent": MAKERWORLD_HTTP_USER_AGENT,
+        "Referer": "https://makerworld.com/",
+    }
+
+    if opener is not None and hasattr(opener, "request") and not hasattr(opener, "open"):
+        try:
+            response = opener.get(url, headers=request_headers, timeout=timeout, stream=True)
+        except Exception as exc:
+            raise ValueError("Kunne ikke hente MakerWorld filen.") from exc
+
+        with closing(response):
+            status_code = int(getattr(response, "status_code", 0) or 0)
+            content_type = str(getattr(response, "headers", {}).get("content-type") or "").lower()
+            if status_code >= 400:
+                body_text = ""
+                try:
+                    body_text = str(getattr(response, "text", "") or "")[:500_000]
+                except Exception:
+                    body_text = ""
+                if status_code == 403 and _makerworld_cloudflare_blocked(body_text):
+                    raise ValueError("MakerWorld download blev blokeret af Cloudflare challenge.")
+
+                err = ""
+                if body_text:
+                    try:
+                        body_data = json.loads(body_text)
+                        if isinstance(body_data, dict):
+                            err = str(body_data.get("error") or body_data.get("message") or "").strip()
+                    except Exception:
+                        err = ""
+                if not err:
+                    err = f"MakerWorld download fejlede med HTTP {status_code}."
+                raise ValueError(err)
+
+            if content_type.startswith("text/") or "application/json" in content_type:
+                body = ""
+                try:
+                    body = str(getattr(response, "text", "") or "")[:500_000]
+                except Exception:
+                    body = ""
+                if _makerworld_cloudflare_blocked(body):
+                    raise ValueError("MakerWorld download blev blokeret af Cloudflare challenge.")
+                err = ""
+                if body:
+                    try:
+                        data = json.loads(body)
+                        if isinstance(data, dict):
+                            err = str(data.get("error") or data.get("message") or body).strip()
+                    except Exception:
+                        err = body.strip()
+                raise ValueError(err or "MakerWorld returnerede ikke en binær fil til download.")
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            with target_path.open("wb") as out_file:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        out_file.write(chunk)
+
+        if not target_path.exists() or not target_path.is_file() or int(target_path.stat().st_size) <= 0:
+            raise ValueError("MakerWorld fil-download gav tom fil.")
+        return
+
     req = urllib_request.Request(
         url,
-        headers={
-            "Accept": "*/*",
-            "User-Agent": MAKERWORLD_HTTP_USER_AGENT,
-            "Referer": "https://makerworld.com/",
-        },
+        headers=request_headers,
         method="GET",
     )
 
@@ -12621,7 +12795,7 @@ def _makerworld_import_instance_to_folder(
         raise ValueError("Ugyldig intern download-sti.")
 
     try:
-        _makerworld_download_signed_file(signed_url, tmp_path)
+        _makerworld_download_signed_file(signed_url, tmp_path, opener=opener)
         return commit_uploaded_file(
             source_path=tmp_path,
             folder_path=folder_path,
