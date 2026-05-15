@@ -12364,7 +12364,7 @@ def _makerworld_json_request(
     method: str = "GET",
     json_payload: Optional[dict[str, Any]] = None,
     headers: Optional[dict[str, str]] = None,
-    timeout: int = 35,
+    timeout: int = 15,
 ) -> dict[str, Any]:
     req_headers: dict[str, str] = {
         "Accept": "application/json, text/plain, */*",
@@ -12449,7 +12449,7 @@ def _makerworld_authenticated_opener(username: str, password: str) -> Any:
         method="GET",
     )
     try:
-        with opener.open(warmup_req, timeout=25) as resp:
+        with opener.open(warmup_req, timeout=10) as resp:
             text = resp.read(300_000).decode("utf-8", "ignore")
             if _makerworld_cloudflare_blocked(text):
                 raise ValueError("Bambu login-side blev blokeret af Cloudflare challenge på serveren.")
@@ -12493,7 +12493,7 @@ def _makerworld_authenticated_opener(username: str, password: str) -> Any:
             "Referer": "https://bambulab.com/en/sign-in",
             "X-BBL-Webview-Kind": "native",
         },
-        timeout=35,
+        timeout=15,
     )
     return opener
 
@@ -12515,7 +12515,7 @@ def _makerworld_fetch_instance_download_payload(instance_id: int, opener: Any, r
             "Origin": "https://makerworld.com",
             "Referer": str(referer_url or "https://makerworld.com/en").strip() or "https://makerworld.com/en",
         },
-        timeout=35,
+        timeout=15,
     )
 
 
@@ -12563,7 +12563,7 @@ def _makerworld_safe_download_name(name: str, signed_url: str, instance_id: int,
     return sanitize_filename(filename)
 
 
-def _makerworld_download_signed_file(signed_url: str, target_path: Path, timeout: int = 180) -> None:
+def _makerworld_download_signed_file(signed_url: str, target_path: Path, timeout: int = 60) -> None:
     url = str(signed_url or "").strip()
     if not url:
         raise ValueError("MakerWorld signerede fil-URL mangler.")

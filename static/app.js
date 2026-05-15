@@ -15767,8 +15767,21 @@
           const details = Array.isArray(errData.details)
             ? errData.details.map((entry) => String(entry || "").trim()).filter(Boolean)
             : [];
+          const errMessage = String((err && err.message) || "").trim();
+          const errMessageLower = errMessage.toLowerCase();
+          const statusCode = Number((err && err.status) || 0);
+          const looksLikeGatewayHtml = (
+            errMessageLower.includes("<!doctype html")
+            || errMessageLower.includes("<html")
+            || errMessageLower.includes("cloudflare")
+            || errMessageLower.includes("502")
+            || errMessageLower.includes("bad gateway")
+          );
+          const shouldBrowserFallback = !!(errData && errData.requires_browser_download)
+            || statusCode >= 500
+            || looksLikeGatewayHtml;
 
-          if (errData && errData.requires_browser_download) {
+          if (shouldBrowserFallback) {
             const downloadUrls = importSelectedProfileDownloadUrls(preview);
             let started = 0;
             downloadUrls.forEach((url) => {
@@ -15777,9 +15790,12 @@
 
             if (started > 0) {
               const detailPrefix = details.length ? `${details[0]}. ` : "";
+              const gatewayHint = (!details.length && (statusCode >= 500 || looksLikeGatewayHtml))
+                ? "Serveren svarede med gateway-fejl. "
+                : "";
               showStatus(
                 els.importPreviewStatus,
-                `${detailPrefix}Server-import blev blokeret, så browser-download blev startet for ${started}/${downloadUrls.length} profiler.`,
+                `${gatewayHint}${detailPrefix}Server-import blev blokeret, så browser-download blev startet for ${started}/${downloadUrls.length} profiler.`,
                 "ok"
               );
             } else {
@@ -15792,7 +15808,7 @@
             }
           } else {
             const detailText = details.length ? ` (${details.slice(0, 2).join(" | ")})` : "";
-            showStatus(els.importPreviewStatus, `${err.message || "Kunne ikke importere valgte profiler."}${detailText}`, "error");
+            showStatus(els.importPreviewStatus, `${errMessage || "Kunne ikke importere valgte profiler."}${detailText}`, "error");
           }
         } finally {
           delete els.importPreviewUseBtn.dataset.busy;
