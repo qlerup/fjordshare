@@ -2633,15 +2633,19 @@
     return /^\d{2}-\d{2}-\d{4}$/.test(segment) || /^\d{4}-\d{2}-\d{2}$/.test(segment);
   }
 
-  function isUsersRootFolder(folderPath) {
+  function folderAllowsUploadTarget(folderPath) {
     const folder = normalizeFolderPath(folderPath);
-    const usersRoot = adminUsersRootFolderPath();
-    return !!folder && (folder === "users" || (!!usersRoot && folder === usersRoot));
+    if (!folder) return false;
+    const parts = folder.split("/").filter(Boolean);
+    if (String(parts[0] || "").toLowerCase() === "users") {
+      return parts.length >= 3 && isDateFolderSegment(parts[2]);
+    }
+    return true;
   }
 
   function folderAllowsUserWrites(folderPath) {
     const folder = normalizeFolderPath(folderPath);
-    if (isUsersRootFolder(folder)) return false;
+    if (!folderAllowsUploadTarget(folder)) return false;
     if (state.role === "admin") return true;
     const home = normalizeFolderPath(state.homeFolder);
     if (!home || !folder || folder === home || !folder.startsWith(`${home}/`)) return false;

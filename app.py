@@ -911,7 +911,10 @@ def folder_allows_upload_target(folder_path: str) -> bool:
     folder = normalize_folder_path(folder_path)
     if not folder:
         return False
-    return folder.lower() != "users"
+    parts = [part for part in folder.split("/") if part]
+    if parts and parts[0].lower() == "users":
+        return len(parts) >= 3 and bool(DATE_FOLDER_RE.match(parts[2]))
+    return True
 
 
 def folder_abs_path(folder_path: str) -> Tuple[str, Path]:
