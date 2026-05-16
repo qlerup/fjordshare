@@ -13943,13 +13943,11 @@
       .join("");
     const description = String(data.description || "Ingen beskrivelse fundet.").trim();
     const targetFolder = importLinkTargetFolder();
-    const sourceUrl = String(data.url || "").trim();
     const overviewHtml = `
       <div class="import-link-overview">
         <div><span>Gemmes i</span><strong>${esc(targetFolder || "-")}</strong></div>
         <div><span>Kilde</span><strong>${esc(data.source_label || "Link")}</strong></div>
         <div><span>Profiler fundet</span><strong>${esc(formatImportNumber(profiles.length))}</strong></div>
-        ${sourceUrl ? `<div class="wide"><span>Link</span><a href="${esc(sourceUrl)}" target="_blank" rel="noopener">${esc(sourceUrl)}</a></div>` : ""}
       </div>
     `;
     const profileHtml = profiles.length
