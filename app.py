@@ -11296,6 +11296,18 @@ def _external_link_payload_for_client(row: sqlite3.Row) -> dict[str, Any]:
     stats = data.get("stats") if isinstance(data.get("stats"), dict) else {}
     license_data = data.get("license") if isinstance(data.get("license"), dict) else {}
     categories = _unique_strings(data.get("categories") if isinstance(data.get("categories"), list) else [], limit=8)
+    cover_url = str(data.get("cover_url") or "").strip()[:1000]
+    image_urls = _unique_strings(
+        [
+            cover_url,
+            *(
+                [str(item or "").strip() for item in data.get("image_urls")]
+                if isinstance(data.get("image_urls"), list)
+                else []
+            ),
+        ],
+        limit=12,
+    )
 
     def _normalize_link_item(item: dict[str, Any], fallback_title: str = "Fil") -> dict[str, Any]:
         settings = item.get("settings") if isinstance(item.get("settings"), dict) else {}
@@ -11349,6 +11361,8 @@ def _external_link_payload_for_client(row: sqlite3.Row) -> dict[str, Any]:
         "title": str(data.get("title") or "").strip()[:240],
         "creator": str(data.get("creator") or "").strip()[:180],
         "creator_handle": str(data.get("creator_handle") or "").strip()[:180],
+        "cover_url": cover_url,
+        "image_urls": image_urls,
         "description": str(data.get("description") or "").strip()[:2500],
         "license": {
             "code": str(license_data.get("code") or "").strip()[:80],

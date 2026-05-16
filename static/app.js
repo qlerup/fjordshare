@@ -153,6 +153,7 @@
     importLinkSelectedProfileId: "",
     importLinkSelectedProfileIds: [],
     importLinkSelectedImageUrl: "",
+    fileInfoSelectedImageUrl: "",
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
   };
@@ -3891,8 +3892,57 @@
     updateStats();
   }
 
+  function fileInfoPreviewImageUrls(file) {
+    const payload = file && file.external_payload && typeof file.external_payload === "object" ? file.external_payload : {};
+    const urls = [];
+    const addUrl = (raw) => {
+      const value = String(raw || "").trim();
+      if (!value || urls.includes(value)) return;
+      urls.push(value);
+    };
+
+    addUrl(file && file.external_cover_url);
+    addUrl(payload.cover_url);
+    (Array.isArray(payload.image_urls) ? payload.image_urls : []).forEach((url) => addUrl(url));
+    (Array.isArray(payload.files) ? payload.files : []).slice(0, 24).forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      addUrl(item.cover_url);
+      (Array.isArray(item.picture_urls) ? item.picture_urls : []).slice(0, 2).forEach((url) => addUrl(url));
+    });
+    (Array.isArray(payload.profiles) ? payload.profiles : []).slice(0, 12).forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      addUrl(item.cover_url);
+      (Array.isArray(item.picture_urls) ? item.picture_urls : []).slice(0, 2).forEach((url) => addUrl(url));
+    });
+
+    return urls.slice(0, 20);
+  }
+
   function filePreviewHtml(file) {
     const displayName = fileDisplayName(file);
+
+    if (file && file.is_external_link) {
+      const galleryImages = fileInfoPreviewImageUrls(file);
+      if (galleryImages.length) {
+        const selected = String(state.fileInfoSelectedImageUrl || "").trim();
+        const activeImage = galleryImages.includes(selected) ? selected : galleryImages[0];
+        const activeIndex = Math.max(0, galleryImages.indexOf(activeImage));
+        const hasMany = galleryImages.length > 1;
+        state.fileInfoSelectedImageUrl = activeImage;
+
+        return `
+          <div class="file-info-preview-gallery">
+            <button class="file-info-preview-cover-btn" type="button" data-file-info-preview-open="${esc(activeImage)}" aria-label="Åbn billede i stor visning">
+              <img src="${esc(activeImage)}" alt="${esc(displayName || "Link billede")}" loading="lazy" decoding="async">
+            </button>
+            ${hasMany ? `<button class="file-info-preview-nav prev" type="button" data-file-info-preview-step="-1" aria-label="Forrige billede">&#10094;</button>` : ""}
+            ${hasMany ? `<button class="file-info-preview-nav next" type="button" data-file-info-preview-step="1" aria-label="Næste billede">&#10095;</button>` : ""}
+            ${hasMany ? `<div class="file-info-preview-counter">${esc(String(activeIndex + 1))}/${esc(String(galleryImages.length))}</div>` : ""}
+          </div>
+        `;
+      }
+    }
+
     if (file.thumb_url) {
       return `<img src="${esc(file.thumb_url)}" alt="${esc(displayName)}" loading="lazy">`;
     }
@@ -8646,6 +8696,7 @@
     const file = fileById(fileId);
     if (!file) return;
     state.currentInfoFileId = Number(file.id || 0);
+    state.fileInfoSelectedImageUrl = "";
     renderFileInfoDrawer(file);
     state.currentFileAttachments = [];
     renderFileAttachments([]);
@@ -8680,6 +8731,7 @@
 
   function closeFileInfoDrawer() {
     state.currentInfoFileId = 0;
+    state.fileInfoSelectedImageUrl = "";
     state.currentFileAttachments = [];
     renderFileAttachments([]);
     showStatus(els.fileInfoAttachStatus, "");
@@ -14822,6 +14874,39 @@
     }
     if (els.fileInfoBackdrop) {
       els.fileInfoBackdrop.addEventListener("click", closeFileInfoDrawer);
+    }
+    if (els.fileInfoPreview) {
+      els.fileInfoPreview.addEventListener("click", (event) => {
+        const navBtn = event.target && event.target.closest ? event.target.closest(".file-info-preview-nav") : null;
+        if (navBtn) {
+          const id = Number(state.currentInfoFileId || 0);
+          const file = id ? fileById(id) : null;
+          if (!file) return;
+
+          const images = fileInfoPreviewImageUrls(file);
+          if (images.length <= 1) return;
+
+          const stepRaw = Number((navBtn.dataset && navBtn.dataset.fileInfoPreviewStep) || 0);
+          const step = Number.isFinite(stepRaw) ? (stepRaw < 0 ? -1 : 1) : 1;
+          const current = String(state.fileInfoSelectedImageUrl || "").trim();
+          const currentIndex = Math.max(0, images.indexOf(current));
+          const nextIndex = (currentIndex + step + images.length) % images.length;
+          state.fileInfoSelectedImageUrl = images[nextIndex] || images[0];
+          renderFileInfoDrawer(file);
+          return;
+        }
+
+        const openBtn = event.target && event.target.closest ? event.target.closest("[data-file-info-preview-open]") : null;
+        if (!openBtn) return;
+
+        const imageUrl = String((openBtn.dataset && openBtn.dataset.fileInfoPreviewOpen) || "").trim();
+        if (!imageUrl) return;
+
+        const id = Number(state.currentInfoFileId || 0);
+        const file = id ? fileById(id) : null;
+        const imageName = file ? fileDisplayName(file) : "Billede";
+        openImagePreviewModal(imageUrl, imageName);
+      });
     }
     if (els.fileInfoSaveBtn) {
       els.fileInfoSaveBtn.addEventListener("click", () => {
