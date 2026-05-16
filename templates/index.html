@@ -867,6 +867,25 @@
   </div>
 </div>
 
+<div id="uploadModelLinksModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card import-link-modal-card upload-model-links-modal-card">
+    <div class="toolbar">
+      <h3>Model-links</h3>
+      <button id="uploadModelLinksCloseBtn" class="btn" type="button">Luk</button>
+    </div>
+    <p class="hint">Tilføj links til modellen, hvis projektet skal have en samlet reference.</p>
+    <div id="uploadModelLinksSummary" class="metadata-current-file">Upload færdig</div>
+    <label for="uploadModelLinksInput">Links (valgfrit)</label>
+    <textarea id="uploadModelLinksInput" class="input upload-model-links-textarea" rows="5" placeholder="Ét link pr. linje"></textarea>
+    <div id="uploadModelLinksStatus" class="status hidden"></div>
+    <div class="toolbar end">
+      <button id="uploadModelLinksSkipBtn" class="btn" type="button">Spring over</button>
+      <button id="uploadModelLinksSaveBtn" class="btn primary" type="button">Fortsæt</button>
+    </div>
+  </div>
+</div>
+
 <div id="shareModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card share-modal-card">

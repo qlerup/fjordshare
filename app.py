@@ -13259,6 +13259,38 @@ def external_link_preview_from_url(raw_url: str) -> dict[str, Any]:
     raise ValueError("Denne link-kilde er ikke understøttet endnu.")
 
 
+def generic_external_link_preview_from_url(raw_url: str) -> dict[str, Any]:
+    clean_url = _clean_http_url(raw_url)
+    parsed = urllib_parse.urlparse(clean_url)
+    host = re.sub(r"^www\.", "", parsed.netloc.lower().split(":")[0])
+    path_name = urllib_parse.unquote(Path(parsed.path or "").stem).replace("-", " ").replace("_", " ").strip()
+    title = re.sub(r"\s+", " ", path_name).strip().title() if path_name else ""
+    return {
+        "source": "link",
+        "source_label": host or "Link",
+        "url": clean_url,
+        "title": title or host or "Model link",
+        "creator": "",
+        "creator_handle": "",
+        "cover_url": "",
+        "image_urls": [],
+        "description": "",
+        "license": {"code": "", "label": ""},
+        "stats": {},
+        "categories": [],
+        "files": [],
+        "files_count": 0,
+        "files_overview_label": "Filer fundet",
+        "files_section_title": "Filer på linket",
+        "files_empty_text": "Ingen filer fundet på linket.",
+        "profiles": [],
+        "profiles_count": 0,
+        "profiles_overview_label": "Profiler fundet",
+        "profiles_section_title": "Printprofiler på linket",
+        "profiles_empty_text": "Ingen printprofiler fundet på linket.",
+    }
+
+
 def _makerworld_cloudflare_blocked(payload_text: str) -> bool:
     text = str(payload_text or "").strip().lower()
     if not text:
@@ -18982,6 +19014,92 @@ def _finalize_tus_upload(
         pass
 
     return True, row, ""
+
+
+def _extract_model_link_urls(value: Any) -> list[str]:
+    raw_values: list[str] = []
+    if isinstance(value, list):
+        raw_values = [str(item or "") for item in value]
+    else:
+        raw_values = re.split(r"[\s,]+", str(value or ""))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_values:
+        clean = _clean_http_url(raw)
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+    return out
+
+
+@app.route("/api/upload/model-links", methods=["POST"])
+@login_required
+def api_upload_model_links():
+    body = request.get_json(silent=True) or {}
+    folder = normalize_folder_path(str(body.get("folder") or ""))
+    urls = _extract_model_link_urls(body.get("urls") if "urls" in body else body.get("links"))
+
+    if not folder:
+        return jsonify({"ok": False, "error": "Vælg en mappe før links gemmes."}), 400
+    if not permission_allows(permission_for_user_folder(current_user, folder), "upload"):
+        return jsonify({"ok": False, "error": "Ingen upload-adgang til valgt mappe"}), 403
+    if not folder_allows_upload_target(folder, allow_users_subfolders=current_user.is_admin):
+        return jsonify({"ok": False, "error": "Upload er ikke tilladt i denne mappe."}), 403
+
+    items: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    created_count = 0
+    for raw_url in urls:
+        with closing(get_conn()) as conn:
+            existing = conn.execute(
+                "SELECT * FROM files WHERE folder_path=? AND external_url=? LIMIT 1",
+                (folder, raw_url),
+            ).fetchone()
+        if existing is not None:
+            items.append(serialize_file_row(existing))
+            skipped.append(f"{raw_url}: findes allerede")
+            continue
+
+        try:
+            preview = external_link_preview_from_url(raw_url)
+        except Exception:
+            preview = generic_external_link_preview_from_url(raw_url)
+
+        try:
+            row = create_external_link_file_record(
+                folder_path=folder,
+                raw_url=raw_url,
+                preview=preview,
+                uploaded_by=str(current_user.username or ""),
+            )
+            items.append(serialize_file_row(row))
+            created_count += 1
+            try:
+                log_activity(
+                    kind="upload",
+                    action="link-saved",
+                    message="Model-link gemt efter upload",
+                    level="info",
+                    folder_path=folder,
+                    actor=str(current_user.username or ""),
+                    target=str(preview.get("title") or raw_url),
+                    file_id=int(row["id"]),
+                )
+            except Exception:
+                pass
+        except Exception as exc:
+            skipped.append(f"{raw_url}: {exc}")
+
+    return jsonify(
+        {
+            "ok": True,
+            "saved_count": created_count,
+            "items": items,
+            "skipped": skipped,
+        }
+    )
 
 
 @app.route("/api/import-link/preview", methods=["POST"])

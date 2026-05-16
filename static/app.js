@@ -54,6 +54,9 @@
     metadataMode: "upload",
     metadataProjectId: 0,
     metadataContinueProject: null,
+    uploadModelLinksResolver: null,
+    uploadModelLinksFolder: "",
+    uploadModelLinksFiles: [],
     threeModules: null,
     three: null,
     thumbPollTimer: null,
@@ -360,6 +363,13 @@
     metadataPrevBtn: document.getElementById("metadataPrevBtn"),
     metadataNextBtn: document.getElementById("metadataNextBtn"),
     metadataSaveBtn: document.getElementById("metadataSaveBtn"),
+    uploadModelLinksModal: document.getElementById("uploadModelLinksModal"),
+    uploadModelLinksCloseBtn: document.getElementById("uploadModelLinksCloseBtn"),
+    uploadModelLinksSummary: document.getElementById("uploadModelLinksSummary"),
+    uploadModelLinksInput: document.getElementById("uploadModelLinksInput"),
+    uploadModelLinksStatus: document.getElementById("uploadModelLinksStatus"),
+    uploadModelLinksSkipBtn: document.getElementById("uploadModelLinksSkipBtn"),
+    uploadModelLinksSaveBtn: document.getElementById("uploadModelLinksSaveBtn"),
     imagePreviewModal: document.getElementById("imagePreviewModal"),
     imagePreviewTitle: document.getElementById("imagePreviewTitle"),
     imagePreviewImg: document.getElementById("imagePreviewImg"),
@@ -4017,26 +4027,26 @@
     return urls.slice(0, 20);
   }
 
-  function filePreviewHtml(file) {
+  function filePreviewHtml(file, options = {}) {
     const displayName = fileDisplayName(file);
+    const interactive = !!(options && options.interactive);
 
     if (file && file.is_external_link) {
       const galleryImages = fileInfoPreviewImageUrls(file);
       if (galleryImages.length) {
         const selected = String(state.fileInfoSelectedImageUrl || "").trim();
-        const activeImage = galleryImages.includes(selected) ? selected : galleryImages[0];
-        const activeIndex = Math.max(0, galleryImages.indexOf(activeImage));
-        const hasMany = galleryImages.length > 1;
-        state.fileInfoSelectedImageUrl = activeImage;
+        const activeImage = interactive && galleryImages.includes(selected) ? selected : galleryImages[0];
+        if (interactive) state.fileInfoSelectedImageUrl = activeImage;
+
+        if (!interactive) {
+          return `<img src="${esc(activeImage)}" alt="${esc(displayName || "Link billede")}" loading="lazy" decoding="async">`;
+        }
 
         return `
           <div class="file-info-preview-gallery">
             <button class="file-info-preview-cover-btn" type="button" data-file-info-preview-open="${esc(activeImage)}" aria-label="Åbn billede i stor visning">
               <img src="${esc(activeImage)}" alt="${esc(displayName || "Link billede")}" loading="lazy" decoding="async">
             </button>
-            ${hasMany ? `<button class="file-info-preview-nav prev" type="button" data-file-info-preview-step="-1" aria-label="Forrige billede">&#10094;</button>` : ""}
-            ${hasMany ? `<button class="file-info-preview-nav next" type="button" data-file-info-preview-step="1" aria-label="Næste billede">&#10095;</button>` : ""}
-            ${hasMany ? `<div class="file-info-preview-counter">${esc(String(activeIndex + 1))}/${esc(String(galleryImages.length))}</div>` : ""}
           </div>
         `;
       }
@@ -8544,6 +8554,23 @@
       return;
     }
 
+    const linkImages = fileInfoPreviewImageUrls(file);
+    const galleryImages = linkImages.slice(1);
+    const galleryHtml = galleryImages.length
+      ? `
+        <div class="file-info-link-section">
+          <div class="file-info-link-section-title">Billeder fra linket</div>
+          <div class="file-info-link-gallery">
+            ${galleryImages.map((url, index) => `
+              <button class="file-info-link-gallery-card" type="button" data-image-url="${esc(url)}" data-image-name="${esc(`${payload.title || fileDisplayName(file)} ${index + 2}`)}">
+                <img src="${esc(url)}" alt="${esc(payload.title || fileDisplayName(file))}" loading="lazy" decoding="async">
+              </button>
+            `).join("")}
+          </div>
+        </div>
+      `
+      : "";
+
     const stats = payload.stats && typeof payload.stats === "object" ? payload.stats : {};
     const statsHtml = [
       fileInfoLinkChip("Downloads", formatImportNumber(stats.downloads)),
@@ -8646,6 +8673,7 @@
           ${payload.creator ? `<div class="file-info-link-creator">Af ${esc(payload.creator)}</div>` : ""}
         </div>
       </div>
+      ${galleryHtml}
       ${statsHtml ? `<div class="file-info-link-chips">${statsHtml}</div>` : ""}
       ${categoriesHtml ? `<div class="file-info-link-tags">${categoriesHtml}</div>` : ""}
       ${licenseText ? `<div class="file-info-link-line"><span>Licens</span><strong>${esc(licenseText)}</strong></div>` : ""}
@@ -8675,7 +8703,7 @@
     if (!id) return;
 
     if (els.fileInfoPreview) {
-      els.fileInfoPreview.innerHTML = filePreviewHtml(file);
+      els.fileInfoPreview.innerHTML = filePreviewHtml(file, { interactive: true });
     }
     const displayName = fileDisplayName(file);
     const externalSource = fileExternalSourceLabel(file);
@@ -9391,6 +9419,118 @@
     return resolved;
   }
 
+  function parseModelLinkText(value) {
+    const seen = new Set();
+    return String(value || "")
+      .split(/[\s,]+/)
+      .map((part) => part.trim())
+      .filter((part) => {
+        if (!part || seen.has(part)) return false;
+        if (!/^https?:\/\//i.test(part)) return false;
+        seen.add(part);
+        return true;
+      });
+  }
+
+  function updateUploadModelLinksButton() {
+    if (!els.uploadModelLinksSaveBtn) return;
+    const urls = parseModelLinkText(els.uploadModelLinksInput && els.uploadModelLinksInput.value);
+    els.uploadModelLinksSaveBtn.textContent = urls.length ? "Gem links og fortsæt" : "Fortsæt";
+  }
+
+  function settleUploadModelLinks(result = {}) {
+    const resolver = state.uploadModelLinksResolver;
+    state.uploadModelLinksResolver = null;
+    state.uploadModelLinksFolder = "";
+    state.uploadModelLinksFiles = [];
+    if (els.uploadModelLinksModal) els.uploadModelLinksModal.classList.add("hidden");
+    if (els.uploadModelLinksInput) els.uploadModelLinksInput.value = "";
+    showStatus(els.uploadModelLinksStatus, "");
+    if (els.uploadModelLinksSaveBtn) {
+      els.uploadModelLinksSaveBtn.disabled = false;
+      delete els.uploadModelLinksSaveBtn.dataset.busy;
+      updateUploadModelLinksButton();
+    }
+    if (typeof resolver === "function") resolver(result || {});
+  }
+
+  function openUploadModelLinksModal(files, folder) {
+    const list = Array.isArray(files) ? files : [];
+    const targetFolder = normalizeFolderPath(folder || "");
+    if (!els.uploadModelLinksModal || !targetFolder) {
+      return Promise.resolve({ savedCount: 0 });
+    }
+
+    state.uploadModelLinksFolder = targetFolder;
+    state.uploadModelLinksFiles = list;
+    if (els.uploadModelLinksSummary) {
+      const count = list.length;
+      els.uploadModelLinksSummary.textContent = `${count} fil(er) uploadet til ${targetFolder}`;
+    }
+    if (els.uploadModelLinksInput) els.uploadModelLinksInput.value = "";
+    showStatus(els.uploadModelLinksStatus, "");
+    if (els.uploadModelLinksSaveBtn) {
+      els.uploadModelLinksSaveBtn.disabled = false;
+      delete els.uploadModelLinksSaveBtn.dataset.busy;
+      updateUploadModelLinksButton();
+    }
+    els.uploadModelLinksModal.classList.remove("hidden");
+    window.setTimeout(() => {
+      if (els.uploadModelLinksInput) els.uploadModelLinksInput.focus();
+    }, 0);
+
+    return new Promise((resolve) => {
+      state.uploadModelLinksResolver = resolve;
+    });
+  }
+
+  async function saveUploadModelLinksAndContinue() {
+    const rawText = String((els.uploadModelLinksInput && els.uploadModelLinksInput.value) || "").trim();
+    const urls = parseModelLinkText(rawText);
+    if (!urls.length) {
+      if (rawText) {
+        showStatus(els.uploadModelLinksStatus, "Indsæt links der starter med http:// eller https://.", "error");
+        return;
+      }
+      settleUploadModelLinks({ savedCount: 0 });
+      return;
+    }
+
+    const folder = normalizeFolderPath(state.uploadModelLinksFolder || "");
+    if (!folder) {
+      showStatus(els.uploadModelLinksStatus, "Mappen mangler.", "error");
+      return;
+    }
+    if (els.uploadModelLinksSaveBtn && els.uploadModelLinksSaveBtn.dataset.busy === "1") return;
+    if (els.uploadModelLinksSaveBtn) {
+      els.uploadModelLinksSaveBtn.dataset.busy = "1";
+      els.uploadModelLinksSaveBtn.disabled = true;
+      els.uploadModelLinksSaveBtn.textContent = "Gemmer...";
+    }
+    showStatus(els.uploadModelLinksStatus, `Gemmer ${urls.length} link(s)...`, "ok");
+
+    try {
+      const data = await api("/api/upload/model-links", {
+        method: "POST",
+        body: { folder, urls },
+      });
+      const savedCount = Math.max(0, Number((data && data.saved_count) || 0));
+      const skipped = Array.isArray(data && data.skipped) ? data.skipped.length : 0;
+      const skippedPart = skipped ? ` · ${skipped} sprunget over` : "";
+      if (savedCount > 0) {
+        showStatus(els.uploadStatus, `${savedCount} model-link(s) gemt i mappen${skippedPart}.`, "ok");
+      }
+      settleUploadModelLinks({ savedCount, skipped });
+    } catch (err) {
+      showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme links", "error");
+      if (els.uploadModelLinksSaveBtn) {
+        els.uploadModelLinksSaveBtn.disabled = false;
+        delete els.uploadModelLinksSaveBtn.dataset.busy;
+        updateUploadModelLinksButton();
+      }
+    }
+  }
+
   function getMetadataCurrentItem() {
     if (!Array.isArray(state.pendingMetadata) || !state.pendingMetadata.length) return null;
     const lastIndex = state.pendingMetadata.length - 1;
@@ -9998,7 +10138,13 @@
         state.currentFolder = firstFolder;
       }
       await loadFiles();
-      if (resolved.length) openMetadataModal(resolved, { mode: "upload" });
+      if (resolved.length) {
+        const linkResult = await openUploadModelLinksModal(resolved, firstFolder || currentFolder() || state.homeFolder || "");
+        if (Number(linkResult && linkResult.savedCount ? linkResult.savedCount : 0) > 0) {
+          await loadFiles();
+        }
+        openMetadataModal(resolved, { mode: "upload" });
+      }
     } else {
       showStatus(els.uploadStatus, uploadWasStopped ? "Upload stoppet." : "Ingen filer blev uploadet.", uploadWasStopped ? "ok" : "error");
       await loadFiles();
@@ -14991,25 +15137,6 @@
     }
     if (els.fileInfoPreview) {
       els.fileInfoPreview.addEventListener("click", (event) => {
-        const navBtn = event.target && event.target.closest ? event.target.closest(".file-info-preview-nav") : null;
-        if (navBtn) {
-          const id = Number(state.currentInfoFileId || 0);
-          const file = id ? fileById(id) : null;
-          if (!file) return;
-
-          const images = fileInfoPreviewImageUrls(file);
-          if (images.length <= 1) return;
-
-          const stepRaw = Number((navBtn.dataset && navBtn.dataset.fileInfoPreviewStep) || 0);
-          const step = Number.isFinite(stepRaw) ? (stepRaw < 0 ? -1 : 1) : 1;
-          const current = String(state.fileInfoSelectedImageUrl || "").trim();
-          const currentIndex = Math.max(0, images.indexOf(current));
-          const nextIndex = (currentIndex + step + images.length) % images.length;
-          state.fileInfoSelectedImageUrl = images[nextIndex] || images[0];
-          renderFileInfoDrawer(file);
-          return;
-        }
-
         const openBtn = event.target && event.target.closest ? event.target.closest("[data-file-info-preview-open]") : null;
         if (!openBtn) return;
 
@@ -15020,6 +15147,18 @@
         const file = id ? fileById(id) : null;
         const imageName = file ? fileDisplayName(file) : "Billede";
         openImagePreviewModal(imageUrl, imageName);
+      });
+    }
+    if (els.fileInfoLinkDetails) {
+      els.fileInfoLinkDetails.addEventListener("click", (event) => {
+        const card = event.target && event.target.closest ? event.target.closest(".file-info-link-gallery-card") : null;
+        if (!card) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openImagePreviewModal(
+          String((card.dataset && card.dataset.imageUrl) || ""),
+          String((card.dataset && card.dataset.imageName) || "Billede")
+        );
       });
     }
     if (els.fileInfoSaveBtn) {
@@ -15566,6 +15705,16 @@
         closePrintReadyModal();
         return;
       }
+      const uploadModelLinksModalOpen = !!(els.uploadModelLinksModal && !els.uploadModelLinksModal.classList.contains("hidden"));
+      if (uploadModelLinksModalOpen) {
+        settleUploadModelLinks({ savedCount: 0 });
+        return;
+      }
+      const metadataModalOpen = !!(els.metadataModal && !els.metadataModal.classList.contains("hidden"));
+      if (metadataModalOpen) {
+        closeMetadataModal();
+        return;
+      }
       const profileModalOpen = !!(els.profileModal && !els.profileModal.classList.contains("hidden"));
       if (profileModalOpen) {
         closeProfileModal();
@@ -15712,6 +15861,33 @@
       els.metadataModal.addEventListener("click", (event) => {
         if (event.target === els.metadataModal || event.target.classList.contains("modal-backdrop")) {
           closeMetadataModal();
+        }
+      });
+    }
+
+    if (els.uploadModelLinksCloseBtn) {
+      els.uploadModelLinksCloseBtn.addEventListener("click", () => settleUploadModelLinks({ savedCount: 0 }));
+    }
+    if (els.uploadModelLinksSkipBtn) {
+      els.uploadModelLinksSkipBtn.addEventListener("click", () => settleUploadModelLinks({ savedCount: 0 }));
+    }
+    if (els.uploadModelLinksSaveBtn) {
+      els.uploadModelLinksSaveBtn.addEventListener("click", () => {
+        saveUploadModelLinksAndContinue().catch((err) => {
+          showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme links", "error");
+        });
+      });
+    }
+    if (els.uploadModelLinksInput) {
+      els.uploadModelLinksInput.addEventListener("input", () => {
+        showStatus(els.uploadModelLinksStatus, "");
+        updateUploadModelLinksButton();
+      });
+    }
+    if (els.uploadModelLinksModal) {
+      els.uploadModelLinksModal.addEventListener("click", (event) => {
+        if (event.target === els.uploadModelLinksModal || event.target.classList.contains("modal-backdrop")) {
+          settleUploadModelLinks({ savedCount: 0 });
         }
       });
     }
