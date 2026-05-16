@@ -65,7 +65,7 @@
         <div class="mapper-current-row">
           <div class="mapper-current-actions">
             <span id="mapperSelectSummary" class="mapper-select-summary hidden" aria-live="polite"></span>
-            <button id="mapperImportLinkBtn" class="btn mapper-import-link-btn" type="button">Hent fra link</button>
+            <button id="mapperImportLinkBtn" class="btn mapper-import-link-btn" type="button">Gem link</button>
             <button id="mapperDesktopUploadBtn" class="btn primary mapper-desktop-upload-btn" type="button">Upload</button>
             <button id="mapperSelectPrintReadyBtn" class="btn primary" type="button">Vælg filer til print</button>
             <button id="mapperSelectClearBtn" class="btn hidden" type="button">Fravælg alle</button>
@@ -113,6 +113,7 @@
         <div class="file-info-grid">
           <div class="file-info-row"><span class="file-info-label">Mappe</span><span id="fileInfoFolder" class="file-info-value">-</span></div>
           <div class="file-info-row"><span class="file-info-label">Type</span><span id="fileInfoExt" class="file-info-value">-</span></div>
+          <div id="fileInfoRowExternalSource" class="file-info-row hidden"><span class="file-info-label">Hjemmeside</span><span id="fileInfoExternalSource" class="file-info-value">-</span></div>
           <div class="file-info-row"><span class="file-info-label">Størrelse</span><span id="fileInfoSize" class="file-info-value">-</span></div>
           <div class="file-info-row"><span class="file-info-label">Uploadet</span><span id="fileInfoUploadedAt" class="file-info-value">-</span></div>
           <div class="file-info-row"><span class="file-info-label">Bruger</span><span id="fileInfoUploadedBy" class="file-info-value">-</span></div>
@@ -216,7 +217,6 @@
           <button class="tab-btn active" data-settings-tab="shares">Delinger</button>
           <button class="tab-btn" data-settings-tab="dns">DNS</button>
           <button class="tab-btn" data-settings-tab="users">Brugere</button>
-          <button class="tab-btn" data-settings-tab="makerworld">MakerWorld</button>
           <button class="tab-btn" data-settings-tab="sms">SMS</button>
           <button class="tab-btn" data-settings-tab="logs">Logs</button>
           <button class="tab-btn" data-settings-tab="slicer">Slicer</button>
@@ -226,7 +226,6 @@
             <option value="shares" selected>Delinger</option>
             <option value="dns">DNS</option>
             <option value="users">Brugere</option>
-            <option value="makerworld">MakerWorld</option>
             <option value="sms">SMS</option>
             <option value="logs">Logs</option>
             <option value="slicer">Slicer</option>
@@ -359,39 +358,6 @@
             <button id="smsSaveBtn" class="btn primary" type="button">Gem SMS</button>
           </div>
           <div id="smsStatus" class="status hidden"></div>
-        </div>
-      </div>
-
-      <div id="settings-panel-makerworld" class="settings-subpanel hidden">
-        <div class="panel">
-          <h3>MakerWorld login</h3>
-          <p class="hint">Gem login til MakerWorld og start login-flow herfra.</p>
-          <p class="hint">Sæt <code>MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY</code> i miljøet. MakerWorld kodeord gemmes kun krypteret.</p>
-          <div class="form-grid">
-            <div>
-              <label for="makerworldUsernameInput">Brugernavn eller e-mail</label>
-              <input id="makerworldUsernameInput" class="input" type="text" autocomplete="username" placeholder="fx navn@domain.com">
-            </div>
-            <div>
-              <label for="makerworldPasswordInput">Kodeord</label>
-              <input id="makerworldPasswordInput" class="input" type="password" autocomplete="current-password" placeholder="Indsæt kodeord">
-              <p class="hint">Når kodeord er gemt, vises ingen tegn. Klik i feltet og skriv et nyt kodeord for at ændre.</p>
-            </div>
-          </div>
-          <div class="toolbar end">
-            <button id="makerworldResetPasswordBtn" class="btn danger" type="button">Nulstil kodeord</button>
-            <button id="makerworldSaveBtn" class="btn primary" type="button">Login</button>
-          </div>
-          <div id="makerworldLoginBrowserWrap" class="makerworld-login-browser-wrap hidden">
-            <div class="toolbar">
-              <strong>MakerWorld login browser</strong>
-              <a id="makerworldLoginOpenLink" class="btn small" href="#" target="_blank" rel="noopener">Åbn MakerWorld login</a>
-            </div>
-            <iframe id="makerworldLoginBrowserFrame" class="makerworld-login-browser-frame" title="MakerWorld login browser" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
-            <p class="hint">Hvis browser-rammen er tom, blokerer MakerWorld/Bambu indlejring af sikkerhedsgrunde. Brug knappen “Åbn MakerWorld login”.</p>
-            <div id="makerworldLoginLiveStatus" class="status hidden"></div>
-          </div>
-          <div id="makerworldStatus" class="status hidden"></div>
         </div>
       </div>
 
@@ -866,11 +832,11 @@
   <div class="modal-backdrop"></div>
   <div class="modal-card import-link-modal-card">
     <div class="toolbar">
-      <h3>Hent model fra link</h3>
+      <h3>Gem model-link</h3>
       <button id="importLinkCloseBtn" class="btn" type="button">Luk</button>
     </div>
-    <p class="hint">Indsæt et link til en model. FjordShare genkender kilden og henter de oplysninger, der kan bruges til import.</p>
-    <label for="importLinkInput">Download link</label>
+    <p class="hint">Indsæt et link til en model. FjordShare genkender kilden og viser et overblik, før linket gemmes i mappen.</p>
+    <label for="importLinkInput">Model-link</label>
     <input id="importLinkInput" class="input" type="url" placeholder="https://makerworld.com/en/models/..." autocomplete="off">
     <div id="importLinkStatus" class="status hidden"></div>
     <div class="toolbar end">
@@ -885,7 +851,7 @@
   <div class="modal-card import-preview-modal-card">
     <div class="toolbar import-preview-head">
       <div>
-        <h3 id="importPreviewTitle">Model fra link</h3>
+        <h3 id="importPreviewTitle">Gem link</h3>
         <div id="importPreviewSubtitle" class="hint"></div>
       </div>
       <button id="importPreviewCloseBtn" class="btn" type="button">Luk</button>
@@ -894,7 +860,7 @@
     <div id="importPreviewStatus" class="status hidden"></div>
     <div class="toolbar end">
       <button id="importPreviewBackBtn" class="btn" type="button">Tilbage</button>
-      <button id="importPreviewUseBtn" class="btn primary" type="button">Download profiler</button>
+      <button id="importPreviewUseBtn" class="btn primary" type="button">Gem fil-link</button>
     </div>
   </div>
 </div>

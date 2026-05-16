@@ -94,8 +94,12 @@
   }
 
   function filePreviewHtml(file) {
+    const displayName = fileDisplayName(file);
     if (file.thumb_url) {
-      return `<img src="${esc(file.thumb_url)}" alt="${esc(file.filename)}" loading="lazy">`;
+      return `<img src="${esc(file.thumb_url)}" alt="${esc(displayName)}" loading="lazy">`;
+    }
+    if (file.external_cover_url) {
+      return `<img src="${esc(file.external_cover_url)}" alt="${esc(displayName || "Link")}" loading="lazy" decoding="async">`;
     }
     if (file.preview_3d_thumbnail) {
       const src = String(file.preview_model_url || file.content_url || "");
@@ -116,6 +120,32 @@
     return `<div class="placeholder">${esc(file.ext || "fil").toUpperCase()}</div>`;
   }
 
+  function fileDisplayName(file) {
+    const externalTitle = String((file && file.external_title) || "").trim();
+    if (externalTitle) return externalTitle;
+    return String((file && file.filename) || "-").trim() || "-";
+  }
+
+  function fileExternalSourceLabel(file) {
+    const explicit = String((file && file.external_source) || "").trim();
+    if (explicit) return explicit;
+    const rawUrl = String((file && file.external_url) || "").trim();
+    if (!rawUrl) return "";
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.hostname.replace(/^www\./i, "");
+    } catch (_err) {
+      return "";
+    }
+  }
+
+  function fileTypeBadgeHtml(file) {
+    const rawExt = String((file && file.ext) || fileExt(file && file.filename) || "").trim();
+    const label = file && file.is_external_link ? "LINK" : (rawExt.replace(/^\./, "").toUpperCase() || "FIL");
+    const cls = label.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "file";
+    return `<span class="file-ext-badge file-ext-${esc(cls)}" title="Filtype: ${esc(label)}">${esc(label)}</span>`;
+  }
+
   function renderFiles() {
     if (!els.shareFileGrid) return;
     if (!state.files.length) {
@@ -125,14 +155,21 @@
     els.shareFileGrid.innerHTML = state.files
       .map((file) => {
         const id = Number(file.id || 0);
+        const displayName = fileDisplayName(file);
+        const externalSource = fileExternalSourceLabel(file);
+        const metaParts = [];
+        if (externalSource) metaParts.push(externalSource);
+        const note = String(file.note || "").trim();
+        if (note) metaParts.push(note);
+        metaParts.push(`Antal: ${Number(file.quantity || 1)}`);
         return `
           <article class="file-card">
-            <div class="file-preview">${filePreviewHtml(file)}</div>
+            <div class="file-preview">${fileTypeBadgeHtml(file)}${filePreviewHtml(file)}</div>
             <div class="file-body">
-              <div class="file-name">${esc(file.filename)}</div>
-              <div class="file-meta">${esc(file.note || "")}  -  Antal: ${Number(file.quantity || 1)}</div>
+              <div class="file-name">${esc(displayName)}</div>
+              <div class="file-meta">${esc(metaParts.join("  -  "))}</div>
               <div class="file-actions">
-                <a class="btn" href="${esc(file.download_url)}" target="_blank" rel="noopener">Download</a>
+                <a class="btn" href="${esc(file.external_url || file.download_url)}" target="_blank" rel="noopener">${file.external_url ? "Åbn link" : "Download"}</a>
                 ${state.share && state.share.can_delete ? `<button class="btn danger" data-delete-id="${id}">Slet</button>` : ""}
               </div>
             </div>
@@ -335,4 +372,3 @@
   bindEvents();
   loadShareInfo();
 })();
-

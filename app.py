@@ -8474,7 +8474,12 @@ def init_db() -> None:
                 thumb_rel TEXT,
                 thumb_status TEXT DEFAULT 'none',
                 thumb_error TEXT,
-                thumb_updated_at TEXT
+                thumb_updated_at TEXT,
+                external_url TEXT,
+                external_source TEXT,
+                external_title TEXT,
+                external_cover_url TEXT,
+                external_payload_json TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_path);
             CREATE INDEX IF NOT EXISTS idx_files_uploaded_at ON files(uploaded_at DESC);
@@ -8685,6 +8690,16 @@ def init_db() -> None:
             conn.execute("ALTER TABLE files ADD COLUMN thumb_error TEXT")
         if "thumb_updated_at" not in file_cols:
             conn.execute("ALTER TABLE files ADD COLUMN thumb_updated_at TEXT")
+        if "external_url" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN external_url TEXT")
+        if "external_source" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN external_source TEXT")
+        if "external_title" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN external_title TEXT")
+        if "external_cover_url" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN external_cover_url TEXT")
+        if "external_payload_json" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN external_payload_json TEXT")
         if "printed" not in file_cols:
             conn.execute("ALTER TABLE files ADD COLUMN printed INTEGER NOT NULL DEFAULT 0")
         if "printed_at" not in file_cols:
@@ -10606,7 +10621,12 @@ def upsert_file_record(
                 thumb_rel=excluded.thumb_rel,
                 thumb_status=excluded.thumb_status,
                 thumb_error=excluded.thumb_error,
-                thumb_updated_at=excluded.thumb_updated_at
+                thumb_updated_at=excluded.thumb_updated_at,
+                external_url=NULL,
+                external_source=NULL,
+                external_title=NULL,
+                external_cover_url=NULL,
+                external_payload_json=NULL
             """,
             (
                 folder,
@@ -10687,6 +10707,97 @@ def commit_uploaded_file(
             enqueue_thumbnail(int(row["id"]))
     except Exception:
         pass
+    return row
+
+
+def _external_link_url_from_row(row: sqlite3.Row) -> str:
+    value = str(_row_value(row, "external_url", "") or "").strip()
+    if not value:
+        return ""
+    parsed = urllib_parse.urlparse(value)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return value
+
+
+def _allocate_unique_link_target(folder: str, abs_folder: Path, filename: str) -> Path:
+    clean = sanitize_filename(filename)
+    stem = Path(clean).stem.strip() or "model-link"
+    suffix = ".url"
+
+    for idx in range(0, 1000):
+        candidate_name = f"{stem}{suffix}" if idx <= 0 else f"{stem}_{idx}{suffix}"
+        rel_path = upload_relative_path(folder, candidate_name)
+        target = (abs_folder / candidate_name).resolve()
+        if not _is_relative_to(UPLOAD_ROOT, target):
+            raise ValueError("Ugyldig filsti")
+        if target.exists():
+            continue
+        with closing(get_conn()) as conn:
+            existing = conn.execute("SELECT 1 FROM files WHERE rel_path=? LIMIT 1", (rel_path,)).fetchone()
+        if existing is None:
+            return target
+
+    raise RuntimeError("Kunne ikke finde et ledigt filnavn til linket")
+
+
+def create_external_link_file_record(
+    *,
+    folder_path: str,
+    raw_url: str,
+    preview: dict[str, Any],
+    uploaded_by: str,
+) -> sqlite3.Row:
+    clean_url = str(raw_url or "").strip()
+    parsed = urllib_parse.urlparse(clean_url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Indsæt et gyldigt http/https-link.")
+
+    folder, abs_folder = folder_abs_path(folder_path)
+    abs_folder.mkdir(parents=True, exist_ok=True)
+    ensure_folder_record(folder)
+
+    data = preview if isinstance(preview, dict) else {}
+    title = str(data.get("title") or "Model link").strip() or "Model link"
+    source_label = str(data.get("source_label") or data.get("source") or "Link").strip() or "Link"
+    cover_url = str(data.get("cover_url") or "").strip()
+    target = _allocate_unique_link_target(folder, abs_folder, f"{title}.url")
+    target.write_text(f"[InternetShortcut]\nURL={clean_url}\n", encoding="utf-8")
+
+    row = upsert_file_record(
+        folder_path=folder,
+        filename=target.name,
+        disk_path=target,
+        uploaded_by=uploaded_by,
+        upload_client_id=None,
+    )
+
+    payload_json = json.dumps(data, ensure_ascii=False)
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE files
+            SET external_url=?,
+                external_source=?,
+                external_title=?,
+                external_cover_url=?,
+                external_payload_json=?
+            WHERE id=?
+            """,
+            (
+                clean_url,
+                source_label[:120],
+                title[:240],
+                cover_url[:1000],
+                payload_json[:200000],
+                int(row["id"]),
+            ),
+        )
+        row = conn.execute("SELECT * FROM files WHERE id=?", (int(row["id"]),)).fetchone()
+        conn.commit()
+
+    if row is None:
+        raise RuntimeError("Kunne ikke gemme linket")
     return row
 
 
@@ -10980,6 +11091,11 @@ def serialize_file_row(
     thumb_status = str(row["thumb_status"] or "none").strip().lower() or "none"
     thumb_rel = str(row["thumb_rel"] or "").strip()
     has_thumb = bool(thumb_rel)
+    external_url = str(_row_value(row, "external_url", "") or "").strip()
+    external_source = str(_row_value(row, "external_source", "") or "").strip()
+    external_title = str(_row_value(row, "external_title", "") or "").strip()
+    external_cover_url = str(_row_value(row, "external_cover_url", "") or "").strip()
+    is_external_link = bool(external_url)
 
     preview_model_url = ""
     if share_token:
@@ -11033,6 +11149,11 @@ def serialize_file_row(
         "preview_3d_thumbnail": preview_3d_thumbnail,
         "preview_model_url": preview_model_url,
         "thumb_supported": bool(thumb_supported),
+        "is_external_link": bool(is_external_link),
+        "external_url": external_url,
+        "external_source": external_source,
+        "external_title": external_title,
+        "external_cover_url": external_cover_url,
         "content_url": content_url,
         "download_url": download_url,
         "slice_output": _serialize_slice_output_row(slice_output_row, share_token=share_token) if slice_output_row is not None else None,
@@ -13933,6 +14054,9 @@ def api_file_content(file_id: int):
         return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
     if not user_can_access_file(current_user, row, "view"):
         return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+    external_url = _external_link_url_from_row(row)
+    if external_url:
+        return redirect(external_url)
 
     try:
         path = file_disk_path(row)
@@ -13956,6 +14080,9 @@ def api_file_download(file_id: int):
         return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
     if not user_can_access_file(current_user, row, "view"):
         return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+    external_url = _external_link_url_from_row(row)
+    if external_url:
+        return redirect(external_url)
 
     try:
         path = file_disk_path(row)
@@ -17860,6 +17987,10 @@ def api_share_file_content(token: str, file_id: int):
     if err is not None:
         status = 401 if err.get("requires_auth") else 403
         return jsonify(err), status
+    external_url = _external_link_url_from_row(file_row)
+    if external_url:
+        touch_share_used(int(share_row["id"]))
+        return redirect(external_url)
 
     try:
         path = file_disk_path(file_row)
@@ -17880,6 +18011,10 @@ def api_share_file_download(token: str, file_id: int):
     if err is not None:
         status = 401 if err.get("requires_auth") else 403
         return jsonify(err), status
+    external_url = _external_link_url_from_row(file_row)
+    if external_url:
+        touch_share_used(int(share_row["id"]))
+        return redirect(external_url)
 
     try:
         path = file_disk_path(file_row)
@@ -18172,24 +18307,11 @@ def api_import_link_commit():
     body = request.get_json(silent=True) or {}
     raw_url = str(body.get("url") or "").strip()
     folder = normalize_folder_path(str(body.get("folder") or ""))
-    selected_raw = body.get("selected_profile_ids")
 
     if not raw_url:
         return jsonify({"ok": False, "error": "Indsæt et link først."}), 400
     if not folder:
-        return jsonify({"ok": False, "error": "Vælg en mappe før import."}), 400
-
-    selected_ids: list[str] = []
-    seen_ids: set[str] = set()
-    if isinstance(selected_raw, list):
-        for value in selected_raw:
-            profile_id = str(value or "").strip()
-            if not profile_id or profile_id in seen_ids:
-                continue
-            seen_ids.add(profile_id)
-            selected_ids.append(profile_id)
-    if not selected_ids:
-        return jsonify({"ok": False, "error": "Vælg mindst en printprofil først."}), 400
+        return jsonify({"ok": False, "error": "Vælg en mappe før linket gemmes."}), 400
 
     if folder:
         if not permission_allows(permission_for_user_folder(current_user, folder), "upload"):
@@ -18209,86 +18331,27 @@ def api_import_link_commit():
     except Exception as exc:
         return jsonify({"ok": False, "error": f"Kunne ikke hente link-oplysninger: {exc}"}), 500
 
-    profiles = preview.get("profiles") if isinstance(preview.get("profiles"), list) else []
-    profile_map: dict[str, dict[str, Any]] = {}
-    for profile in profiles:
-        if not isinstance(profile, dict):
-            continue
-        profile_id = str(profile.get("id") or "").strip()
-        if not profile_id:
-            continue
-        profile_map[profile_id] = profile
-
-    target_profile_ids = [profile_id for profile_id in selected_ids if profile_id in profile_map]
-    if not target_profile_ids:
-        return jsonify({"ok": False, "error": "Ingen gyldige printprofiler valgt."}), 400
-
-    makerworld_settings = _load_makerworld_settings()
-    username = str(makerworld_settings.get("username") or "").strip()
-    password = str(makerworld_settings.get("password") or "").strip()
-    if not username or not password:
-        return jsonify({
-            "ok": False,
-            "error": "Gem MakerWorld login i indstillinger først.",
-            "requires_browser_download": True,
-        }), 400
-
     try:
-        opener = _makerworld_authenticated_opener(username, password)
+        row = create_external_link_file_record(
+            folder_path=folder,
+            raw_url=raw_url,
+            preview=preview,
+            uploaded_by=str(current_user.username or ""),
+        )
     except Exception as exc:
-        err = str(exc) or "Kunne ikke logge ind på MakerWorld fra serveren."
-        return jsonify(
-            {
-                "ok": False,
-                "error": err,
-                "requires_browser_download": True,
-            }
-        ), 502
+        return jsonify({"ok": False, "error": f"Kunne ikke gemme linket: {exc}"}), 500
 
-    imported_rows: list[sqlite3.Row] = []
-    errors: list[str] = []
-    actor = str(current_user.username or "")
-    for profile_id in target_profile_ids:
-        profile = profile_map.get(profile_id) or {}
-        instance_id = int(profile.get("id") or 0)
-        profile_title = str(profile.get("title") or f"Profile {profile_id}").strip() or f"Profile {profile_id}"
-        if instance_id <= 0:
-            errors.append(f"{profile_title}: Ugyldigt profile-id")
-            continue
-
-        try:
-            row = _makerworld_import_instance_to_folder(
-                instance_id=instance_id,
-                opener=opener,
-                folder_path=folder,
-                uploaded_by=actor,
-                referer_url=raw_url,
-                fallback_title=profile_title,
-            )
-            imported_rows.append(row)
-        except Exception as exc:
-            errors.append(f"{profile_title}: {exc}")
-
-    if not imported_rows:
-        return jsonify(
-            {
-                "ok": False,
-                "error": "Kunne ikke hente filer fra MakerWorld.",
-                "details": errors,
-                "requires_browser_download": True,
-            }
-        ), 502
-
-    items = [serialize_file_row(row) for row in imported_rows]
+    item = serialize_file_row(row)
     try:
         log_activity(
             kind="upload",
-            action="makerworld-import",
-            message=f"MakerWorld import gennemført ({len(items)} fil(er))",
+            action="link-saved",
+            message="Model-link gemt",
             level="info",
             folder_path=folder,
-            actor=actor,
-            target=str(preview.get("title") or "makerworld"),
+            actor=str(current_user.username or ""),
+            target=str(preview.get("title") or raw_url),
+            file_id=int(row["id"]),
         )
     except Exception:
         pass
@@ -18296,9 +18359,8 @@ def api_import_link_commit():
     return jsonify(
         {
             "ok": True,
-            "imported_count": len(items),
-            "items": items,
-            "errors": errors,
+            "saved_count": 1,
+            "item": item,
         }
     )
 

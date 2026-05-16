@@ -135,11 +135,6 @@
     smsGatewayTokenConfigured: false,
     smsGatewayTokenPreview: "",
     smsGatewayTokenPreviewActive: false,
-    makerworldEncryptionActive: false,
-    makerworldPasswordConfigured: false,
-    makerworldPasswordPreview: "",
-    makerworldPasswordPreviewActive: false,
-    makerworldLoginFlowUrl: "",
     appOnboardingSeenPersisted: false,
     appOnboardingEnabled: true,
     appOnboardingPanelKey: "navigation",
@@ -202,7 +197,6 @@
     settingsPanelShares: document.getElementById("settings-panel-shares"),
     settingsPanelDns: document.getElementById("settings-panel-dns"),
     settingsPanelUsers: document.getElementById("settings-panel-users"),
-    settingsPanelMakerworld: document.getElementById("settings-panel-makerworld"),
     settingsPanelSms: document.getElementById("settings-panel-sms"),
     settingsPanelLogs: document.getElementById("settings-panel-logs"),
     settingsPanelSlicer: document.getElementById("settings-panel-slicer"),
@@ -265,6 +259,8 @@
     fileInfoMeta: document.getElementById("fileInfoMeta"),
     fileInfoFolder: document.getElementById("fileInfoFolder"),
     fileInfoExt: document.getElementById("fileInfoExt"),
+    fileInfoRowExternalSource: document.getElementById("fileInfoRowExternalSource"),
+    fileInfoExternalSource: document.getElementById("fileInfoExternalSource"),
     fileInfoSize: document.getElementById("fileInfoSize"),
     fileInfoUploadedAt: document.getElementById("fileInfoUploadedAt"),
     fileInfoUploadedBy: document.getElementById("fileInfoUploadedBy"),
@@ -462,15 +458,6 @@
     smsResetTokenBtn: document.getElementById("smsResetTokenBtn"),
     smsSaveBtn: document.getElementById("smsSaveBtn"),
     smsStatus: document.getElementById("smsStatus"),
-    makerworldUsernameInput: document.getElementById("makerworldUsernameInput"),
-    makerworldPasswordInput: document.getElementById("makerworldPasswordInput"),
-    makerworldResetPasswordBtn: document.getElementById("makerworldResetPasswordBtn"),
-    makerworldSaveBtn: document.getElementById("makerworldSaveBtn"),
-    makerworldLoginBrowserWrap: document.getElementById("makerworldLoginBrowserWrap"),
-    makerworldLoginBrowserFrame: document.getElementById("makerworldLoginBrowserFrame"),
-    makerworldLoginOpenLink: document.getElementById("makerworldLoginOpenLink"),
-    makerworldLoginLiveStatus: document.getElementById("makerworldLoginLiveStatus"),
-    makerworldStatus: document.getElementById("makerworldStatus"),
     openCreateUserModalBtn: document.getElementById("openCreateUserModalBtn"),
     createUserModal: document.getElementById("createUserModal"),
     createUserForm: document.getElementById("createUserForm"),
@@ -666,39 +653,6 @@
       iframe.remove();
     }, 60000);
     return true;
-  }
-
-  function triggerTopLevelDownload(url) {
-    const safeUrl = String(url || "").trim();
-    if (!safeUrl || safeUrl === "#") return false;
-
-    try {
-      const popup = window.open(safeUrl, "_blank", "noopener,noreferrer");
-      if (popup) {
-        try {
-          popup.opener = null;
-        } catch (_err) {
-          // Ignore cross-origin opener guards.
-        }
-        return true;
-      }
-    } catch (_err) {
-      // Fall back to anchor-click behavior below.
-    }
-
-    try {
-      const anchor = document.createElement("a");
-      anchor.href = safeUrl;
-      anchor.target = "_blank";
-      anchor.rel = "noopener noreferrer";
-      anchor.style.display = "none";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      return true;
-    } catch (_err) {
-      return false;
-    }
   }
 
   function bindHoverMarqueeCards(rootEl, cardSelector, lineSelector) {
@@ -2626,18 +2580,18 @@
   }
 
   function setSettingsTab(tab) {
-    const target = String(tab || "shares");
-    state.currentSettingsTab = target;
-
     const panelMap = {
       shares: els.settingsPanelShares,
       dns: els.settingsPanelDns,
       users: els.settingsPanelUsers,
-      makerworld: els.settingsPanelMakerworld,
       sms: els.settingsPanelSms,
       logs: els.settingsPanelLogs,
       slicer: els.settingsPanelSlicer,
     };
+    const requested = String(tab || "shares");
+    const target = Object.prototype.hasOwnProperty.call(panelMap, requested) ? requested : "shares";
+    state.currentSettingsTab = target;
+
     Object.entries(panelMap).forEach(([key, panel]) => {
       if (!panel) return;
       panel.classList.toggle("hidden", key !== target);
@@ -3937,8 +3891,12 @@
   }
 
   function filePreviewHtml(file) {
+    const displayName = fileDisplayName(file);
     if (file.thumb_url) {
-      return `<img src="${esc(file.thumb_url)}" alt="${esc(file.filename)}" loading="lazy">`;
+      return `<img src="${esc(file.thumb_url)}" alt="${esc(displayName)}" loading="lazy">`;
+    }
+    if (file.external_cover_url) {
+      return `<img src="${esc(file.external_cover_url)}" alt="${esc(displayName || "Link")}" loading="lazy" decoding="async">`;
     }
     if (file.preview_3d_thumbnail) {
       const src = String(file.preview_model_url || file.content_url || "");
@@ -3961,6 +3919,32 @@
       return `<div class="placeholder">Genererer 3D thumbnail...</div>`;
     }
     return `<div class="placeholder">${esc(file.ext || "fil").toUpperCase()}</div>`;
+  }
+
+  function fileDisplayName(file) {
+    const externalTitle = String((file && file.external_title) || "").trim();
+    if (externalTitle) return externalTitle;
+    return String((file && file.filename) || "-").trim() || "-";
+  }
+
+  function fileExternalSourceLabel(file) {
+    const explicit = String((file && file.external_source) || "").trim();
+    if (explicit) return explicit;
+    const rawUrl = String((file && file.external_url) || "").trim();
+    if (!rawUrl) return "";
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.hostname.replace(/^www\./i, "");
+    } catch (_err) {
+      return "";
+    }
+  }
+
+  function fileTypeBadgeHtml(file) {
+    const rawExt = String((file && file.ext) || fileExt(file && file.filename) || "").trim();
+    const label = file && file.is_external_link ? "LINK" : (rawExt.replace(/^\./, "").toUpperCase() || "FIL");
+    const cls = label.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "file";
+    return `<span class="file-ext-badge file-ext-${esc(cls)}" title="Filtype: ${esc(label)}">${esc(label)}</span>`;
   }
 
   function normalizedSliceStatus(file) {
@@ -8391,12 +8375,21 @@
     if (els.fileInfoPreview) {
       els.fileInfoPreview.innerHTML = filePreviewHtml(file);
     }
-    if (els.fileInfoName) els.fileInfoName.textContent = String(file.filename || "-");
+    const displayName = fileDisplayName(file);
+    const externalSource = fileExternalSourceLabel(file);
+    if (els.fileInfoName) els.fileInfoName.textContent = displayName;
     if (els.fileInfoMeta) {
-      els.fileInfoMeta.textContent = `${formatSize(file.file_size)} · ${String(file.ext || "-")} · ${formatDate(file.uploaded_at)}`;
+      const metaParts = [];
+      if (externalSource) metaParts.push(externalSource);
+      metaParts.push(formatSize(file.file_size));
+      metaParts.push(file.is_external_link ? "Link" : String(file.ext || "-"));
+      metaParts.push(formatDate(file.uploaded_at));
+      els.fileInfoMeta.textContent = metaParts.filter(Boolean).join(" · ");
     }
     if (els.fileInfoFolder) els.fileInfoFolder.textContent = String(file.folder_path || "-");
-    if (els.fileInfoExt) els.fileInfoExt.textContent = String(file.ext || "-");
+    if (els.fileInfoExt) els.fileInfoExt.textContent = file.is_external_link ? "Link" : String(file.ext || "-");
+    if (els.fileInfoExternalSource) els.fileInfoExternalSource.textContent = externalSource || "-";
+    if (els.fileInfoRowExternalSource) els.fileInfoRowExternalSource.classList.toggle("hidden", !externalSource);
     if (els.fileInfoSize) els.fileInfoSize.textContent = formatSize(file.file_size);
     if (els.fileInfoUploadedAt) els.fileInfoUploadedAt.textContent = formatDate(file.uploaded_at);
     if (els.fileInfoUploadedBy) els.fileInfoUploadedBy.textContent = String(file.uploaded_by || "-");
@@ -8429,7 +8422,14 @@
 
     if (els.fileInfoNote) els.fileInfoNote.value = String(file.note || "");
     if (els.fileInfoDownloadLink) {
-      els.fileInfoDownloadLink.href = String(file.download_url || "#");
+      const externalUrl = String(file.external_url || "").trim();
+      els.fileInfoDownloadLink.href = externalUrl || String(file.download_url || "#");
+      els.fileInfoDownloadLink.textContent = externalUrl ? "Åbn link" : "Download";
+      if (externalUrl) {
+        els.fileInfoDownloadLink.title = String(file.external_source || "Eksternt link");
+      } else {
+        els.fileInfoDownloadLink.removeAttribute("title");
+      }
     }
     if (els.fileInfoSliceDownloadLink) {
       const sliceOutput = file && file.slice_output && typeof file.slice_output === "object" ? file.slice_output : null;
@@ -8662,16 +8662,24 @@
         const sliceBadge = sliceBadgeHtml(file);
         const isNew = state.role === "admin" && !!file.is_new;
         const newBadge = isNew ? '<span class="file-new-badge" title="Ny fil">Ny</span>' : "";
+        const typeBadge = fileTypeBadgeHtml(file);
+        const displayName = fileDisplayName(file);
+        const externalSource = fileExternalSourceLabel(file);
+        const captionClass = externalSource ? "file-caption file-caption-with-source" : "file-caption";
         return `
           <article class="file-card file-card-compact ${isSelected ? "selected" : ""}" data-file-id="${id}">
             <div class="file-preview">
               <span class="select-mark ${isSelected ? "selected" : ""}"></span>
               ${newBadge}
+              ${typeBadge}
               <button class="file-info-btn" data-action="open-info" data-file-id="${id}" aria-label="Vis fil-info">i</button>
               ${sliceBadge}
               ${filePreviewHtml(file)}
             </div>
-            <div class="file-caption" title="${esc(file.filename)}"><span class="hover-scroll-text">${esc(file.filename)}</span></div>
+            <div class="${captionClass}" title="${esc(externalSource ? `${displayName} - ${externalSource}` : displayName)}">
+              <span class="hover-scroll-text">${esc(displayName)}</span>
+              ${externalSource ? `<span class="file-caption-source">${esc(externalSource)}</span>` : ""}
+            </div>
           </article>
         `;
       })
@@ -10684,252 +10692,6 @@
       showStatus(els.smsStatus, err.message || "Kunne ikke sende test-SMS", "error");
     } finally {
       setSmsSettingsFormState({ busy: false });
-    }
-  }
-
-  function setMakerworldSettingsFormState(options = {}) {
-    const busy = !!(options && options.busy);
-    const action = String((options && options.action) || "");
-    const encryptionActive = !!state.makerworldEncryptionActive;
-    const locked = !encryptionActive;
-    if (els.makerworldUsernameInput) els.makerworldUsernameInput.disabled = busy || locked;
-    if (els.makerworldPasswordInput) els.makerworldPasswordInput.disabled = busy || locked;
-    if (els.makerworldResetPasswordBtn) {
-      els.makerworldResetPasswordBtn.disabled = busy || locked;
-      els.makerworldResetPasswordBtn.textContent = busy && action === "reset" ? "Nulstiller..." : "Nulstil kodeord";
-    }
-    if (els.makerworldSaveBtn) {
-      els.makerworldSaveBtn.disabled = busy || locked;
-      if (locked) {
-        els.makerworldSaveBtn.textContent = "Kryptering mangler";
-      } else {
-        els.makerworldSaveBtn.textContent = busy && action === "login" ? "Logger ind..." : "Login";
-      }
-    }
-    if (els.makerworldLoginOpenLink) {
-      if (busy || locked || !state.makerworldLoginFlowUrl) {
-        els.makerworldLoginOpenLink.classList.add("disabled");
-        els.makerworldLoginOpenLink.setAttribute("aria-disabled", "true");
-        els.makerworldLoginOpenLink.setAttribute("tabindex", "-1");
-      } else {
-        els.makerworldLoginOpenLink.classList.remove("disabled");
-        els.makerworldLoginOpenLink.removeAttribute("aria-disabled");
-        els.makerworldLoginOpenLink.removeAttribute("tabindex");
-      }
-    }
-  }
-
-  function showMakerworldPasswordPreview() {
-    if (!els.makerworldPasswordInput) return;
-    state.makerworldPasswordPreviewActive = false;
-    els.makerworldPasswordInput.type = "password";
-    els.makerworldPasswordInput.value = "";
-    els.makerworldPasswordInput.placeholder = state.makerworldPasswordConfigured
-      ? "Kodeord er gemt (skjult). Skriv nyt for at ændre"
-      : "Indsæt kodeord";
-  }
-
-  function beginMakerworldPasswordEdit() {
-    if (!els.makerworldPasswordInput) return;
-    state.makerworldPasswordPreviewActive = false;
-    els.makerworldPasswordInput.type = "password";
-    if (!String(els.makerworldPasswordInput.value || "").trim()) {
-      els.makerworldPasswordInput.placeholder = "Skriv nyt kodeord";
-    }
-  }
-
-  function restoreMakerworldPasswordPreviewIfEmpty() {
-    if (!els.makerworldPasswordInput) return;
-    const value = String(els.makerworldPasswordInput.value || "").trim();
-    if (!value && state.makerworldPasswordConfigured) {
-      showMakerworldPasswordPreview();
-    }
-  }
-
-  function buildMakerworldLoginFlowUrl() {
-    const makerworldTarget = "https://makerworld.com/en";
-    const ticketTarget = `https://makerworld.com/api/sign-in/ticket?to=${encodeURIComponent(makerworldTarget)}`;
-    return `https://bambulab.com/en/sign-in?ticket=1&to=${encodeURIComponent(ticketTarget)}`;
-  }
-
-  function openMakerworldLoginWindowPlaceholder() {
-    try {
-      const popup = window.open("", "makerworld_login", "width=1280,height=900");
-      if (popup && popup.document) {
-        popup.document.title = "MakerWorld login";
-        popup.document.body.innerHTML = "<p style='font-family: sans-serif; padding: 16px'>Klargør MakerWorld login...</p>";
-      }
-      return popup;
-    } catch (_err) {
-      return null;
-    }
-  }
-
-  function updateMakerworldLoginBrowser(loginUrl) {
-    const url = String(loginUrl || "").trim();
-    state.makerworldLoginFlowUrl = url;
-
-    if (els.makerworldLoginOpenLink) {
-      els.makerworldLoginOpenLink.href = url || "#";
-    }
-    if (els.makerworldLoginBrowserWrap) {
-      if (url) {
-        els.makerworldLoginBrowserWrap.classList.remove("hidden");
-      } else {
-        els.makerworldLoginBrowserWrap.classList.add("hidden");
-      }
-    }
-    if (els.makerworldLoginBrowserFrame && url) {
-      if (els.makerworldLoginBrowserFrame.src !== url) {
-        els.makerworldLoginBrowserFrame.src = url;
-      }
-    }
-  }
-
-  function launchMakerworldLoginFlow(loginWindow = null) {
-    const loginUrl = buildMakerworldLoginFlowUrl();
-    updateMakerworldLoginBrowser(loginUrl);
-
-    let opened = false;
-    try {
-      if (loginWindow && !loginWindow.closed) {
-        loginWindow.location.replace(loginUrl);
-        opened = true;
-      }
-    } catch (_err) {
-      opened = false;
-    }
-
-    if (!opened) {
-      try {
-        const popup = window.open(loginUrl, "makerworld_login", "width=1280,height=900");
-        opened = !!popup;
-      } catch (_err) {
-        opened = false;
-      }
-    }
-
-    if (els.makerworldLoginLiveStatus) {
-      if (opened) {
-        showStatus(
-          els.makerworldLoginLiveStatus,
-          "MakerWorld login er åbnet. Hvis browser-rammen er tom, brug 'Åbn MakerWorld login'.",
-          "ok",
-        );
-      } else {
-        showStatus(
-          els.makerworldLoginLiveStatus,
-          "Browseren blokerede popup-login. Brug 'Åbn MakerWorld login' ovenfor.",
-          "error",
-        );
-      }
-    }
-
-    return opened;
-  }
-
-  function applyMakerworldSettings(data) {
-    const username = String((data && data.username) || "").trim();
-    const encryptionActive = !!(data && data.encryption_active);
-    const passwordConfigured = !!(data && data.password_configured);
-    const passwordPreview = String((data && data.password_preview) || "");
-
-    if (els.makerworldUsernameInput) els.makerworldUsernameInput.value = username;
-    state.makerworldEncryptionActive = encryptionActive;
-    state.makerworldPasswordConfigured = passwordConfigured;
-    state.makerworldPasswordPreview = passwordPreview;
-    showMakerworldPasswordPreview();
-  }
-
-  async function loadMakerworldSettings() {
-    if (state.role !== "admin") return;
-    try {
-      setMakerworldSettingsFormState({ busy: true });
-      const data = await api("/api/settings/makerworld");
-      applyMakerworldSettings(data || {});
-      if (!(data && data.encryption_active)) {
-        showStatus(els.makerworldStatus, "OBS: Sæt MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY for krypteret lagring af kodeord.", "error");
-      } else {
-        showStatus(els.makerworldStatus, "");
-      }
-    } catch (err) {
-      showStatus(els.makerworldStatus, err.message || "Kunne ikke hente MakerWorld indstillinger", "error");
-    } finally {
-      setMakerworldSettingsFormState({ busy: false });
-    }
-  }
-
-  async function saveMakerworldSettings() {
-    if (state.role !== "admin") return;
-    if (!state.makerworldEncryptionActive) {
-      showStatus(els.makerworldStatus, "MakerWorld login kræver kryptering. Sæt MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY først.", "error");
-      return;
-    }
-    const username = String((els.makerworldUsernameInput && els.makerworldUsernameInput.value) || "").trim();
-    const rawPassword = String((els.makerworldPasswordInput && els.makerworldPasswordInput.value) || "").trim();
-    const password = rawPassword;
-
-    if (!username) {
-      showStatus(els.makerworldStatus, "Indtast MakerWorld brugernavn eller e-mail.", "error");
-      if (els.makerworldUsernameInput) els.makerworldUsernameInput.focus();
-      return;
-    }
-
-    const loginWindow = openMakerworldLoginWindowPlaceholder();
-
-    try {
-      setMakerworldSettingsFormState({ busy: true, action: "login" });
-      const data = await api("/api/settings/makerworld", {
-        method: "POST",
-        body: { username, password },
-      });
-      applyMakerworldSettings(data || {});
-      const secure = !!(data && data.encryption_active);
-      let launched = false;
-      if (secure) {
-        launched = launchMakerworldLoginFlow(loginWindow);
-      } else {
-        try {
-          if (loginWindow && !loginWindow.closed) loginWindow.close();
-        } catch (_err) {
-          // Ignore popup close errors.
-        }
-      }
-      showStatus(
-        els.makerworldStatus,
-        secure
-          ? (launched
-            ? "MakerWorld login gemt. Login-flow er startet."
-            : "MakerWorld login gemt, men popup blev blokeret. Brug 'Åbn MakerWorld login'.")
-          : "MakerWorld login gemt, men kodeord er ikke krypteret uden MAKERWORLD_CREDENTIALS_ENCRYPTION_KEY.",
-        secure ? "ok" : "error",
-      );
-    } catch (err) {
-      try {
-        if (loginWindow && !loginWindow.closed) loginWindow.close();
-      } catch (_err) {
-        // Ignore popup close errors.
-      }
-      showStatus(els.makerworldStatus, err.message || "Kunne ikke gemme/login på MakerWorld", "error");
-    } finally {
-      setMakerworldSettingsFormState({ busy: false });
-    }
-  }
-
-  async function resetMakerworldPassword() {
-    if (state.role !== "admin") return;
-    const ok = window.confirm("Vil du nulstille MakerWorld kodeord? Du kan gemme et nyt bagefter.");
-    if (!ok) return;
-    try {
-      setMakerworldSettingsFormState({ busy: true, action: "reset" });
-      const data = await api("/api/settings/makerworld/password", { method: "DELETE" });
-      applyMakerworldSettings(data || {});
-      showStatus(els.makerworldStatus, "MakerWorld kodeord er nulstillet. Gem et nyt kodeord for login.", "ok");
-      if (els.makerworldPasswordInput) els.makerworldPasswordInput.focus();
-    } catch (err) {
-      showStatus(els.makerworldStatus, err.message || "Kunne ikke nulstille MakerWorld kodeord", "error");
-    } finally {
-      setMakerworldSettingsFormState({ busy: false });
     }
   }
 
@@ -14076,7 +13838,7 @@
   function openImportLinkModal() {
     if (state.selectMode) return;
     if (!currentFolderAllowsUserWrites()) {
-      showStatus(els.uploadStatus, "Link-import kan kun ske inde i en datomappe.", "error");
+      showStatus(els.uploadStatus, "Links kan kun gemmes inde i en datomappe.", "error");
       return;
     }
     if (!els.importLinkModal) return;
@@ -14121,56 +13883,14 @@
     return `<span class="import-meta-chip"><strong>${esc(label)}</strong>${esc(text)}</span>`;
   }
 
-  function importSelectedProfiles(preview) {
-    const profiles = Array.isArray(preview && preview.profiles) ? preview.profiles : [];
-    const selectedIds = Array.isArray(state.importLinkSelectedProfileIds)
-      ? state.importLinkSelectedProfileIds.map((value) => String(value || "").trim()).filter(Boolean)
-      : [];
-    if (!selectedIds.length) return [];
-    const selectedSet = new Set(selectedIds);
-    return profiles.filter((profile) => selectedSet.has(String((profile && profile.id) || "")));
-  }
-
-  function importSelectedProfile(preview) {
-    return importSelectedProfiles(preview)[0] || null;
-  }
-
-  function importProfileDownloadUrl(preview, profile) {
-    const item = profile && typeof profile === "object" ? profile : {};
-    const directUrl = String(item.download_url || "").trim();
-    if (directUrl) return directUrl;
-
-    const source = String((preview && preview.source) || "").trim().toLowerCase();
-    if (source !== "makerworld") return "";
-
-    const instanceId = Number(item.id || 0);
-    if (!Number.isFinite(instanceId) || instanceId <= 0) return "";
-
-    return `https://makerworld.com/api/v1/design-service/instance/${encodeURIComponent(String(instanceId))}/f3mf?type=download&fileType=`;
-  }
-
-  function importSelectedProfileDownloadUrls(preview) {
-    const selectedProfiles = importSelectedProfiles(preview || {});
-    if (!selectedProfiles.length) return [];
-    const urls = selectedProfiles
-      .map((profile) => importProfileDownloadUrl(preview || {}, profile))
-      .map((url) => String(url || "").trim())
-      .filter(Boolean);
-    return Array.from(new Set(urls));
-  }
-
   function renderImportPreview(preview) {
     if (!els.importPreviewBody) return;
     const data = preview && typeof preview === "object" ? preview : {};
     const profiles = Array.isArray(data.profiles) ? data.profiles : [];
-    const selectedProfiles = importSelectedProfiles(data);
-    const selectedProfileIds = selectedProfiles.map((profile) => String(profile.id || "")).filter(Boolean);
-    const selectedProfileIdSet = new Set(selectedProfileIds);
-    state.importLinkSelectedProfileIds = selectedProfileIds;
-    state.importLinkSelectedProfileId = selectedProfileIds[0] || "";
-    const selectedCount = selectedProfiles.length;
+    state.importLinkSelectedProfileIds = [];
+    state.importLinkSelectedProfileId = "";
     if (els.importPreviewTitle) {
-      els.importPreviewTitle.textContent = String(data.title || "Model fra link");
+      els.importPreviewTitle.textContent = String(data.title || "Gem link");
     }
     if (els.importPreviewSubtitle) {
       const creator = String(data.creator || "").trim();
@@ -14178,14 +13898,8 @@
       els.importPreviewSubtitle.textContent = creator ? `${source} · ${creator}` : source;
     }
     if (els.importPreviewUseBtn) {
-      els.importPreviewUseBtn.disabled = profiles.length <= 0 || selectedCount <= 0;
-      if (profiles.length <= 0) {
-        els.importPreviewUseBtn.textContent = "Ingen profiler";
-      } else if (selectedCount > 0) {
-        els.importPreviewUseBtn.textContent = `Download profiler (${selectedCount})`;
-      } else {
-        els.importPreviewUseBtn.textContent = "Download profiler";
-      }
+      els.importPreviewUseBtn.disabled = !String(data.url || "").trim();
+      els.importPreviewUseBtn.textContent = "Gem fil-link";
     }
 
     const images = Array.isArray(data.image_urls) ? data.image_urls.filter(Boolean).slice(0, 12) : [];
@@ -14228,10 +13942,19 @@
       .map((item) => `<span class="import-category">${esc(item)}</span>`)
       .join("");
     const description = String(data.description || "Ingen beskrivelse fundet.").trim();
+    const targetFolder = importLinkTargetFolder();
+    const sourceUrl = String(data.url || "").trim();
+    const overviewHtml = `
+      <div class="import-link-overview">
+        <div><span>Gemmes i</span><strong>${esc(targetFolder || "-")}</strong></div>
+        <div><span>Kilde</span><strong>${esc(data.source_label || "Link")}</strong></div>
+        <div><span>Profiler fundet</span><strong>${esc(formatImportNumber(profiles.length))}</strong></div>
+        ${sourceUrl ? `<div class="wide"><span>Link</span><a href="${esc(sourceUrl)}" target="_blank" rel="noopener">${esc(sourceUrl)}</a></div>` : ""}
+      </div>
+    `;
     const profileHtml = profiles.length
       ? profiles.map((profile, index) => {
           const id = String(profile.id || "");
-          const checked = selectedProfileIdSet.has(id) ? "checked" : "";
           const settings = profile.settings || {};
           const filamentHtml = (Array.isArray(profile.filaments) ? profile.filaments : [])
             .slice(0, 4)
@@ -14245,8 +13968,7 @@
           const printers = (Array.isArray(profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 4).join(", ");
           const coverUrl = String(profile.cover_url || (Array.isArray(profile.picture_urls) && profile.picture_urls[0]) || "").trim();
           return `
-            <label class="import-profile-card ${checked ? "selected" : ""}">
-              <input type="checkbox" name="importProfiles" value="${esc(id)}" ${checked}>
+            <article class="import-profile-card readonly" data-profile-id="${esc(id)}">
               ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${index + 1}</div>`}
               <div class="import-profile-main">
                 <div class="import-profile-title">${esc(profile.title || "Printprofil")}</div>
@@ -14265,7 +13987,7 @@
                 ${filamentHtml ? `<div class="import-filaments">${filamentHtml}</div>` : ""}
                 ${printers ? `<div class="import-profile-printers">${esc(printers)}</div>` : ""}
               </div>
-            </label>
+            </article>
           `;
         }).join("")
       : `<div class="empty-note">Ingen printprofiler fundet på linket.</div>`;
@@ -14286,11 +14008,15 @@
         </div>
       </div>
       <div class="import-preview-section">
+        <div class="import-section-title">Overblik</div>
+        ${overviewHtml}
+      </div>
+      <div class="import-preview-section">
         <div class="import-section-title">Beskrivelse</div>
         <div class="import-description">${esc(description).replace(/\n/g, "<br>")}</div>
       </div>
       <div class="import-preview-section">
-        <div class="import-section-title">Printprofiler</div>
+        <div class="import-section-title">Printprofiler på linket</div>
         <div class="import-profiles">${profileHtml}</div>
       </div>
     `;
@@ -14298,17 +14024,8 @@
 
   function openImportPreviewModal(preview) {
     state.importLinkPreview = preview || null;
-    const profiles = Array.isArray(preview && preview.profiles) ? preview.profiles : [];
-    const selectedFromSource = profiles
-      .filter((profile) => !!(profile && profile.selected))
-      .map((profile) => String((profile && profile.id) || "").trim())
-      .filter(Boolean);
-    const firstProfileId = String((profiles[0] && profiles[0].id) || "").trim();
-    const selectedIds = selectedFromSource.length
-      ? Array.from(new Set(selectedFromSource))
-      : (firstProfileId ? [firstProfileId] : []);
-    state.importLinkSelectedProfileIds = selectedIds;
-    state.importLinkSelectedProfileId = selectedIds[0] || "";
+    state.importLinkSelectedProfileIds = [];
+    state.importLinkSelectedProfileId = "";
     state.importLinkSelectedImageUrl = "";
     renderImportPreview(preview);
     showStatus(els.importPreviewStatus, "");
@@ -14323,7 +14040,7 @@
       return;
     }
     if (!currentFolderAllowsUserWrites()) {
-      showStatus(els.importLinkStatus, "Link-import kan kun ske inde i en datomappe.", "error");
+      showStatus(els.importLinkStatus, "Links kan kun gemmes inde i en datomappe.", "error");
       return;
     }
     if (els.importLinkNextBtn) {
@@ -14421,7 +14138,6 @@
           if (state.currentSettingsTab === "shares") await loadShares();
           if (state.currentSettingsTab === "dns") await loadDns();
           if (state.currentSettingsTab === "users") await loadUsers();
-          if (state.currentSettingsTab === "makerworld") await loadMakerworldSettings();
           if (state.currentSettingsTab === "sms") await loadSmsSettings();
           if (state.currentSettingsTab === "logs") await loadAdminLogs();
           if (state.currentSettingsTab === "slicer") await loadSlicerSettings();
@@ -14455,7 +14171,6 @@
         if (tab === "shares") await loadShares();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
-        if (tab === "makerworld") await loadMakerworldSettings();
         if (tab === "sms") await loadSmsSettings();
         if (tab === "logs") await loadAdminLogs();
         if (tab === "slicer") await loadSlicerSettings();
@@ -14470,7 +14185,6 @@
         if (tab === "shares") await loadShares();
         if (tab === "dns") await loadDns();
         if (tab === "users") await loadUsers();
-        if (tab === "makerworld") await loadMakerworldSettings();
         if (tab === "sms") await loadSmsSettings();
         if (tab === "logs") await loadAdminLogs();
         if (tab === "slicer") await loadSlicerSettings();
@@ -15691,43 +15405,24 @@
     if (els.importPreviewUseBtn) {
       els.importPreviewUseBtn.addEventListener("click", async () => {
         const preview = state.importLinkPreview || {};
-        const selectedProfiles = importSelectedProfiles(preview);
-        if (!selectedProfiles.length) {
-          showStatus(els.importPreviewStatus, "Vælg mindst en printprofil først.", "error");
-          return;
-        }
-
-        const selectedProfileIds = selectedProfiles
-          .map((profile) => String((profile && profile.id) || "").trim())
-          .filter(Boolean);
-        if (!selectedProfileIds.length) {
-          showStatus(els.importPreviewStatus, "Vælg mindst en gyldig printprofil.", "error");
-          return;
-        }
-
         const sourceUrl = String((preview && preview.url) || "").trim();
         const folder = importLinkTargetFolder();
         if (!sourceUrl) {
-          showStatus(els.importPreviewStatus, "Mangler kilde-link til import.", "error");
+          showStatus(els.importPreviewStatus, "Mangler kilde-link.", "error");
           return;
         }
         if (!folder) {
-          showStatus(els.importPreviewStatus, "Vælg en mappe før import.", "error");
+          showStatus(els.importPreviewStatus, "Vælg en mappe før linket gemmes.", "error");
           return;
         }
 
         if (els.importPreviewUseBtn.dataset.busy === "1") return;
         els.importPreviewUseBtn.dataset.busy = "1";
         els.importPreviewUseBtn.disabled = true;
-        els.importPreviewUseBtn.textContent = "Henter...";
+        els.importPreviewUseBtn.textContent = "Gemmer...";
 
-        const selectedCount = selectedProfiles.length;
         const source = String((preview && preview.source_label) || "MakerWorld").trim() || "MakerWorld";
-        showStatus(
-          els.importPreviewStatus,
-          `Henter ${selectedCount} valgt${selectedCount === 1 ? "" : "e"} profil${selectedCount === 1 ? "" : "er"} fra ${source} til den valgte mappe...`,
-          "ok"
-        );
+        showStatus(els.importPreviewStatus, `Gemmer link fra ${source} i den valgte mappe...`, "ok");
 
         try {
           const data = await api("/api/import-link/commit", {
@@ -15735,95 +15430,25 @@
             body: {
               url: sourceUrl,
               folder,
-              selected_profile_ids: selectedProfileIds,
             },
           });
 
-          const importedCount = Math.max(0, Number((data && data.imported_count) || 0));
-          const importErrors = Array.isArray(data && data.errors) ? data.errors.map((e) => String(e || "").trim()).filter(Boolean) : [];
-
-          if (importedCount <= 0) {
-            showStatus(els.importPreviewStatus, "Ingen filer blev importeret fra MakerWorld.", "error");
-            return;
-          }
-
-          if (importErrors.length) {
-            showStatus(
-              els.importPreviewStatus,
-              `Importeret ${importedCount} fil${importedCount === 1 ? "" : "er"}, men ${importErrors.length} profil${importErrors.length === 1 ? "" : "er"} fejlede.`,
-              "ok"
-            );
-          } else {
-            showStatus(
-              els.importPreviewStatus,
-              `Importeret ${importedCount} fil${importedCount === 1 ? "" : "er"} fra ${source} til mappen.`,
-              "ok"
-            );
-          }
-
+          const savedCount = Math.max(0, Number((data && data.saved_count) || 0));
+          showStatus(els.uploadStatus, savedCount > 0 ? `Link fra ${source} er gemt i mappen.` : "Linket blev gemt.", "ok");
           await loadFiles();
+          closeImportPreviewModal();
         } catch (err) {
           const errData = err && err.data && typeof err.data === "object" ? err.data : {};
           const details = Array.isArray(errData.details)
             ? errData.details.map((entry) => String(entry || "").trim()).filter(Boolean)
             : [];
           const errMessage = String((err && err.message) || "").trim();
-          const errMessageLower = errMessage.toLowerCase();
-          const statusCode = Number((err && err.status) || 0);
-          const looksLikeGatewayHtml = (
-            errMessageLower.includes("<!doctype html")
-            || errMessageLower.includes("<html")
-            || errMessageLower.includes("cloudflare")
-            || errMessageLower.includes("502")
-            || errMessageLower.includes("bad gateway")
-          );
-          const shouldBrowserFallback = !!(errData && errData.requires_browser_download)
-            || statusCode >= 500
-            || looksLikeGatewayHtml;
-
-          if (shouldBrowserFallback) {
-            const downloadUrls = importSelectedProfileDownloadUrls(preview);
-            let started = 0;
-            downloadUrls.forEach((url) => {
-              if (triggerTopLevelDownload(url)) started += 1;
-            });
-
-            if (started > 0) {
-              const detailPrefix = details.length ? `${details[0]}. ` : "";
-              const gatewayHint = (!details.length && (statusCode >= 500 || looksLikeGatewayHtml))
-                ? "Serveren svarede med gateway-fejl. "
-                : "";
-              showStatus(
-                els.importPreviewStatus,
-                `${gatewayHint}${detailPrefix}Server-import blev blokeret, så browser-download blev startet for ${started}/${downloadUrls.length} profiler.`,
-                "ok"
-              );
-            } else {
-              const detailText = details.length ? ` ${details[0]}` : "";
-              showStatus(
-                els.importPreviewStatus,
-                `Server-import fejlede, og browser-download kunne ikke startes.${detailText}`,
-                "error"
-              );
-            }
-          } else {
-            const detailText = details.length ? ` (${details.slice(0, 2).join(" | ")})` : "";
-            showStatus(els.importPreviewStatus, `${errMessage || "Kunne ikke importere valgte profiler."}${detailText}`, "error");
-          }
+          const detailText = details.length ? ` (${details.slice(0, 2).join(" | ")})` : "";
+          showStatus(els.importPreviewStatus, `${errMessage || "Kunne ikke gemme linket."}${detailText}`, "error");
         } finally {
           delete els.importPreviewUseBtn.dataset.busy;
-          const profiles = Array.isArray(state.importLinkPreview && state.importLinkPreview.profiles)
-            ? state.importLinkPreview.profiles
-            : [];
-          const currentSelectedCount = state.importLinkSelectedProfileIds.length;
-          els.importPreviewUseBtn.disabled = profiles.length <= 0 || currentSelectedCount <= 0;
-          if (profiles.length <= 0) {
-            els.importPreviewUseBtn.textContent = "Ingen profiler";
-          } else if (currentSelectedCount > 0) {
-            els.importPreviewUseBtn.textContent = `Download profiler (${currentSelectedCount})`;
-          } else {
-            els.importPreviewUseBtn.textContent = "Download profiler";
-          }
+          els.importPreviewUseBtn.disabled = !String(state.importLinkPreview && state.importLinkPreview.url || "").trim();
+          els.importPreviewUseBtn.textContent = "Gem fil-link";
         }
       });
     }
@@ -15831,33 +15456,6 @@
       els.importPreviewBody.addEventListener("change", (event) => {
         const input = event.target && event.target.closest ? event.target.closest('input[name="importProfiles"]') : null;
         if (!input) return;
-
-        const checkedIds = Array.from(els.importPreviewBody.querySelectorAll('input[name="importProfiles"]:checked'))
-          .map((node) => String((node && node.value) || "").trim())
-          .filter(Boolean);
-        state.importLinkSelectedProfileIds = Array.from(new Set(checkedIds));
-        state.importLinkSelectedProfileId = state.importLinkSelectedProfileIds[0] || "";
-
-        els.importPreviewBody.querySelectorAll(".import-profile-card").forEach((card) => {
-          const checkbox = card.querySelector('input[name="importProfiles"]');
-          card.classList.toggle("selected", !!checkbox && checkbox.checked);
-        });
-
-        if (els.importPreviewUseBtn) {
-          const profiles = Array.isArray(state.importLinkPreview && state.importLinkPreview.profiles)
-            ? state.importLinkPreview.profiles
-            : [];
-          const selectedCount = state.importLinkSelectedProfileIds.length;
-          els.importPreviewUseBtn.disabled = profiles.length <= 0 || selectedCount <= 0;
-          if (profiles.length <= 0) {
-            els.importPreviewUseBtn.textContent = "Ingen profiler";
-          } else if (selectedCount > 0) {
-            els.importPreviewUseBtn.textContent = `Download profiler (${selectedCount})`;
-          } else {
-            els.importPreviewUseBtn.textContent = "Download profiler";
-          }
-        }
-
         showStatus(els.importPreviewStatus, "");
       });
       els.importPreviewBody.addEventListener("click", (event) => {
@@ -16160,41 +15758,6 @@
     }
     if (els.smsTestRecipientInput) {
       els.smsTestRecipientInput.addEventListener("input", () => showStatus(els.smsStatus, ""));
-    }
-
-    if (els.makerworldSaveBtn) {
-      els.makerworldSaveBtn.addEventListener("click", () => {
-        saveMakerworldSettings().catch((err) => {
-          showStatus(els.makerworldStatus, err.message || "Kunne ikke logge ind på MakerWorld", "error");
-        });
-      });
-    }
-    if (els.makerworldLoginOpenLink) {
-      els.makerworldLoginOpenLink.addEventListener("click", (event) => {
-        if (els.makerworldLoginOpenLink.classList.contains("disabled") || !state.makerworldLoginFlowUrl) {
-          event.preventDefault();
-          return;
-        }
-        showStatus(els.makerworldLoginLiveStatus, "MakerWorld login er åbnet i ny fane.", "ok");
-      });
-    }
-    if (els.makerworldResetPasswordBtn) {
-      els.makerworldResetPasswordBtn.addEventListener("click", () => {
-        resetMakerworldPassword().catch((err) => {
-          showStatus(els.makerworldStatus, err.message || "Kunne ikke nulstille MakerWorld kodeord", "error");
-        });
-      });
-    }
-    if (els.makerworldUsernameInput) {
-      els.makerworldUsernameInput.addEventListener("input", () => showStatus(els.makerworldStatus, ""));
-    }
-    if (els.makerworldPasswordInput) {
-      els.makerworldPasswordInput.addEventListener("focus", beginMakerworldPasswordEdit);
-      els.makerworldPasswordInput.addEventListener("input", () => {
-        state.makerworldPasswordPreviewActive = false;
-        showStatus(els.makerworldStatus, "");
-      });
-      els.makerworldPasswordInput.addEventListener("blur", restoreMakerworldPasswordPreviewIfEmpty);
     }
 
     if (els.openCreateUserModalBtn) {
