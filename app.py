@@ -157,7 +157,7 @@ TRACKING_LABEL_DIGIT_BLOCK_RE = re.compile(r"\d(?:[\s\-]*\d){15,23}")
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp", ".lys", ".pwscene"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
 THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
-THUMBABLE_3D_EXTENSIONS = {".3mf", ".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
+THUMBABLE_3D_EXTENSIONS = {".3mf", ".glb", ".gltf", ".stl", ".obj", ".step", ".stp", ".lys"}
 PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl", ".obj", ".lys", ".pwscene"}
 PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {*PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS, ".zip"}
 PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL = ".stl, .step, .3mf, .obj, .lys og .pwscene"
@@ -180,6 +180,7 @@ THUMB_WORKER_COUNT = max(1, min(4, THUMB_WORKER_COUNT))
 THUMB_RENDER_STYLE_VERSION = "9"
 FOLDER_PREVIEW_THUMB_LIMIT = 4
 THREEMF_THUMBNAIL_MAX_IMAGE_BYTES = 32 * 1024 * 1024
+LYS_MANIFEST_READ_BYTES = 2 * 1024 * 1024
 SLICABLE_3D_EXTENSIONS = {".stl"}
 BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
 BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
@@ -7573,6 +7574,33 @@ def _score_3mf_thumbnail_candidate(name: str) -> tuple[int, str]:
     return (500 + ext_score, normalized)
 
 
+def _write_embedded_image_thumbnail(image_data: bytes, output_png: Path, *, size_px: int) -> bool:
+    if Image is None or ImageOps is None:
+        return False
+    if not image_data:
+        return False
+
+    try:
+        safe_size_px = max(96, int(size_px or THUMB_SIZE_PX))
+        resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", getattr(Image, "LANCZOS", 1))
+        with Image.open(io.BytesIO(image_data)) as src_img:
+            img = ImageOps.exif_transpose(src_img)
+            img = img.convert("RGBA")
+            img = ImageOps.contain(img, (safe_size_px, safe_size_px), method=resampling)
+            canvas = Image.new("RGBA", (safe_size_px, safe_size_px), (15, 23, 33, 255))
+            offset = ((safe_size_px - img.width) // 2, (safe_size_px - img.height) // 2)
+            canvas.alpha_composite(img, offset)
+            output_png.parent.mkdir(parents=True, exist_ok=True)
+            canvas.save(str(output_png), format="PNG")
+        return output_png.exists() and output_png.stat().st_size > 0
+    except Exception:
+        try:
+            output_png.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+
+
 def _write_3mf_embedded_thumbnail(archive_path: Path, output_png: Path, *, size_px: int) -> bool:
     if Image is None or ImageOps is None:
         return False
@@ -7596,23 +7624,14 @@ def _write_3mf_embedded_thumbnail(archive_path: Path, output_png: Path, *, size_
                 return False
 
             safe_size_px = max(96, int(size_px or THUMB_SIZE_PX))
-            resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", getattr(Image, "LANCZOS", 1))
             for _, info in sorted(candidates, key=lambda item: item[0]):
                 try:
                     with zf.open(info, "r") as fp:
                         data = fp.read(THREEMF_THUMBNAIL_MAX_IMAGE_BYTES + 1)
                     if not data or len(data) > THREEMF_THUMBNAIL_MAX_IMAGE_BYTES:
                         continue
-                    with Image.open(io.BytesIO(data)) as src_img:
-                        img = ImageOps.exif_transpose(src_img)
-                        img = img.convert("RGBA")
-                        img = ImageOps.contain(img, (safe_size_px, safe_size_px), method=resampling)
-                        canvas = Image.new("RGBA", (safe_size_px, safe_size_px), (15, 23, 33, 255))
-                        offset = ((safe_size_px - img.width) // 2, (safe_size_px - img.height) // 2)
-                        canvas.alpha_composite(img, offset)
-                        output_png.parent.mkdir(parents=True, exist_ok=True)
-                        canvas.save(str(output_png), format="PNG")
-                    return output_png.exists() and output_png.stat().st_size > 0
+                    if _write_embedded_image_thumbnail(data, output_png, size_px=safe_size_px):
+                        return True
                 except Exception:
                     try:
                         output_png.unlink(missing_ok=True)
@@ -7622,6 +7641,102 @@ def _write_3mf_embedded_thumbnail(archive_path: Path, output_png: Path, *, size_
     except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError):
         return False
     except Exception:
+        return False
+
+    return False
+
+
+def _read_lys_manifest(scene_path: Path) -> tuple[dict[str, Any], int]:
+    try:
+        with scene_path.open("rb") as fh:
+            prefix = fh.read(max(4096, int(LYS_MANIFEST_READ_BYTES)))
+    except OSError:
+        return {}, 0
+
+    json_start = prefix.find(b"{")
+    if json_start < 0:
+        return {}, 0
+
+    json_end = 0
+    manifest: dict[str, Any] = {}
+    try:
+        hinted_len = int.from_bytes(prefix[12:16], "little", signed=False) if len(prefix) >= 16 else 0
+        if 2 <= hinted_len <= len(prefix) - json_start:
+            manifest = json.loads(prefix[json_start : json_start + hinted_len].decode("utf-8"))
+            json_end = json_start + hinted_len
+    except Exception:
+        manifest = {}
+        json_end = 0
+
+    if not manifest:
+        try:
+            text = prefix[json_start:].decode("utf-8", "replace")
+            parsed, end = json.JSONDecoder().raw_decode(text)
+            if isinstance(parsed, dict):
+                manifest = parsed
+                json_end = json_start + len(text[:end].encode("utf-8"))
+        except Exception:
+            return {}, 0
+
+    payload_start = json_end
+    while payload_start < len(prefix) and prefix[payload_start] == 0:
+        payload_start += 1
+    return manifest, payload_start
+
+
+def _write_lys_embedded_thumbnail(scene_path: Path, output_png: Path, *, size_px: int) -> bool:
+    if Image is None or ImageOps is None:
+        return False
+
+    manifest, payload_start = _read_lys_manifest(scene_path)
+    files = manifest.get("mangoFiles") if isinstance(manifest, dict) else None
+    if not isinstance(files, dict) or payload_start <= 0:
+        return False
+
+    allowed_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
+    try:
+        total_size = scene_path.stat().st_size
+    except OSError:
+        return False
+
+    candidates: list[tuple[tuple[int, str], str, int, int]] = []
+    for raw_name, raw_meta in files.items():
+        name = str(raw_name or "").replace("\\", "/")
+        suffix = Path(name.lower()).suffix
+        if suffix not in allowed_suffixes or not isinstance(raw_meta, dict):
+            continue
+        try:
+            offset = int(str(raw_meta.get("offset") or "0").strip())
+            image_size = int(raw_meta.get("size") or 0)
+        except Exception:
+            continue
+        if offset < 0 or image_size <= 0 or image_size > THREEMF_THUMBNAIL_MAX_IMAGE_BYTES:
+            continue
+        absolute_offset = payload_start + offset
+        if absolute_offset < payload_start or absolute_offset + image_size > total_size:
+            continue
+        candidates.append((_score_3mf_thumbnail_candidate(name), name, absolute_offset, image_size))
+
+    if not candidates:
+        return False
+
+    try:
+        with scene_path.open("rb") as fh:
+            for _, _name, absolute_offset, image_size in sorted(candidates, key=lambda item: item[0]):
+                try:
+                    fh.seek(absolute_offset)
+                    data = fh.read(image_size)
+                    if not data or len(data) != image_size:
+                        continue
+                    if _write_embedded_image_thumbnail(data, output_png, size_px=size_px):
+                        return True
+                except Exception:
+                    try:
+                        output_png.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+    except OSError:
         return False
 
     return False
@@ -7848,6 +7963,11 @@ def _generate_thumbnail_file(file_row: sqlite3.Row, *, detailed: bool = False) -
         if ext == ".3mf" and _write_3mf_embedded_thumbnail(source_path, temp_output, size_px=render_size_px):
             temp_output.replace(thumb_path)
             return rel_name
+        if ext == ".lys":
+            if _write_lys_embedded_thumbnail(source_path, temp_output, size_px=render_size_px):
+                temp_output.replace(thumb_path)
+                return rel_name
+            raise RuntimeError("LYS preview.png not found")
 
         if ext in {".step", ".stp"}:
             converted_obj, convert_error = _convert_step_to_obj(source_path, tmp_dir)
@@ -11085,8 +11205,9 @@ def serialize_file_row(
     is_3d_openable = ext in THREE_D_VIEWER_EXTENSIONS
     can_slice = _supports_slicing_for_ext(ext)
     slice_status = str(row["slice_status"] or "none").strip().lower() or "none"
-    # Allow 3D preview via model-viewer for GLB/GLTF natively and for STL/OBJ/STEP via GLB preview
-    preview_3d_thumbnail = ext in THUMBABLE_3D_EXTENSIONS
+    # Allow 3D preview via model-viewer for GLB/GLTF natively and for STL/OBJ/STEP via GLB preview.
+    # Lychee .lys thumbnails are extracted from embedded preview.png, not rendered as a 3D preview model.
+    preview_3d_thumbnail = ext in THUMBABLE_3D_EXTENSIONS and ext != ".lys"
     thumb_supported = _supports_thumbnail_for_ext(ext)
     thumb_status = str(row["thumb_status"] or "none").strip().lower() or "none"
     thumb_rel = str(row["thumb_rel"] or "").strip()
