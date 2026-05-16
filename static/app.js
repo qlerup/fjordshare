@@ -2878,15 +2878,27 @@
       const quantity = Math.max(1, Number(file.quantity || 1) || 1);
       const scale = scaleUpLabel(file);
       const note = String(file.note || "").trim();
+      const displayName = String(file.display_name || file.external_title || file.filename || "-");
+      const isLink = !!(file && file.is_external_link);
+      const externalUrl = String((file && file.external_url) || "").trim();
+      const externalSource = String((file && file.external_source) || "").trim();
       const attachments = Array.isArray(file.attachments) ? file.attachments : [];
       const infoParts = [];
       if (note) infoParts.push(esc(note));
       if (scale) infoParts.push(`Større: ${esc(scale)}`);
+      if (externalUrl) {
+        const label = externalSource ? `Link: ${externalSource}` : "Link";
+        infoParts.push(`<a href="${esc(externalUrl)}" target="_blank" rel="noopener">${esc(label)}</a>`);
+      }
+      const metaParts = [
+        String(file.display_path || file.folder_path || "-"),
+        isLink ? "Link" : formatSize(file.file_size || 0),
+      ];
       return `
         <div class="print-ready-modal-file">
           <div>
-            <div class="print-ready-modal-file-name">${esc(file.filename || "-")}</div>
-            <div class="print-ready-modal-file-meta">${esc(file.display_path || file.folder_path || "-")} · ${formatSize(file.file_size || 0)}</div>
+            <div class="print-ready-modal-file-name">${esc(displayName)}</div>
+            <div class="print-ready-modal-file-meta">${esc(metaParts.join(" · "))}</div>
             ${infoParts.length ? `<div class="print-ready-modal-file-info">${infoParts.join(" · ")}</div>` : ""}
           </div>
           <div class="print-ready-modal-file-badges">
@@ -9423,7 +9435,7 @@
       els.metadataStepCounter.textContent = `${current}/${total}`;
     }
     if (els.metadataCurrentFileName) {
-      const filename = String(item.filename || `Fil ${current}`);
+      const filename = String(item.display_name || item.external_title || item.filename || `Fil ${current}`);
       const displayPath = String(item.display_path || item.folder_path || "").trim();
       els.metadataCurrentFileName.textContent = printMode && displayPath ? `${filename} · ${displayPath}` : filename;
     }
@@ -10330,11 +10342,15 @@
   function printReadyInfoHtml(file) {
     const note = String((file && file.note) || "").trim();
     const scale = scaleUpLabel(file);
-    if (!note && !scale) return `<span class="hint">-</span>`;
+    const externalUrl = String((file && file.external_url) || "").trim();
+    const externalSource = String((file && file.external_source) || "").trim();
+    if (!note && !scale && !externalUrl) return `<span class="hint">-</span>`;
+    const linkLabel = externalSource ? `Åbn link · ${externalSource}` : "Åbn link";
     return `
       <div class="print-ready-file-info">
         ${note ? `<div>${esc(note)}</div>` : ""}
         ${scale ? `<div class="print-ready-scale-up">Større: ${esc(scale)}</div>` : ""}
+        ${externalUrl ? `<div><a href="${esc(externalUrl)}" target="_blank" rel="noopener">${esc(linkLabel)}</a></div>` : ""}
       </div>
     `;
   }
@@ -10427,33 +10443,42 @@
     const fileCount = Number(project.file_count || files.length || 0);
     const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
     const projectFileCount = Array.isArray(project.project_files) ? project.project_files.length : 0;
-    const rows = files.map((file) => `
-      <tr class="print-ready-file-row">
-        <td>${esc(file.display_path || file.folder_path || "-")}</td>
-        <td><a class="print-ready-file-download-link" href="${esc(file.download_url || "#")}" download="${esc(file.filename || "")}" data-print-ready-file-download="1">${esc(file.filename || "-")}</a></td>
-        <td>${printReadyInfoHtml(file)}</td>
-        <td>${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : `<span class="print-ready-status-muted">Ikke printet</span>`}</td>
-        <td>${Number(file.quantity || 1)}</td>
-        <td>${printReadyAttachmentHtml(file.attachments)}</td>
-        <td>
-          <div class="print-ready-row-actions">
-            ${
-              isAdmin
-                ? (
-                  isFinalProject || finishedMode
-                    ? `<button class="btn small" type="button" disabled>${isCancelledProject ? "Annulleret" : "Projekt færdigt"}</button>`
-                    : (
-                      file.printed
-                        ? `<button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Fjern printet</button>`
-                        : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
-                    )
-                )
-                : `<span class="hint">-</span>`
-            }
-          </div>
-        </td>
-      </tr>
-    `).join("");
+    const rows = files.map((file) => {
+      const isLink = !!(file && file.is_external_link);
+      const displayName = String((file && (file.display_name || file.external_title || file.filename)) || "-");
+      const href = String((isLink && file.external_url) || (file && file.download_url) || "#");
+      const downloadAttrs = isLink
+        ? `target="_blank" rel="noopener"`
+        : `download="${esc((file && file.filename) || "")}" data-print-ready-file-download="1"`;
+      const typeLabel = isLink ? `<span class="file-ext-badge file-ext-link">LINK</span>` : "";
+      return `
+        <tr class="print-ready-file-row">
+          <td>${esc((file && (file.display_path || file.folder_path)) || "-")}</td>
+          <td><a class="print-ready-file-download-link" href="${esc(href)}" ${downloadAttrs}>${esc(displayName)}</a>${typeLabel ? ` ${typeLabel}` : ""}</td>
+          <td>${printReadyInfoHtml(file)}</td>
+          <td>${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : `<span class="print-ready-status-muted">Ikke printet</span>`}</td>
+          <td>${Number(file.quantity || 1)}</td>
+          <td>${printReadyAttachmentHtml(file.attachments)}</td>
+          <td>
+            <div class="print-ready-row-actions">
+              ${
+                isAdmin
+                  ? (
+                    isFinalProject || finishedMode
+                      ? `<button class="btn small" type="button" disabled>${isCancelledProject ? "Annulleret" : "Projekt færdigt"}</button>`
+                      : (
+                        file.printed
+                          ? `<button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Fjern printet</button>`
+                          : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
+                      )
+                  )
+                  : `<span class="hint">-</span>`
+              }
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
     return `
       <article class="print-ready-project-card ${projectCardStatusClass}">
         <div class="print-ready-project-head">

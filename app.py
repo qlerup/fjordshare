@@ -407,6 +407,11 @@ def print_info_with_scale(row: sqlite3.Row) -> str:
     scale = scale_up_label(row)
     if scale:
         parts.append(f"Større: {scale}")
+    link_url = _print_ready_external_url(row)
+    if link_url:
+        source = _print_ready_external_source(row)
+        label = f"Link ({source})" if source else "Link"
+        parts.append(f"{label}: {link_url}")
     return " | ".join(parts)
 
 
@@ -10830,14 +10835,60 @@ def commit_uploaded_file(
     return row
 
 
-def _external_link_url_from_row(row: sqlite3.Row) -> str:
-    value = str(_row_value(row, "external_url", "") or "").strip()
+def _clean_http_url(value: Any) -> str:
+    value = str(value or "").strip()
     if not value:
         return ""
     parsed = urllib_parse.urlparse(value)
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         return ""
     return value
+
+
+def _external_link_url_from_row(row: sqlite3.Row) -> str:
+    return _clean_http_url(_row_value(row, "external_url", ""))
+
+
+def _print_ready_external_url(row: sqlite3.Row) -> str:
+    return _clean_http_url(
+        _row_value(row, "current_external_url", "")
+        or _row_value(row, "external_url", "")
+    )
+
+
+def _print_ready_external_source(row: sqlite3.Row) -> str:
+    value = str(
+        _row_value(row, "current_external_source", "")
+        or _row_value(row, "external_source", "")
+        or ""
+    ).strip()
+    return value[:120]
+
+
+def _print_ready_external_title(row: sqlite3.Row) -> str:
+    value = str(
+        _row_value(row, "current_external_title", "")
+        or _row_value(row, "external_title", "")
+        or ""
+    ).strip()
+    return value[:240]
+
+
+def _print_ready_external_cover_url(row: sqlite3.Row) -> str:
+    value = str(
+        _row_value(row, "current_external_cover_url", "")
+        or _row_value(row, "external_cover_url", "")
+        or ""
+    ).strip()
+    return value[:1000]
+
+
+def _print_ready_display_name(row: sqlite3.Row) -> str:
+    if _print_ready_external_url(row):
+        title = _print_ready_external_title(row)
+        if title:
+            return title
+    return str(row["filename"] or "").strip() or "Fil"
 
 
 def _allocate_unique_link_target(folder: str, abs_folder: Path, filename: str) -> Path:
@@ -11983,7 +12034,11 @@ def _print_ready_file_rows(conn: sqlite3.Connection, project_id: int) -> list[sq
             f.uploaded_by AS current_uploaded_by,
             f.printed AS current_printed,
             f.printed_at AS current_printed_at,
-            f.printed_by AS current_printed_by
+            f.printed_by AS current_printed_by,
+            f.external_url AS current_external_url,
+            f.external_source AS current_external_source,
+            f.external_title AS current_external_title,
+            f.external_cover_url AS current_external_cover_url
         FROM print_ready_project_files pf
         LEFT JOIN files f ON f.id = pf.file_id
         WHERE pf.project_id=?
@@ -12059,6 +12114,8 @@ def serialize_print_ready_project(
             file_id = int(row["file_id"])
             quantity = max(1, int(row["quantity"] or 1))
             is_printed = project_status == "completed" or bool(int(row["current_printed"] or 0))
+            external_url = _print_ready_external_url(row)
+            is_external_link = bool(external_url)
             total_quantity += quantity
             if is_printed:
                 printed_file_count += 1
@@ -12070,6 +12127,7 @@ def serialize_print_ready_project(
                     "folder_path": str(row["folder_path"] or ""),
                     "display_path": _print_ready_display_path(project_row, row),
                     "filename": str(row["filename"] or ""),
+                    "display_name": _print_ready_display_name(row),
                     "note": str(row["note"] or ""),
                     "quantity": quantity,
                     "scale_up_enabled": bool(int(row["scale_up_enabled"] or 0)),
@@ -12079,6 +12137,11 @@ def serialize_print_ready_project(
                     "attachments": attachments,
                     "content_url": url_for("api_file_content", file_id=file_id),
                     "download_url": url_for("api_file_download", file_id=file_id),
+                    "is_external_link": is_external_link,
+                    "external_url": external_url,
+                    "external_source": _print_ready_external_source(row) if is_external_link else "",
+                    "external_title": _print_ready_external_title(row) if is_external_link else "",
+                    "external_cover_url": _print_ready_external_cover_url(row) if is_external_link else "",
                     "printed": is_printed,
                     "printed_at": str(row["current_printed_at"] or ""),
                     "printed_by": str(row["current_printed_by"] or ""),
@@ -12184,16 +12247,38 @@ def _draw_wrapped_text(draw: Any, text: str, xy: tuple[int, int], width: int, fo
     value = str(text or "").strip()
     if not value:
         value = "-"
-    words = value.replace("\r", "").split()
+
+    def measure(candidate: str) -> int:
+        try:
+            bbox = draw.textbbox((0, 0), candidate, font=font)
+            return int(bbox[2] - bbox[0])
+        except Exception:
+            return len(candidate) * 8
+
+    def split_long_word(word: str) -> list[str]:
+        if measure(word) <= width:
+            return [word]
+        chunks: list[str] = []
+        current = ""
+        for char in word:
+            candidate = f"{current}{char}"
+            if current and measure(candidate) > width:
+                chunks.append(current)
+                current = char
+            else:
+                current = candidate
+        if current:
+            chunks.append(current)
+        return chunks or [word]
+
+    words: list[str] = []
+    for word in value.replace("\r", "").split():
+        words.extend(split_long_word(word))
     lines: list[str] = []
     current = ""
     for word in words:
         candidate = f"{current} {word}".strip()
-        try:
-            bbox = draw.textbbox((0, 0), candidate, font=font)
-            candidate_width = int(bbox[2] - bbox[0])
-        except Exception:
-            candidate_width = len(candidate) * 8
+        candidate_width = measure(candidate)
         if current and candidate_width > width:
             lines.append(current)
             current = word
@@ -12268,8 +12353,11 @@ def _add_pdf_internal_links(
         for link in links:
             source_page = int(link.get("source_page") or 0)
             target_page = int(link.get("target_page") or 0)
+            url = _clean_http_url(link.get("url", ""))
             rect_px = link.get("rect_px")
-            if source_page < 0 or source_page >= page_count or target_page < 0 or target_page >= page_count:
+            if source_page < 0 or source_page >= page_count:
+                continue
+            if not url and (target_page < 0 or target_page >= page_count):
                 continue
             if not isinstance(rect_px, (list, tuple)) or len(rect_px) != 4:
                 continue
@@ -12289,7 +12377,9 @@ def _add_pdf_internal_links(
 
             writer.add_annotation(
                 source_page,
-                PdfLink(rect=(left, bottom, right, top), target_page_index=target_page, fit=PdfFit.fit()),
+                PdfLink(rect=(left, bottom, right, top), url=url)
+                if url
+                else PdfLink(rect=(left, bottom, right, top), target_page_index=target_page, fit=PdfFit.fit()),
             )
 
         out = io.BytesIO()
@@ -12340,6 +12430,8 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
     for row in files:
         file_id = int(row["file_id"])
         display_path = _print_ready_display_path(project, row)
+        display_name = _print_ready_display_name(row)
+        link_url = _print_ready_external_url(row)
         info_text = print_info_with_scale(row)
         attachments = attachment_map.get(file_id, [])
         thumbs = _pdf_attachment_images(attachments, max_items=3, max_size=(138, 104))
@@ -12347,7 +12439,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
         probe_draw = ImageDraw.Draw(text_probe)
         text_heights = [
             _draw_wrapped_text(probe_draw, display_path, (0, 0), col_w[0] - 16, font_body),
-            _draw_wrapped_text(probe_draw, str(row["filename"] or ""), (0, 0), col_w[1] - 16, font_body),
+            _draw_wrapped_text(probe_draw, display_name, (0, 0), col_w[1] - 16, font_body),
             _draw_wrapped_text(probe_draw, info_text, (0, 0), col_w[2] - 16, font_body),
         ]
         thumb_h = 118 if thumbs or attachments else 24
@@ -12363,9 +12455,24 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
         for x in col_x[1:]:
             draw.line((x, y, x, y + row_h), fill="#d8dee7", width=1)
         _draw_wrapped_text(draw, display_path, (col_x[0] + 8, y + 10), col_w[0] - 16, font_body)
-        _draw_wrapped_text(draw, str(row["filename"] or ""), (col_x[1] + 8, y + 10), col_w[1] - 16, font_body)
+        _draw_wrapped_text(
+            draw,
+            display_name,
+            (col_x[1] + 8, y + 10),
+            col_w[1] - 16,
+            font_body,
+            fill="#0f5dbd" if link_url else "#111111",
+        )
         _draw_wrapped_text(draw, info_text, (col_x[2] + 8, y + 10), col_w[2] - 16, font_body)
         draw.text((col_x[3] + 22, y + 10), str(max(1, int(row["quantity"] or 1))), fill="#111111", font=font_body)
+        if link_url:
+            summary_links.append(
+                {
+                    "source_page": len(pages),
+                    "url": link_url,
+                    "rect_px": (col_x[1] + 4, y + 4, col_x[2] - 4, y + row_h - 4),
+                }
+            )
 
         img_x = col_x[4] + 8
         img_y = y + 8
@@ -12398,6 +12505,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
     for row in files:
         file_id = int(row["file_id"])
         display_path = _print_ready_display_path(project, row)
+        display_name = _print_ready_display_name(row)
         attachment_rows = attachment_map.get(file_id, [])
         for attachment_row, image in _pdf_attachment_images(attachment_rows, max_items=1000, max_size=(page_w - (margin * 2), page_h - 260)):
             appendix_no += 1
@@ -12409,7 +12517,7 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
             except Exception:
                 pass
             attachment_draw.text((margin, 40), f"Bilag {appendix_no} - Vedhæftet billede", fill="#111111", font=font_title)
-            attachment_draw.text((margin, 82), f"Fil: {row['filename']}", fill="#333333", font=font_meta)
+            attachment_draw.text((margin, 82), f"Fil: {display_name}", fill="#333333", font=font_meta)
             attachment_draw.text((margin, 108), f"Sti: {display_path}", fill="#333333", font=font_meta)
             attachment_draw.text(
                 (margin, 134),
@@ -12433,6 +12541,16 @@ def build_print_ready_pdf(project: sqlite3.Row, files: list[sqlite3.Row], attach
     pdf_bytes = out.getvalue()
     resolved_links = []
     for link in summary_links:
+        url = _clean_http_url(link.get("url", ""))
+        if url:
+            resolved_links.append(
+                {
+                    "source_page": int(link.get("source_page") or 0),
+                    "url": url,
+                    "rect_px": link.get("rect_px"),
+                }
+            )
+            continue
         target_page = attachment_target_pages.get(int(link.get("attachment_id") or 0))
         if target_page is None:
             continue
@@ -12450,6 +12568,7 @@ def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attach
     out = io.BytesIO()
     pdf_bytes = build_print_ready_pdf(project, files, attachment_map)
     used_names: set[str] = set()
+    link_summary_lines: list[str] = []
 
     def unique_name(name: str) -> str:
         base = name
@@ -12468,6 +12587,8 @@ def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attach
             display_folder = _print_ready_display_path(project, row)
             if display_folder == ".":
                 display_folder = ""
+            link_url = _print_ready_external_url(row)
+            display_name = _print_ready_display_name(row)
             file_arc = unique_name(
                 _safe_zip_arcname(
                     "filer",
@@ -12475,12 +12596,28 @@ def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attach
                     str(row["filename"] or "fil"),
                 )
             )
+            wrote_file = False
             try:
                 path = file_disk_path(row)
                 if path.exists() and path.is_file():
                     zf.write(path, file_arc)
+                    wrote_file = True
             except Exception:
-                continue
+                pass
+
+            if link_url:
+                if not wrote_file:
+                    zf.writestr(file_arc, f"[InternetShortcut]\nURL={link_url}\n")
+                source = _print_ready_external_source(row)
+                link_summary_lines.extend(
+                    [
+                        f"Navn: {display_name}",
+                        f"Sti: {display_folder or '.'}",
+                        f"Kilde: {source or '-'}",
+                        f"URL: {link_url}",
+                        "",
+                    ]
+                )
 
             file_label = _safe_zip_arcname(display_folder, Path(str(row["filename"] or "fil")).stem or "fil")
             for attachment in attachment_map.get(int(row["file_id"]), []):
@@ -12498,6 +12635,8 @@ def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attach
                     zf.write(attachment_path, attachment_arc)
                 except Exception:
                     continue
+        if link_summary_lines:
+            zf.writestr(unique_name(_safe_zip_arcname("links", "links.txt")), "\n".join(link_summary_lines).rstrip() + "\n")
     return out.getvalue()
 
 
