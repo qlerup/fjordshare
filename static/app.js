@@ -13943,11 +13943,17 @@
       .join("");
     const description = String(data.description || "Ingen beskrivelse fundet.").trim();
     const targetFolder = importLinkTargetFolder();
+    const profilesCount = Number.isFinite(Number(data.profiles_count))
+      ? Number(data.profiles_count)
+      : profiles.length;
+    const profilesOverviewLabel = String(data.profiles_overview_label || "Profiler fundet").trim() || "Profiler fundet";
+    const profilesSectionTitle = String(data.profiles_section_title || "Printprofiler på linket").trim() || "Printprofiler på linket";
+    const profilesEmptyText = String(data.profiles_empty_text || "Ingen printprofiler fundet på linket.").trim() || "Ingen printprofiler fundet på linket.";
     const overviewHtml = `
       <div class="import-link-overview">
         <div><span>Gemmes i</span><strong>${esc(targetFolder || "-")}</strong></div>
         <div><span>Kilde</span><strong>${esc(data.source_label || "Link")}</strong></div>
-        <div><span>Profiler fundet</span><strong>${esc(formatImportNumber(profiles.length))}</strong></div>
+        <div><span>${esc(profilesOverviewLabel)}</span><strong>${esc(formatImportNumber(profilesCount))}</strong></div>
       </div>
     `;
     const profileHtml = profiles.length
@@ -13965,6 +13971,9 @@
             .join("");
           const printers = (Array.isArray(profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 4).join(", ");
           const coverUrl = String(profile.cover_url || (Array.isArray(profile.picture_urls) && profile.picture_urls[0]) || "").trim();
+          const profileFileType = String(profile.file_type || "").trim();
+          const profileFileSize = Number(profile.file_size || 0);
+          const profilePlateCount = Number(profile.plate_count || 0);
           return `
             <article class="import-profile-card readonly" data-profile-id="${esc(id)}">
               ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${index + 1}</div>`}
@@ -13972,12 +13981,15 @@
                 <div class="import-profile-title">${esc(profile.title || "Printprofil")}</div>
                 <div class="import-profile-meta">
                   ${profile.is_designer ? `<span>Designer</span>` : ""}
-                  <span>${esc(formatImportDuration(profile.print_time_seconds))}</span>
-                  <span>${esc(formatImportNumber(profile.plate_count))} plade${Number(profile.plate_count || 0) === 1 ? "" : "r"}</span>
+                  ${profileFileType ? `<span>${esc(profileFileType)}</span>` : ""}
+                  ${profileFileSize > 0 ? `<span>${esc(formatSize(profileFileSize))}</span>` : ""}
+                  ${Number(profile.print_time_seconds || 0) > 0 ? `<span>${esc(formatImportDuration(profile.print_time_seconds))}</span>` : ""}
+                  ${profilePlateCount > 0 ? `<span>${esc(formatImportNumber(profilePlateCount))} plade${profilePlateCount === 1 ? "" : "r"}</span>` : ""}
                   ${profile.rating ? `<span>${esc(profile.rating)} (${esc(formatImportNumber(profile.rating_count))})</span>` : ""}
                 </div>
                 <div class="import-profile-settings">
                   ${settings.layer_height ? `<span>${esc(settings.layer_height)}mm lag</span>` : ""}
+                  ${settings.nozzle ? `<span>${esc(settings.nozzle)}</span>` : ""}
                   ${settings.wall_loops ? `<span>${esc(settings.wall_loops)} vægge</span>` : ""}
                   ${settings.infill ? `<span>${esc(settings.infill)} infill</span>` : ""}
                   ${profile.need_ams ? `<span>AMS</span>` : ""}
@@ -13988,7 +14000,7 @@
             </article>
           `;
         }).join("")
-      : `<div class="empty-note">Ingen printprofiler fundet på linket.</div>`;
+      : `<div class="empty-note">${esc(profilesEmptyText)}</div>`;
 
     els.importPreviewBody.innerHTML = `
       <div class="import-preview-grid">
@@ -14014,7 +14026,7 @@
         <div class="import-description">${esc(description).replace(/\n/g, "<br>")}</div>
       </div>
       <div class="import-preview-section">
-        <div class="import-section-title">Printprofiler på linket</div>
+        <div class="import-section-title">${esc(profilesSectionTitle)}</div>
         <div class="import-profiles">${profileHtml}</div>
       </div>
     `;
@@ -15419,7 +15431,7 @@
         els.importPreviewUseBtn.disabled = true;
         els.importPreviewUseBtn.textContent = "Gemmer...";
 
-        const source = String((preview && preview.source_label) || "MakerWorld").trim() || "MakerWorld";
+        const source = String((preview && preview.source_label) || "Link").trim() || "Link";
         showStatus(els.importPreviewStatus, `Gemmer link fra ${source} i den valgte mappe...`, "ok");
 
         try {
@@ -15470,7 +15482,7 @@
         if (!cover) return;
         const imageUrl = String((cover.dataset && cover.dataset.importPreviewOpen) || "").trim();
         if (!imageUrl) return;
-        const imageName = String((state.importLinkPreview && state.importLinkPreview.title) || "MakerWorld billede").trim() || "MakerWorld billede";
+        const imageName = String((state.importLinkPreview && state.importLinkPreview.title) || "Model billede").trim() || "Model billede";
         openImagePreviewModal(imageUrl, imageName);
       });
     }

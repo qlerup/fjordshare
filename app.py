@@ -12471,6 +12471,8 @@ MAKERWORLD_INSTANCE_DOWNLOAD_API = "https://makerworld.com/api/v1/design-service
 MAKERWORLD_INSTANCE_FILE_API = "https://makerworld.com/api/v1/design-service/instance/{instance_id}/f3mf"
 MAKERWORLD_BAMBU_SIGNIN_PAGE_URL = "https://bambulab.com/en/sign-in"
 MAKERWORLD_BAMBU_SIGNIN_API_URL = "https://bambulab.com/api/sign-in/form"
+PRINTABLES_GRAPHQL_API = "https://api.printables.com/graphql/"
+PRINTABLES_MEDIA_BASE_URL = "https://media.printables.com/"
 MAKERWORLD_HTTP_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -12486,6 +12488,35 @@ MAKERWORLD_LICENSE_LABELS = {
     "CC0": "Public Domain",
     "PUBLIC_DOMAIN": "Public Domain",
 }
+PRINTABLES_PREVIEW_QUERY = """
+query FjordSharePrintablesPreview($id: ID!) {
+  print(id: $id) {
+    id
+    name
+    slug
+    summary
+    description
+    downloadCount
+    likesCount
+    makesCount
+    commentCount
+    ratingAvg
+    ratingCount
+    displayCount
+    filesCount
+    imagesCount
+    user { publicUsername handle }
+    category { name }
+    license { abbreviation name }
+    tags { name }
+    image { name filePreview filePath filePreviewPath }
+    images { name filePreview filePath filePreviewPath order }
+    stls { id name folder fileSize filePreviewPath }
+    gcodes { id name folder fileSize printDuration layerHeight weight nozzleDiameter filePreviewPath }
+    otherFiles { id name folder fileSize filePreviewPath fileFormat }
+  }
+}
+"""
 
 
 def _makerworld_ids_from_url(raw_url: str) -> tuple[int, Optional[int]]:
@@ -12528,6 +12559,15 @@ def _makerworld_fetch_design(design_id: int) -> dict[str, Any]:
     if not isinstance(data, dict) or not data.get("id"):
         raise ValueError("MakerWorld-linket gav ikke en gyldig model.")
     return data
+
+
+def _int_from_any(value: Any, default: int = 0) -> int:
+    try:
+        if value is None or value == "":
+            return int(default)
+        return int(float(str(value).strip()))
+    except Exception:
+        return int(default)
 
 
 def _makerworld_image_url(value: Any) -> str:
@@ -12679,6 +12719,202 @@ def makerworld_preview_from_url(raw_url: str) -> dict[str, Any]:
         "categories": _unique_strings(categories, limit=6),
         "profiles": profiles,
     }
+
+
+def _printables_id_from_url(raw_url: str) -> int:
+    parsed = urllib_parse.urlparse(str(raw_url or "").strip())
+    host = parsed.netloc.lower().split(":")[0]
+    if host not in {"printables.com", "www.printables.com"}:
+        raise ValueError("Indsæt et Printables-link.")
+
+    match = re.search(r"/(?:[a-z]{2}/)?model/(\d+)(?:-|/|$)", parsed.path or "", re.IGNORECASE)
+    if not match:
+        raise ValueError("Kunne ikke finde Printables model-id i linket.")
+    return int(match.group(1))
+
+
+def _printables_graphql_request(query: str, variables: dict[str, Any]) -> dict[str, Any]:
+    payload = json.dumps(
+        {
+            "query": str(query or ""),
+            "variables": variables if isinstance(variables, dict) else {},
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    req = urllib_request.Request(
+        PRINTABLES_GRAPHQL_API,
+        data=payload,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": MAKERWORLD_HTTP_USER_AGENT,
+        },
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=20) as resp:
+            raw = resp.read(6_000_000)
+    except urllib_error.HTTPError as exc:
+        raise ValueError(f"Printables svarede med HTTP {int(exc.code or 0)}.") from exc
+    except urllib_error.URLError as exc:
+        raise ValueError("Kunne ikke kontakte Printables lige nu.") from exc
+    except Exception as exc:
+        raise ValueError("Kunne ikke hente Printables-oplysninger.") from exc
+
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise ValueError("Printables sendte et ugyldigt svar.") from exc
+    if not isinstance(data, dict):
+        raise ValueError("Printables sendte et ugyldigt svar.")
+    errors = data.get("errors")
+    if isinstance(errors, list) and errors:
+        first_error = errors[0] if isinstance(errors[0], dict) else {}
+        message = str(first_error.get("message") or "").strip() if isinstance(first_error, dict) else ""
+        raise ValueError(message or "Printables returnerede en fejl.")
+    return data
+
+
+def _printables_media_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    raw = raw.split("#", 1)[0].strip()
+    parsed = urllib_parse.urlparse(raw)
+    if parsed.scheme.lower() in {"http", "https"} and parsed.netloc:
+        return raw
+    raw = raw.lstrip("/")
+    if not raw:
+        return ""
+    return urllib_parse.urljoin(PRINTABLES_MEDIA_BASE_URL, raw)
+
+
+def _printables_image_from_item(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return _printables_media_url(item.get("filePreviewPath") or item.get("filePreview") or item.get("filePath"))
+
+
+def _printables_file_profile(item: dict[str, Any], kind: str, index: int) -> dict[str, Any]:
+    name = str(item.get("name") or f"Fil {index + 1}").strip() or f"Fil {index + 1}"
+    folder = str(item.get("folder") or "").strip()
+    suffix = Path(name).suffix.replace(".", "").upper()
+    file_type = str(kind or suffix or "Fil").strip()
+    settings: dict[str, str] = {}
+    layer_height = str(item.get("layerHeight") or "").strip()
+    nozzle = str(item.get("nozzleDiameter") or "").strip()
+    if layer_height:
+        settings["layer_height"] = layer_height
+    if nozzle:
+        settings["nozzle"] = f"{nozzle}mm dyse"
+
+    return {
+        "id": str(item.get("id") or f"{kind}-{index}"),
+        "title": name,
+        "cover_url": _printables_media_url(item.get("filePreviewPath")),
+        "picture_urls": _unique_strings([_printables_media_url(item.get("filePreviewPath"))], limit=1),
+        "file_type": file_type.upper(),
+        "file_size": _int_from_any(item.get("fileSize")),
+        "folder": folder,
+        "print_time_seconds": _int_from_any(item.get("printDuration")),
+        "weight_g": _int_from_any(item.get("weight")),
+        "settings": settings,
+        "compatible_printers": _unique_strings([folder], limit=1),
+    }
+
+
+def printables_preview_from_url(raw_url: str) -> dict[str, Any]:
+    print_id = _printables_id_from_url(raw_url)
+    response = _printables_graphql_request(PRINTABLES_PREVIEW_QUERY, {"id": str(print_id)})
+    data_root = response.get("data") if isinstance(response.get("data"), dict) else {}
+    data = data_root.get("print") if isinstance(data_root, dict) else None
+    if not isinstance(data, dict) or not data.get("id"):
+        raise ValueError("Printables-modellen blev ikke fundet.")
+
+    user = data.get("user") if isinstance(data.get("user"), dict) else {}
+    category = data.get("category") if isinstance(data.get("category"), dict) else {}
+    license_data = data.get("license") if isinstance(data.get("license"), dict) else {}
+    images = data.get("images") if isinstance(data.get("images"), list) else []
+    image_urls = _unique_strings(
+        [
+            _printables_image_from_item(data.get("image")),
+            *[_printables_image_from_item(item) for item in sorted(
+                [item for item in images if isinstance(item, dict)],
+                key=lambda item: _int_from_any(item.get("order"), 999),
+            )],
+        ],
+        limit=12,
+    )
+
+    file_profiles: list[dict[str, Any]] = []
+    for kind, items in (
+        ("STL", data.get("stls") if isinstance(data.get("stls"), list) else []),
+        ("GCODE", data.get("gcodes") if isinstance(data.get("gcodes"), list) else []),
+        ("FIL", data.get("otherFiles") if isinstance(data.get("otherFiles"), list) else []),
+    ):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            file_profiles.append(_printables_file_profile(item, kind, len(file_profiles)))
+            if len(file_profiles) >= 12:
+                break
+        if len(file_profiles) >= 12:
+            break
+
+    tag_names = [
+        str(tag.get("name") or "").strip()
+        for tag in (data.get("tags") if isinstance(data.get("tags"), list) else [])
+        if isinstance(tag, dict)
+    ]
+    category_name = str(category.get("name") or "").strip()
+    creator = str(user.get("publicUsername") or user.get("handle") or "").strip()
+    license_code = str(license_data.get("abbreviation") or "").strip()
+    license_label = str(license_data.get("name") or license_code or "").strip()
+    title = str(data.get("name") or "Printables model").strip() or "Printables model"
+    slug = str(data.get("slug") or "").strip()
+
+    return {
+        "source": "printables",
+        "source_label": "Printables",
+        "url": str(raw_url or "").strip(),
+        "design_id": int(data.get("id") or print_id),
+        "model_id": str(data.get("id") or print_id),
+        "slug": slug,
+        "title": title,
+        "creator": creator,
+        "creator_handle": str(user.get("handle") or "").strip(),
+        "cover_url": image_urls[0] if image_urls else "",
+        "image_urls": image_urls,
+        "description": _plain_text_from_html(data.get("description") or data.get("summary") or ""),
+        "license": {
+            "code": license_code,
+            "label": license_label or "Ukendt licens",
+        },
+        "stats": {
+            "likes": _int_from_any(data.get("likesCount")),
+            "downloads": _int_from_any(data.get("downloadCount")),
+            "prints": _int_from_any(data.get("makesCount")),
+            "comments": _int_from_any(data.get("commentCount")),
+            "views": _int_from_any(data.get("displayCount")),
+            "files": _int_from_any(data.get("filesCount")),
+        },
+        "categories": _unique_strings([category_name, *tag_names], limit=6),
+        "profiles": file_profiles,
+        "profiles_count": _int_from_any(data.get("filesCount"), len(file_profiles)),
+        "profiles_overview_label": "Filer fundet",
+        "profiles_section_title": "Filer på linket",
+        "profiles_empty_text": "Ingen filer fundet på linket.",
+    }
+
+
+def external_link_preview_from_url(raw_url: str) -> dict[str, Any]:
+    parsed = urllib_parse.urlparse(str(raw_url or "").strip())
+    host = parsed.netloc.lower().split(":")[0]
+    if host in {"makerworld.com", "www.makerworld.com"}:
+        return makerworld_preview_from_url(raw_url)
+    if host in {"printables.com", "www.printables.com"}:
+        return printables_preview_from_url(raw_url)
+    raise ValueError("Denne link-kilde er ikke understøttet endnu.")
 
 
 def _makerworld_cloudflare_blocked(payload_text: str) -> bool:
@@ -18408,12 +18644,7 @@ def api_import_link_preview():
             return jsonify({"ok": False, "error": "Upload er ikke tilladt i denne mappe."}), 403
 
     try:
-        parsed = urllib_parse.urlparse(raw_url)
-        host = parsed.netloc.lower().split(":")[0]
-        if host in {"makerworld.com", "www.makerworld.com"}:
-            preview = makerworld_preview_from_url(raw_url)
-        else:
-            return jsonify({"ok": False, "error": "Denne link-kilde er ikke understøttet endnu."}), 400
+        preview = external_link_preview_from_url(raw_url)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
@@ -18441,12 +18672,7 @@ def api_import_link_commit():
             return jsonify({"ok": False, "error": "Upload er ikke tilladt i denne mappe."}), 403
 
     try:
-        parsed = urllib_parse.urlparse(raw_url)
-        host = parsed.netloc.lower().split(":")[0]
-        if host not in {"makerworld.com", "www.makerworld.com"}:
-            return jsonify({"ok": False, "error": "Denne link-kilde er ikke understøttet endnu."}), 400
-
-        preview = makerworld_preview_from_url(raw_url)
+        preview = external_link_preview_from_url(raw_url)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
