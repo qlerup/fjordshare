@@ -11275,9 +11275,87 @@ def serialize_file_row(
         "external_source": external_source,
         "external_title": external_title,
         "external_cover_url": external_cover_url,
+        "external_payload": _external_link_payload_for_client(row) if is_external_link else {},
         "content_url": content_url,
         "download_url": download_url,
         "slice_output": _serialize_slice_output_row(slice_output_row, share_token=share_token) if slice_output_row is not None else None,
+    }
+
+
+def _external_link_payload_for_client(row: sqlite3.Row) -> dict[str, Any]:
+    raw_payload = str(_row_value(row, "external_payload_json", "") or "").strip()
+    if not raw_payload:
+        return {}
+    try:
+        data = json.loads(raw_payload)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    stats = data.get("stats") if isinstance(data.get("stats"), dict) else {}
+    license_data = data.get("license") if isinstance(data.get("license"), dict) else {}
+    categories = _unique_strings(data.get("categories") if isinstance(data.get("categories"), list) else [], limit=8)
+
+    profiles_out: list[dict[str, Any]] = []
+    for item in data.get("profiles") if isinstance(data.get("profiles"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        settings = item.get("settings") if isinstance(item.get("settings"), dict) else {}
+        profiles_out.append(
+            {
+                "id": str(item.get("id") or "").strip(),
+                "title": str(item.get("title") or "Fil").strip()[:180],
+                "cover_url": str(item.get("cover_url") or "").strip()[:1000],
+                "file_type": str(item.get("file_type") or "").strip()[:40],
+                "file_size": _int_from_any(item.get("file_size")),
+                "folder": str(item.get("folder") or "").strip()[:180],
+                "print_time_seconds": _int_from_any(item.get("print_time_seconds")),
+                "weight_g": _int_from_any(item.get("weight_g")),
+                "plate_count": _int_from_any(item.get("plate_count")),
+                "rating": item.get("rating"),
+                "rating_count": _int_from_any(item.get("rating_count")),
+                "need_ams": bool(item.get("need_ams")),
+                "settings": {
+                    "layer_height": str(settings.get("layer_height") or "").strip()[:40],
+                    "nozzle": str(settings.get("nozzle") or "").strip()[:80],
+                    "wall_loops": str(settings.get("wall_loops") or "").strip()[:40],
+                    "infill": str(settings.get("infill") or "").strip()[:40],
+                },
+                "compatible_printers": _unique_strings(
+                    item.get("compatible_printers") if isinstance(item.get("compatible_printers"), list) else [],
+                    limit=4,
+                ),
+            }
+        )
+        if len(profiles_out) >= 12:
+            break
+
+    return {
+        "source": str(data.get("source") or "").strip()[:80],
+        "source_label": str(data.get("source_label") or "").strip()[:120],
+        "title": str(data.get("title") or "").strip()[:240],
+        "creator": str(data.get("creator") or "").strip()[:180],
+        "creator_handle": str(data.get("creator_handle") or "").strip()[:180],
+        "description": str(data.get("description") or "").strip()[:2500],
+        "license": {
+            "code": str(license_data.get("code") or "").strip()[:80],
+            "label": str(license_data.get("label") or "").strip()[:180],
+        },
+        "stats": {
+            "likes": _int_from_any(stats.get("likes")),
+            "downloads": _int_from_any(stats.get("downloads")),
+            "prints": _int_from_any(stats.get("prints")),
+            "comments": _int_from_any(stats.get("comments")),
+            "views": _int_from_any(stats.get("views")),
+            "files": _int_from_any(stats.get("files")),
+        },
+        "categories": categories,
+        "profiles": profiles_out,
+        "profiles_count": _int_from_any(data.get("profiles_count"), len(profiles_out)),
+        "profiles_overview_label": str(data.get("profiles_overview_label") or "Profiler fundet").strip()[:80],
+        "profiles_section_title": str(data.get("profiles_section_title") or "Printprofiler på linket").strip()[:120],
+        "profiles_empty_text": str(data.get("profiles_empty_text") or "Ingen printprofiler fundet på linket.").strip()[:180],
     }
 
 

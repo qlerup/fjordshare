@@ -264,6 +264,7 @@
     fileInfoSize: document.getElementById("fileInfoSize"),
     fileInfoUploadedAt: document.getElementById("fileInfoUploadedAt"),
     fileInfoUploadedBy: document.getElementById("fileInfoUploadedBy"),
+    fileInfoLinkDetails: document.getElementById("fileInfoLinkDetails"),
     fileInfoRowPrintTimeTotal: document.getElementById("fileInfoRowPrintTimeTotal"),
     fileInfoPrintTimeTotal: document.getElementById("fileInfoPrintTimeTotal"),
     fileInfoRowFilamentGrams: document.getElementById("fileInfoRowFilamentGrams"),
@@ -8367,6 +8368,113 @@
     await loadFileAttachments(id);
   }
 
+  function fileInfoLinkChip(label, value) {
+    const text = String(value || "").trim();
+    if (!text || text === "0") return "";
+    return `<span class="file-info-link-chip"><strong>${esc(label)}</strong>${esc(text)}</span>`;
+  }
+
+  function renderFileInfoLinkDetails(file) {
+    if (!els.fileInfoLinkDetails) return;
+    const payload = file && file.external_payload && typeof file.external_payload === "object" ? file.external_payload : {};
+    const isLink = !!(file && file.is_external_link);
+    if (!isLink || !Object.keys(payload).length) {
+      els.fileInfoLinkDetails.classList.add("hidden");
+      els.fileInfoLinkDetails.innerHTML = "";
+      return;
+    }
+
+    const stats = payload.stats && typeof payload.stats === "object" ? payload.stats : {};
+    const statsHtml = [
+      fileInfoLinkChip("Downloads", formatImportNumber(stats.downloads)),
+      fileInfoLinkChip("Print", formatImportNumber(stats.prints)),
+      fileInfoLinkChip("Likes", formatImportNumber(stats.likes)),
+      fileInfoLinkChip("Kommentarer", formatImportNumber(stats.comments)),
+      fileInfoLinkChip("Visninger", formatImportNumber(stats.views)),
+      fileInfoLinkChip("Filer", formatImportNumber(stats.files)),
+    ].join("");
+    const categoriesHtml = (Array.isArray(payload.categories) ? payload.categories : [])
+      .filter(Boolean)
+      .slice(0, 8)
+      .map((item) => `<span class="file-info-link-tag">${esc(item)}</span>`)
+      .join("");
+    const license = payload.license && typeof payload.license === "object" ? payload.license : {};
+    const licenseText = String(license.label || license.code || "").trim();
+    const description = String(payload.description || "").trim();
+    const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+    const profilesCount = Number.isFinite(Number(payload.profiles_count)) ? Number(payload.profiles_count) : profiles.length;
+    const profilesSectionTitle = String(payload.profiles_section_title || "Printprofiler på linket").trim() || "Printprofiler på linket";
+    const shownProfiles = profiles.slice(0, 6);
+    const profilesHtml = shownProfiles
+      .map((profile, index) => {
+        const settings = profile && profile.settings && typeof profile.settings === "object" ? profile.settings : {};
+        const coverUrl = String((profile && profile.cover_url) || "").trim();
+        const title = String((profile && profile.title) || "Fil").trim() || "Fil";
+        const fileType = String((profile && profile.file_type) || "").trim();
+        const fileSize = Number((profile && profile.file_size) || 0);
+        const printTime = Number((profile && profile.print_time_seconds) || 0);
+        const plateCount = Number((profile && profile.plate_count) || 0);
+        const weightGrams = Number((profile && profile.weight_g) || 0);
+        const folder = String((profile && profile.folder) || "").trim();
+        const printers = (Array.isArray(profile && profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 3).join(", ");
+        const metaParts = [
+          fileType,
+          fileSize > 0 ? formatSize(fileSize) : "",
+          printTime > 0 ? formatImportDuration(printTime) : "",
+          plateCount > 0 ? `${formatImportNumber(plateCount)} plade${plateCount === 1 ? "" : "r"}` : "",
+          weightGrams > 0 ? `${formatImportNumber(weightGrams)}g` : "",
+        ].filter(Boolean);
+        const settingsHtml = [
+          settings.layer_height ? `${settings.layer_height}mm lag` : "",
+          settings.nozzle || "",
+          settings.wall_loops ? `${settings.wall_loops} vægge` : "",
+          settings.infill ? `${settings.infill} infill` : "",
+          profile && profile.need_ams ? "AMS" : "",
+        ]
+          .filter(Boolean)
+          .map((item) => `<span>${esc(item)}</span>`)
+          .join("");
+        const subText = folder || printers;
+        return `
+          <article class="file-info-link-profile">
+            ${coverUrl ? `<img class="file-info-link-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="file-info-link-profile-thumb placeholder">${index + 1}</div>`}
+            <div class="file-info-link-profile-main">
+              <div class="file-info-link-profile-title" title="${esc(title)}">${esc(title)}</div>
+              ${metaParts.length ? `<div class="file-info-link-profile-meta">${metaParts.map((item) => `<span>${esc(item)}</span>`).join("")}</div>` : ""}
+              ${settingsHtml ? `<div class="file-info-link-profile-settings">${settingsHtml}</div>` : ""}
+              ${subText ? `<div class="file-info-link-profile-sub">${esc(subText)}</div>` : ""}
+            </div>
+          </article>
+        `;
+      })
+      .join("");
+    const profilesMore = profilesCount > shownProfiles.length
+      ? `<div class="file-info-link-more">Viser ${esc(formatImportNumber(shownProfiles.length))} af ${esc(formatImportNumber(profilesCount))}</div>`
+      : "";
+
+    els.fileInfoLinkDetails.innerHTML = `
+      <div class="file-info-link-head">
+        <div>
+          <div class="file-info-link-kicker">Link-info</div>
+          <div class="file-info-link-title">${esc(payload.title || fileDisplayName(file))}</div>
+          ${payload.creator ? `<div class="file-info-link-creator">Af ${esc(payload.creator)}</div>` : ""}
+        </div>
+      </div>
+      ${statsHtml ? `<div class="file-info-link-chips">${statsHtml}</div>` : ""}
+      ${categoriesHtml ? `<div class="file-info-link-tags">${categoriesHtml}</div>` : ""}
+      ${licenseText ? `<div class="file-info-link-line"><span>Licens</span><strong>${esc(licenseText)}</strong></div>` : ""}
+      ${description ? `<div class="file-info-link-description">${esc(description).replace(/\n/g, "<br>")}</div>` : ""}
+      ${(profilesHtml || profilesMore) ? `
+        <div class="file-info-link-section">
+          <div class="file-info-link-section-title">${esc(profilesSectionTitle)}</div>
+          <div class="file-info-link-profiles">${profilesHtml || `<div class="file-info-link-empty">${esc(payload.profiles_empty_text || "Ingen data fundet på linket.")}</div>`}</div>
+          ${profilesMore}
+        </div>
+      ` : ""}
+    `;
+    els.fileInfoLinkDetails.classList.remove("hidden");
+  }
+
   function renderFileInfoDrawer(file) {
     if (!file || !els.fileInfoDrawer) return;
     const id = Number(file.id || 0);
@@ -8419,6 +8527,8 @@
     if (els.fileInfoRowFilamentCost) {
       els.fileInfoRowFilamentCost.classList.add("hidden");
     }
+
+    renderFileInfoLinkDetails(file);
 
     if (els.fileInfoNote) els.fileInfoNote.value = String(file.note || "");
     if (els.fileInfoDownloadLink) {
