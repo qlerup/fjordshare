@@ -8422,6 +8422,8 @@
           const coverUrl = String((profile && profile.cover_url) || "").trim();
           const title = String((profile && profile.title) || "Fil").trim() || "Fil";
           const fileType = String((profile && profile.file_type) || "").trim();
+          const titleExt = (title.match(/\.([a-z0-9]+)$/i) || [])[1] || "";
+          const placeholderLabel = String(fileType || titleExt || "fil").trim().toUpperCase();
           const fileSize = Number((profile && profile.file_size) || 0);
           const printTime = Number((profile && profile.print_time_seconds) || 0);
           const plateCount = Number((profile && profile.plate_count) || 0);
@@ -8448,7 +8450,7 @@
           const subText = folder || printers;
           return `
             <article class="file-info-link-profile">
-              ${coverUrl ? `<img class="file-info-link-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="file-info-link-profile-thumb placeholder">${index + 1}</div>`}
+              ${coverUrl ? `<img class="file-info-link-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="file-info-link-profile-thumb placeholder">${esc(placeholderLabel)}</div>`}
               <div class="file-info-link-profile-main">
                 <div class="file-info-link-profile-title" title="${esc(title)}">${esc(title)}</div>
                 ${metaParts.length ? `<div class="file-info-link-profile-meta">${metaParts.map((item) => `<span>${esc(item)}</span>`).join("")}</div>` : ""}
@@ -14120,11 +14122,14 @@
         const printers = (Array.isArray(profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 4).join(", ");
         const coverUrl = String(profile.cover_url || (Array.isArray(profile.picture_urls) && profile.picture_urls[0]) || "").trim();
         const fileType = String(profile.file_type || "").trim();
+        const titleText = String(profile.title || "").trim();
+        const titleExt = (titleText.match(/\.([a-z0-9]+)$/i) || [])[1] || "";
+        const placeholderLabel = String(fileType || titleExt || "fil").trim().toUpperCase();
         const fileSize = Number(profile.file_size || 0);
         const plateCount = Number(profile.plate_count || 0);
         return `
           <article class="import-profile-card readonly"${id ? ` data-profile-id="${esc(id)}"` : ""}>
-            ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${index + 1}</div>`}
+            ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${esc(placeholderLabel)}</div>`}
             <div class="import-profile-main">
               <div class="import-profile-title">${esc(profile.title || fallbackTitle)}</div>
               <div class="import-profile-meta">
