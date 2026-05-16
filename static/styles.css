@@ -1899,7 +1899,7 @@ input[type="checkbox"] {
   background: rgba(13, 19, 32, 0.62);
   padding: 10px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .file-info-link-head {
@@ -1962,16 +1962,17 @@ input[type="checkbox"] {
 }
 
 .file-info-link-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: baseline;
+  display: grid;
+  gap: 4px;
+  align-items: start;
 }
 
 .file-info-link-line strong {
   color: #f6f9ff;
   font-size: 0.82rem;
-  text-align: right;
+  text-align: left;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .file-info-link-description {
@@ -2031,7 +2032,7 @@ input[type="checkbox"] {
 
 .file-info-link-profile {
   display: grid;
-  grid-template-columns: 54px minmax(0, 1fr);
+  grid-template-columns: 58px minmax(0, 1fr);
   gap: 8px;
   align-items: start;
   border: 1px solid rgba(135, 158, 199, 0.18);
@@ -2041,7 +2042,7 @@ input[type="checkbox"] {
 }
 
 .file-info-link-profile-thumb {
-  width: 54px;
+  width: 58px;
   aspect-ratio: 1;
   border-radius: 7px;
   object-fit: cover;
@@ -2059,16 +2060,31 @@ input[type="checkbox"] {
 .file-info-link-profile-main {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  gap: 6px;
 }
 
 .file-info-link-profile-title {
   color: var(--text);
   font-size: 0.82rem;
   font-weight: 800;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.file-info-link-profile-meta,
+.file-info-link-profile-settings {
+  row-gap: 6px;
+}
+
+.file-info-link-profile-meta span,
+.file-info-link-profile-settings span {
+  line-height: 1.25;
+}
+
+.file-info-link-profile-sub {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .file-info-fields {
