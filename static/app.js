@@ -3941,10 +3941,21 @@
     }
   }
 
+  function formatFileTypeLabel(rawType, fallback = "") {
+    const normalized = String(rawType || "").trim().replace(/^\./, "").trim();
+    if (!normalized) return String(fallback || "").trim();
+    const upper = normalized.toUpperCase();
+    if (upper === "LINK" || upper === "URL") return upper;
+    return `.${upper}`;
+  }
+
   function fileTypeBadgeHtml(file) {
     const rawExt = String((file && file.ext) || fileExt(file && file.filename) || "").trim();
-    const label = file && file.is_external_link ? "LINK" : (rawExt.replace(/^\./, "").toUpperCase() || "FIL");
-    const cls = label.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "file";
+    const normalizedExt = rawExt.replace(/^\./, "").trim();
+    const isExternalLink = !!(file && file.is_external_link);
+    const label = isExternalLink ? "LINK" : formatFileTypeLabel(normalizedExt, "FIL");
+    const clsBase = isExternalLink ? "link" : normalizedExt.toLowerCase();
+    const cls = clsBase.replace(/[^a-z0-9]+/g, "-") || "file";
     return `<span class="file-ext-badge file-ext-${esc(cls)}" title="Filtype: ${esc(label)}">${esc(label)}</span>`;
   }
 
@@ -8423,7 +8434,8 @@
           const title = String((profile && profile.title) || "Fil").trim() || "Fil";
           const fileType = String((profile && profile.file_type) || "").trim();
           const titleExt = (title.match(/\.([a-z0-9]+)$/i) || [])[1] || "";
-          const placeholderLabel = String(fileType || titleExt || "fil").trim().toUpperCase();
+          const displayFileType = formatFileTypeLabel(fileType || titleExt || "");
+          const placeholderLabel = formatFileTypeLabel(fileType || titleExt || "", "FIL");
           const fileSize = Number((profile && profile.file_size) || 0);
           const printTime = Number((profile && profile.print_time_seconds) || 0);
           const plateCount = Number((profile && profile.plate_count) || 0);
@@ -8431,7 +8443,7 @@
           const folder = String((profile && profile.folder) || "").trim();
           const printers = (Array.isArray(profile && profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 3).join(", ");
           const metaParts = [
-            fileType,
+            displayFileType,
             fileSize > 0 ? formatSize(fileSize) : "",
             printTime > 0 ? formatImportDuration(printTime) : "",
             plateCount > 0 ? `${formatImportNumber(plateCount)} plade${plateCount === 1 ? "" : "r"}` : "",
@@ -14124,7 +14136,8 @@
         const fileType = String(profile.file_type || "").trim();
         const titleText = String(profile.title || "").trim();
         const titleExt = (titleText.match(/\.([a-z0-9]+)$/i) || [])[1] || "";
-        const placeholderLabel = String(fileType || titleExt || "fil").trim().toUpperCase();
+        const displayFileType = formatFileTypeLabel(fileType || titleExt || "");
+        const placeholderLabel = formatFileTypeLabel(fileType || titleExt || "", "FIL");
         const fileSize = Number(profile.file_size || 0);
         const plateCount = Number(profile.plate_count || 0);
         return `
@@ -14134,7 +14147,7 @@
               <div class="import-profile-title">${esc(profile.title || fallbackTitle)}</div>
               <div class="import-profile-meta">
                 ${profile.is_designer ? `<span>Designer</span>` : ""}
-                ${fileType ? `<span>${esc(fileType)}</span>` : ""}
+                ${displayFileType ? `<span>${esc(displayFileType)}</span>` : ""}
                 ${fileSize > 0 ? `<span>${esc(formatSize(fileSize))}</span>` : ""}
                 ${Number(profile.print_time_seconds || 0) > 0 ? `<span>${esc(formatImportDuration(profile.print_time_seconds))}</span>` : ""}
                 ${plateCount > 0 ? `<span>${esc(formatImportNumber(plateCount))} plade${plateCount === 1 ? "" : "r"}</span>` : ""}
