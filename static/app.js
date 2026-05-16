@@ -41,6 +41,8 @@
     zipJobs: [],
     shares: [],
     printReadyProjects: [],
+    printReadyFilter: "all",
+    printReadyExpandedProjectIds: new Set(),
     finishedProjects: [],
     rejectedFileTypes: [],
     tracking: [],
@@ -459,6 +461,7 @@
     appOnboardingCountdown: document.getElementById("appOnboardingCountdown"),
     printReadyRefreshBtn: document.getElementById("printReadyRefreshBtn"),
     printReadyStatus: document.getElementById("printReadyStatus"),
+    printReadyFilters: document.getElementById("printReadyFilters"),
     printReadyAdminList: document.getElementById("printReadyAdminList"),
     finishedProjectsRefreshBtn: document.getElementById("finishedProjectsRefreshBtn"),
     finishedProjectsStatus: document.getElementById("finishedProjectsStatus"),
@@ -10566,6 +10569,114 @@
     renderFinishedProjects();
   }
 
+  const PRINT_READY_ADMIN_FILTERS = [
+    { key: "all", label: "Alle" },
+    { key: "unprinted", label: "Ikke printet" },
+    { key: "partial", label: "Delvist printet" },
+    { key: "all_printed", label: "Alle printet" },
+    { key: "missing_project_files", label: "Mangler projektfiler" },
+    { key: "cancelled", label: "Annulleret" },
+  ];
+
+  function printReadyProjectMetrics(project) {
+    const files = Array.isArray(project && project.files) ? project.files : [];
+    const fileCount = Number(project && project.file_count ? project.file_count : files.length) || 0;
+    const printedCount = Number(
+      project && project.printed_file_count
+        ? project.printed_file_count
+        : files.filter((f) => !!(f && f.printed)).length
+    ) || 0;
+    const projectFileCount = Array.isArray(project && project.project_files) ? project.project_files.length : 0;
+    const quantity = Number(project && project.total_quantity ? project.total_quantity : 0) || 0;
+    const status = normalizePrintReadyProjectStatus(project && project.status);
+    return {
+      fileCount,
+      printedCount,
+      projectFileCount,
+      quantity,
+      status,
+      isCancelled: status === "cancelled",
+      isCompleted: status === "completed",
+      isFinal: status === "completed" || status === "cancelled",
+    };
+  }
+
+  function printReadyProjectMatchesFilter(project, filterKey) {
+    const key = String(filterKey || "all");
+    const metrics = printReadyProjectMetrics(project);
+    if (key === "unprinted") return !metrics.isFinal && metrics.printedCount <= 0;
+    if (key === "partial") return !metrics.isFinal && metrics.printedCount > 0 && metrics.printedCount < metrics.fileCount;
+    if (key === "all_printed") return !metrics.isFinal && metrics.fileCount > 0 && metrics.printedCount >= metrics.fileCount;
+    if (key === "missing_project_files") return !metrics.isFinal && metrics.projectFileCount <= 0;
+    if (key === "cancelled") return metrics.isCancelled;
+    return true;
+  }
+
+  function renderPrintReadyFilters(projects) {
+    if (!els.printReadyFilters) return;
+    const list = Array.isArray(projects) ? projects : [];
+    if (state.role !== "admin" || !list.length) {
+      els.printReadyFilters.classList.add("hidden");
+      els.printReadyFilters.innerHTML = "";
+      return;
+    }
+
+    const active = PRINT_READY_ADMIN_FILTERS.some((filter) => filter.key === state.printReadyFilter)
+      ? state.printReadyFilter
+      : "all";
+    state.printReadyFilter = active;
+    const visibleCount = list.filter((project) => printReadyProjectMatchesFilter(project, active)).length;
+    els.printReadyFilters.classList.remove("hidden");
+    els.printReadyFilters.innerHTML = `
+      <div class="print-ready-filter-row" role="toolbar" aria-label="Filtrer projekter">
+        ${PRINT_READY_ADMIN_FILTERS.map((filter) => {
+          const count = list.filter((project) => printReadyProjectMatchesFilter(project, filter.key)).length;
+          const isActive = filter.key === active;
+          return `
+            <button class="print-ready-filter-btn ${isActive ? "active" : ""}" type="button" data-print-ready-filter="${esc(filter.key)}" aria-pressed="${isActive ? "true" : "false"}">
+              <span>${esc(filter.label)}</span>
+              <strong>${count}</strong>
+            </button>
+          `;
+        }).join("")}
+      </div>
+      <div class="print-ready-filter-summary">Viser ${visibleCount} af ${list.length} projekt(er)</div>
+    `;
+  }
+
+  function printReadyUserStats(projects) {
+    return Array.from(projects || []).reduce((stats, project) => {
+      const metrics = printReadyProjectMetrics(project);
+      stats.projects += 1;
+      stats.files += metrics.fileCount;
+      stats.printed += metrics.printedCount;
+      stats.projectFiles += metrics.projectFileCount;
+      if (metrics.projectFileCount <= 0 && !metrics.isFinal) stats.missingProjectFiles += 1;
+      return stats;
+    }, { projects: 0, files: 0, printed: 0, projectFiles: 0, missingProjectFiles: 0 });
+  }
+
+  function printReadyUserGroupHtml(username, items, options = {}) {
+    const stats = printReadyUserStats(items);
+    const finishedMode = !!(options && options.finished);
+    return `
+      <section class="print-ready-user-group">
+        <div class="print-ready-user-head">
+          <div>
+            <h4>${esc(username)}</h4>
+            <div class="print-ready-user-sub">
+              ${stats.projects} projekt(er) · ${stats.files} fil(er) · ${stats.printed}/${stats.files} printet${state.role === "admin" ? ` · ${stats.projectFiles} projektfil(er)` : ""}
+            </div>
+          </div>
+          ${state.role === "admin" && stats.missingProjectFiles ? `<span class="print-ready-user-warning">${stats.missingProjectFiles} mangler projektfil(er)</span>` : ""}
+        </div>
+        <div class="print-ready-projects">
+          ${items.map((project) => renderPrintReadyProjectCard(project, { finished: finishedMode })).join("")}
+        </div>
+      </section>
+    `;
+  }
+
   function printReadyAttachmentHtml(attachments) {
     const list = Array.isArray(attachments) ? attachments : [];
     if (!list.length) return `<span class="hint">Ingen</span>`;
@@ -10586,11 +10697,11 @@
     const projectId = Number(project && project.id ? project.id : 0);
     const list = Array.isArray(project && project.project_files) ? project.project_files : [];
     return `
-      <section class="print-ready-project-files" aria-label="Gemt i projektet" data-project-id="${projectId}">
+      <section class="print-ready-project-files ${list.length ? "" : "is-empty"}" aria-label="Gemt i projektet" data-project-id="${projectId}">
         <div class="print-ready-project-files-head">
           <div>
-            <div class="print-ready-project-files-title">Gemt i projektet</div>
-            <div class="hint">${list.length ? `${list.length} fil(er), kun synlig for admin` : `Upload ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} filer til intern brug.`}</div>
+            <div class="print-ready-project-files-title">Projektfiler</div>
+            <div class="hint">${list.length ? `${list.length} gemt · kun synlig for admin` : "Ingen gemt endnu"}</div>
             <div class="print-ready-project-drop-hint">Træk ${PRINT_READY_PROJECT_FILE_ALLOWED_LABEL} hertil</div>
           </div>
           <label class="btn small print-ready-project-upload">
@@ -10619,7 +10730,7 @@
                 }).join("")}
               </div>
             `
-            : `<div class="hint">Ingen projektfiler gemt endnu.</div>`
+            : ""
         }
       </section>
     `;
@@ -10645,6 +10756,7 @@
     if (!els.printReadyAdminList) return;
     const isAdmin = state.role === "admin";
     const projects = Array.isArray(state.printReadyProjects) ? state.printReadyProjects : [];
+    renderPrintReadyFilters(projects);
     if (!projects.length) {
       els.printReadyAdminList.innerHTML = `<div class="hint">${isAdmin ? "Ingen projekter er markeret klar til print endnu." : "Du har ingen projekter klar til print endnu."}</div>`;
       return;
@@ -10652,30 +10764,27 @@
 
     if (!isAdmin) {
       els.printReadyAdminList.innerHTML = `
-        <section class="print-ready-user-group">
-          <div class="print-ready-projects">
-            ${projects.map((project) => renderPrintReadyProjectCard(project)).join("")}
-          </div>
-        </section>
+        ${printReadyUserGroupHtml(state.username || "Dine projekter", projects)}
       `;
       return;
     }
 
+    const filteredProjects = projects.filter((project) => printReadyProjectMatchesFilter(project, state.printReadyFilter));
+    if (!filteredProjects.length) {
+      els.printReadyAdminList.innerHTML = `<div class="hint">Ingen projekter matcher filteret.</div>`;
+      return;
+    }
+
     const groups = new Map();
-    for (const project of projects) {
+    for (const project of filteredProjects) {
       const user = String(project.owner_username || "Ukendt bruger");
       if (!groups.has(user)) groups.set(user, []);
       groups.get(user).push(project);
     }
 
-    els.printReadyAdminList.innerHTML = Array.from(groups.entries()).map(([username, items]) => `
-      <section class="print-ready-user-group">
-        <h4>${esc(username)}</h4>
-        <div class="print-ready-projects">
-          ${items.map((project) => renderPrintReadyProjectCard(project)).join("")}
-        </div>
-      </section>
-    `).join("");
+    els.printReadyAdminList.innerHTML = Array.from(groups.entries())
+      .map(([username, items]) => printReadyUserGroupHtml(username, items))
+      .join("");
   }
 
   function renderFinishedProjects() {
@@ -10689,11 +10798,7 @@
 
     if (!isAdmin) {
       els.finishedProjectsList.innerHTML = `
-        <section class="print-ready-user-group">
-          <div class="print-ready-projects">
-            ${projects.map((project) => renderPrintReadyProjectCard(project, { finished: true })).join("")}
-          </div>
-        </section>
+        ${printReadyUserGroupHtml(state.username || "Dine projekter", projects, { finished: true })}
       `;
       return;
     }
@@ -10705,30 +10810,34 @@
       groups.get(user).push(project);
     }
 
-    els.finishedProjectsList.innerHTML = Array.from(groups.entries()).map(([username, items]) => `
-      <section class="print-ready-user-group">
-        <h4>${esc(username)}</h4>
-        <div class="print-ready-projects">
-          ${items.map((project) => renderPrintReadyProjectCard(project, { finished: true })).join("")}
-        </div>
-      </section>
-    `).join("");
+    els.finishedProjectsList.innerHTML = Array.from(groups.entries())
+      .map(([username, items]) => printReadyUserGroupHtml(username, items, { finished: true }))
+      .join("");
   }
 
   function renderPrintReadyProjectCard(project, options = {}) {
     const isAdmin = state.role === "admin";
     const finishedMode = !!(options && options.finished);
     const files = Array.isArray(project.files) ? project.files : [];
-    const projectStatus = normalizePrintReadyProjectStatus(project.status);
-    const isCompletedProject = projectStatus === "completed";
-    const isCancelledProject = projectStatus === "cancelled";
-    const isFinalProject = isCompletedProject || isCancelledProject;
+    const metrics = printReadyProjectMetrics(project);
+    const isCompletedProject = metrics.isCompleted;
+    const isCancelledProject = metrics.isCancelled;
+    const isFinalProject = metrics.isFinal;
     const projectCardStatusClass = isCompletedProject
       ? "project-completed"
       : (isCancelledProject ? "project-cancelled" : "project-ready");
-    const fileCount = Number(project.file_count || files.length || 0);
-    const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
-    const projectFileCount = Array.isArray(project.project_files) ? project.project_files.length : 0;
+    const projectId = Number(project.id || 0);
+    const expanded = !!(state.printReadyExpandedProjectIds && state.printReadyExpandedProjectIds.has(projectId));
+    const fileCount = metrics.fileCount;
+    const printedCount = metrics.printedCount;
+    const projectFileCount = metrics.projectFileCount;
+    const createdText = String(project.created_at_display || formatDate(project.created_at) || "").trim();
+    const title = String(project.title || "Projekt klar til print").trim() || "Projekt klar til print";
+    const summary = String(project.selected_summary || "").trim();
+    const bodyId = `print-ready-project-body-${projectId}`;
+    const progressClass = printedCount <= 0
+      ? "is-empty"
+      : (fileCount > 0 && printedCount >= fileCount ? "is-done" : "is-partial");
     const rows = files.map((file) => {
       const isLink = !!(file && file.is_external_link);
       const displayName = String((file && (file.display_name || file.external_title || file.filename)) || "-");
@@ -10766,51 +10875,64 @@
       `;
     }).join("");
     return `
-      <article class="print-ready-project-card ${projectCardStatusClass}">
+      <article class="print-ready-project-card ${projectCardStatusClass} ${expanded ? "is-expanded" : ""}">
         <div class="print-ready-project-head">
-          <div>
-            <div class="hint">${esc(project.created_at_display || formatDate(project.created_at))}</div>
-            <div class="hint">Filer i alt: ${fileCount}</div>
-            <div class="hint">Printet: ${printedCount}</div>
-            ${isAdmin ? `<div class="hint">Gemt i projektet: ${projectFileCount}</div>` : ""}
-          </div>
-          <div class="toolbar">
-            <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener">Download zip fil</a>
-            <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener">Download PDF produktions info</a>
+          <button class="print-ready-project-toggle" type="button" data-print-ready-toggle="project" data-id="${projectId}" aria-expanded="${expanded ? "true" : "false"}" aria-controls="${esc(bodyId)}">
+            <span class="print-ready-project-toggle-icon" aria-hidden="true">${expanded ? "-" : "+"}</span>
+            <span class="print-ready-project-main">
+              <span class="print-ready-project-title-line">
+                <span class="print-ready-project-title">${esc(title)}</span>
+                ${createdText ? `<span class="print-ready-project-time">${esc(createdText)}</span>` : ""}
+              </span>
+              ${summary ? `<span class="print-ready-project-summary">${esc(summary)}</span>` : ""}
+              <span class="print-ready-project-badges">
+                <span class="print-ready-summary-badge">${fileCount} fil(er)</span>
+                <span class="print-ready-summary-badge ${progressClass}">${printedCount}/${fileCount} printet</span>
+                ${isAdmin ? `<span class="print-ready-summary-badge ${projectFileCount ? "" : "needs-attention"}">${projectFileCount} projektfil(er)</span>` : ""}
+                ${isCancelledProject ? `<span class="print-ready-summary-badge danger">Annulleret</span>` : ""}
+                ${isCompletedProject ? `<span class="print-ready-summary-badge success">Færdig</span>` : ""}
+              </span>
+            </span>
+          </button>
+          <div class="toolbar print-ready-project-actions">
+            <a class="btn primary" href="${esc(project.zip_url || "#")}" target="_blank" rel="noopener" title="Download zip fil">ZIP</a>
+            <a class="btn" href="${esc(project.pdf_url || "#")}" target="_blank" rel="noopener" title="Download PDF produktions info">PDF</a>
             ${
               finishedMode
-                ? `<button class="btn primary" type="button" data-print-ready-action="resend-project" data-id="${Number(project.id || 0)}">Send til print igen</button>`
+                ? `<button class="btn primary" type="button" data-print-ready-action="resend-project" data-id="${projectId}">Send igen</button>`
                 : (
                   isAdmin
                     ? `
                   ${
                     (isCancelledProject || isCompletedProject)
                       ? ""
-                      : `<button class="btn small primary" type="button" data-print-ready-action="complete-project" data-id="${Number(project.id || 0)}">Projekt færdig</button>`
+                      : `<button class="btn small primary" type="button" data-print-ready-action="complete-project" data-id="${projectId}">Projekt færdig</button>`
                   }
-                  <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${Number(project.id || 0)}">${isCancelledProject ? "Slet" : "Annuller"}</button>
+                  <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${projectId}">${isCancelledProject ? "Slet" : "Annuller"}</button>
                 `
                     : ""
                 )
             }
           </div>
         </div>
-        ${printReadyProjectFilesHtml(project)}
-        <div class="print-ready-table-wrap">
-          <table class="table compact print-ready-table">
-            <thead>
-              <tr>
-                <th>Sti i mappe</th>
-                <th>Filnavn</th>
-                <th>Info</th>
-                <th>Status</th>
-                <th>Antal</th>
-                <th>Billeder</th>
-                <th>Handling</th>
-              </tr>
-            </thead>
-            <tbody>${rows || `<tr><td colspan="7" class="hint">Ingen filer.</td></tr>`}</tbody>
-          </table>
+        <div id="${esc(bodyId)}" class="print-ready-project-body ${expanded ? "" : "hidden"}">
+          ${printReadyProjectFilesHtml(project)}
+          <div class="print-ready-table-wrap">
+            <table class="table compact print-ready-table">
+              <thead>
+                <tr>
+                  <th>Sti i mappe</th>
+                  <th>Filnavn</th>
+                  <th>Info</th>
+                  <th>Status</th>
+                  <th>Antal</th>
+                  <th>Billeder</th>
+                  <th>Handling</th>
+                </tr>
+              </thead>
+              <tbody>${rows || `<tr><td colspan="7" class="hint">Ingen filer.</td></tr>`}</tbody>
+            </table>
+          </div>
         </div>
       </article>
     `;
@@ -10922,6 +11044,28 @@
     const statusEl = els.finishedProjectsList && target && els.finishedProjectsList.contains(target)
       ? els.finishedProjectsStatus
       : els.printReadyStatus;
+    const toggle = target ? target.closest("[data-print-ready-toggle='project']") : null;
+    if (toggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      const id = Number(toggle.dataset.id || 0);
+      if (!id) return;
+      if (!state.printReadyExpandedProjectIds || typeof state.printReadyExpandedProjectIds.has !== "function") {
+        state.printReadyExpandedProjectIds = new Set();
+      }
+      if (state.printReadyExpandedProjectIds.has(id)) {
+        state.printReadyExpandedProjectIds.delete(id);
+      } else {
+        state.printReadyExpandedProjectIds.add(id);
+      }
+      if (els.finishedProjectsList && target && els.finishedProjectsList.contains(target)) {
+        renderFinishedProjects();
+      } else {
+        renderPrintReadyProjects();
+      }
+      return;
+    }
+
     const downloadLink = target ? target.closest("[data-print-ready-file-download]") : null;
     if (downloadLink) {
       if (isTouchOrNarrowViewport()) {
@@ -16337,6 +16481,17 @@
         loadPrintReadyProjects().catch((err) => {
           showStatus(els.printReadyStatus, err.message || "Kunne ikke hente klar til print", "error");
         });
+      });
+    }
+    if (els.printReadyFilters) {
+      els.printReadyFilters.addEventListener("click", (event) => {
+        const btn = event.target && event.target.closest
+          ? event.target.closest("[data-print-ready-filter]")
+          : null;
+        if (!btn) return;
+        event.preventDefault();
+        state.printReadyFilter = String(btn.dataset.printReadyFilter || "all") || "all";
+        renderPrintReadyProjects();
       });
     }
     if (els.finishedProjectsRefreshBtn) {
