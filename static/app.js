@@ -57,6 +57,9 @@
     uploadModelLinksResolver: null,
     uploadModelLinksFolder: "",
     uploadModelLinksFiles: [],
+    imagePreviewImages: [],
+    imagePreviewNames: [],
+    imagePreviewIndex: 0,
     threeModules: null,
     three: null,
     thumbPollTimer: null,
@@ -373,6 +376,9 @@
     imagePreviewModal: document.getElementById("imagePreviewModal"),
     imagePreviewTitle: document.getElementById("imagePreviewTitle"),
     imagePreviewImg: document.getElementById("imagePreviewImg"),
+    imagePreviewPrevBtn: document.getElementById("imagePreviewPrevBtn"),
+    imagePreviewNextBtn: document.getElementById("imagePreviewNextBtn"),
+    imagePreviewCounter: document.getElementById("imagePreviewCounter"),
     closeImagePreviewBtn: document.getElementById("closeImagePreviewBtn"),
     modelModal: document.getElementById("modelModal"),
     modelTitle: document.getElementById("modelTitle"),
@@ -8562,7 +8568,7 @@
           <div class="file-info-link-section-title">Billeder fra linket</div>
           <div class="file-info-link-gallery">
             ${galleryImages.map((url, index) => `
-              <button class="file-info-link-gallery-card" type="button" data-image-url="${esc(url)}" data-image-name="${esc(`${payload.title || fileDisplayName(file)} ${index + 2}`)}">
+              <button class="file-info-link-gallery-card" type="button" data-image-url="${esc(url)}" data-image-name="${esc(payload.title || fileDisplayName(file))}">
                 <img src="${esc(url)}" alt="${esc(payload.title || fileDisplayName(file))}" loading="lazy" decoding="async">
               </button>
             `).join("")}
@@ -9786,21 +9792,65 @@
     }
   }
 
-  function openImagePreviewModal(imageUrl, imageName = "Billede") {
-    const url = String(imageUrl || "").trim();
-    if (!url || !els.imagePreviewModal || !els.imagePreviewImg) return;
-    const name = String(imageName || "Billede").trim() || "Billede";
+  function setImagePreviewIndex(index) {
+    const images = Array.isArray(state.imagePreviewImages) ? state.imagePreviewImages : [];
+    if (!images.length || !els.imagePreviewImg) return;
+    const count = images.length;
+    const nextIndex = ((Number(index || 0) % count) + count) % count;
+    state.imagePreviewIndex = nextIndex;
+    const url = String(images[nextIndex] || "").trim();
+    const fallbackName = count > 1 ? `Billede ${nextIndex + 1}` : "Billede";
+    const name = String((state.imagePreviewNames || [])[nextIndex] || fallbackName).trim() || fallbackName;
     els.imagePreviewImg.src = url;
     els.imagePreviewImg.alt = name;
     if (els.imagePreviewTitle) {
       els.imagePreviewTitle.textContent = name;
     }
+    const hasMany = count > 1;
+    if (els.imagePreviewPrevBtn) els.imagePreviewPrevBtn.classList.toggle("hidden", !hasMany);
+    if (els.imagePreviewNextBtn) els.imagePreviewNextBtn.classList.toggle("hidden", !hasMany);
+    if (els.imagePreviewCounter) {
+      els.imagePreviewCounter.textContent = `${nextIndex + 1}/${count}`;
+      els.imagePreviewCounter.classList.toggle("hidden", !hasMany);
+    }
+  }
+
+  function stepImagePreview(offset) {
+    const images = Array.isArray(state.imagePreviewImages) ? state.imagePreviewImages : [];
+    if (images.length <= 1) return;
+    setImagePreviewIndex(Number(state.imagePreviewIndex || 0) + Number(offset || 0));
+  }
+
+  function openImagePreviewModal(imageUrl, imageName = "Billede", options = {}) {
+    const url = String(imageUrl || "").trim();
+    if (!url || !els.imagePreviewModal || !els.imagePreviewImg) return;
+    const rawImages = Array.isArray(options && options.images) ? options.images : [url];
+    const images = [];
+    rawImages.forEach((raw) => {
+      const value = String(raw || "").trim();
+      if (value && !images.includes(value)) images.push(value);
+    });
+    if (!images.includes(url)) images.unshift(url);
+    const rawNames = Array.isArray(options && options.names) ? options.names : [];
+    state.imagePreviewImages = images;
+    state.imagePreviewNames = images.map((_image, idx) => {
+      const explicitName = String(rawNames[idx] || "").trim();
+      if (explicitName) return explicitName;
+      return String(imageName || "").trim() || (images.length > 1 ? `Billede ${idx + 1}` : "Billede");
+    });
+    const explicitIndex = Number(options && options.index);
+    const foundIndex = images.indexOf(url);
+    const startIndex = Number.isFinite(explicitIndex) ? explicitIndex : Math.max(0, foundIndex);
+    setImagePreviewIndex(startIndex);
     els.imagePreviewModal.classList.remove("hidden");
   }
 
   function closeImagePreviewModal() {
     if (!els.imagePreviewModal) return;
     els.imagePreviewModal.classList.add("hidden");
+    state.imagePreviewImages = [];
+    state.imagePreviewNames = [];
+    state.imagePreviewIndex = 0;
     if (els.imagePreviewImg) {
       els.imagePreviewImg.removeAttribute("src");
       els.imagePreviewImg.alt = "Billede";
@@ -9808,6 +9858,9 @@
     if (els.imagePreviewTitle) {
       els.imagePreviewTitle.textContent = "Billede";
     }
+    if (els.imagePreviewPrevBtn) els.imagePreviewPrevBtn.classList.add("hidden");
+    if (els.imagePreviewNextBtn) els.imagePreviewNextBtn.classList.add("hidden");
+    if (els.imagePreviewCounter) els.imagePreviewCounter.classList.add("hidden");
   }
 
   async function saveBatchMetadata() {
@@ -15146,7 +15199,13 @@
         const id = Number(state.currentInfoFileId || 0);
         const file = id ? fileById(id) : null;
         const imageName = file ? fileDisplayName(file) : "Billede";
-        openImagePreviewModal(imageUrl, imageName);
+        const images = file ? fileInfoPreviewImageUrls(file) : [imageUrl];
+        const names = images.map(() => imageName);
+        openImagePreviewModal(imageUrl, imageName, {
+          images,
+          names,
+          index: Math.max(0, images.indexOf(imageUrl)),
+        });
       });
     }
     if (els.fileInfoLinkDetails) {
@@ -15155,9 +15214,20 @@
         if (!card) return;
         event.preventDefault();
         event.stopPropagation();
+        const imageUrl = String((card.dataset && card.dataset.imageUrl) || "");
+        const imageName = String((card.dataset && card.dataset.imageName) || "Billede");
+        const file = state.currentInfoFileId ? fileById(state.currentInfoFileId) : null;
+        const images = file ? fileInfoPreviewImageUrls(file) : [imageUrl];
+        const baseName = file ? fileDisplayName(file) : imageName;
+        const names = images.map(() => baseName);
         openImagePreviewModal(
-          String((card.dataset && card.dataset.imageUrl) || ""),
-          String((card.dataset && card.dataset.imageName) || "Billede")
+          imageUrl,
+          imageName,
+          {
+            images,
+            names,
+            index: Math.max(0, images.indexOf(imageUrl)),
+          }
         );
       });
     }
@@ -15191,7 +15261,21 @@
       const imageUrl = String(card.dataset.imageUrl || "").trim();
       if (!imageUrl) return;
       const imageName = String(card.dataset.imageName || "Billede");
-      openImagePreviewModal(imageUrl, imageName);
+      const grid = card.closest(".file-info-attach-grid");
+      const cards = grid ? Array.from(grid.querySelectorAll(".file-info-attach-card")) : [card];
+      const images = [];
+      const names = [];
+      cards.forEach((imageCard) => {
+        const url = String((imageCard.dataset && imageCard.dataset.imageUrl) || "").trim();
+        if (!url) return;
+        images.push(url);
+        names.push(String((imageCard.dataset && imageCard.dataset.imageName) || "Billede"));
+      });
+      openImagePreviewModal(imageUrl, imageName, {
+        images: images.length ? images : [imageUrl],
+        names: names.length ? names : [imageName],
+        index: Math.max(0, images.indexOf(imageUrl)),
+      });
     };
 
     if (els.fileInfoAttachList) {
@@ -15664,13 +15748,18 @@
     }
 
     document.addEventListener("keydown", (event) => {
+      const imageModalOpen = !!(els.imagePreviewModal && !els.imagePreviewModal.classList.contains("hidden"));
+      if (imageModalOpen && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        stepImagePreview(event.key === "ArrowLeft" ? -1 : 1);
+        return;
+      }
       if (event.key !== "Escape") return;
       const nozzlePickModalOpen = !!(els.sliceNozzlePickModal && !els.sliceNozzlePickModal.classList.contains("hidden"));
       if (nozzlePickModalOpen) {
         settleSliceNozzlePick("");
         return;
       }
-      const imageModalOpen = !!(els.imagePreviewModal && !els.imagePreviewModal.classList.contains("hidden"));
       if (imageModalOpen) {
         closeImagePreviewModal();
         return;
@@ -15894,6 +15983,20 @@
 
     if (els.closeImagePreviewBtn) {
       els.closeImagePreviewBtn.addEventListener("click", closeImagePreviewModal);
+    }
+    if (els.imagePreviewPrevBtn) {
+      els.imagePreviewPrevBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        stepImagePreview(-1);
+      });
+    }
+    if (els.imagePreviewNextBtn) {
+      els.imagePreviewNextBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        stepImagePreview(1);
+      });
     }
     if (els.imagePreviewModal) {
       els.imagePreviewModal.addEventListener("click", (event) => {

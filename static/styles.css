@@ -4677,6 +4677,7 @@ input[type="checkbox"] {
 }
 
 .image-preview-wrap {
+  position: relative;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #0c121b;
@@ -4684,7 +4685,7 @@ input[type="checkbox"] {
   max-height: calc(100vh - 110px);
   display: grid;
   place-items: center;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .image-preview-wrap img {
@@ -4694,6 +4695,46 @@ input[type="checkbox"] {
   height: auto;
   object-fit: contain;
   display: block;
+}
+
+.image-preview-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1px solid rgba(191, 219, 254, 0.56);
+  background: rgba(8, 14, 24, 0.78);
+  color: #f4f8ff;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.image-preview-nav.prev {
+  left: 12px;
+}
+
+.image-preview-nav.next {
+  right: 12px;
+}
+
+.image-preview-counter {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(191, 219, 254, 0.45);
+  background: rgba(8, 14, 24, 0.78);
+  color: #f4f8ff;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.15;
 }
 
 .viewer-pane {
