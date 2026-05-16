@@ -157,7 +157,7 @@ TRACKING_LABEL_DIGIT_BLOCK_RE = re.compile(r"\d(?:[\s\-]*\d){15,23}")
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp", ".lys", ".pwscene"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
 THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
-THUMBABLE_3D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
+THUMBABLE_3D_EXTENSIONS = {".3mf", ".glb", ".gltf", ".stl", ".obj", ".step", ".stp"}
 PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl", ".obj", ".lys", ".pwscene"}
 PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {*PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS, ".zip"}
 PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL = ".stl, .step, .3mf, .obj, .lys og .pwscene"
@@ -179,6 +179,7 @@ except Exception:
 THUMB_WORKER_COUNT = max(1, min(4, THUMB_WORKER_COUNT))
 THUMB_RENDER_STYLE_VERSION = "9"
 FOLDER_PREVIEW_THUMB_LIMIT = 4
+THREEMF_THUMBNAIL_MAX_IMAGE_BYTES = 32 * 1024 * 1024
 SLICABLE_3D_EXTENSIONS = {".stl"}
 BAMBUSTUDIO_BIN = str(os.getenv("BAMBUSTUDIO_BIN", "bambu-studio")).strip() or "bambu-studio"
 BAMBUSTUDIO_CONFIG_PATH = str(os.getenv("BAMBUSTUDIO_CONFIG_PATH", "")).strip()
@@ -7546,6 +7547,86 @@ def enqueue_slice_job(
     return True
 
 
+def _score_3mf_thumbnail_candidate(name: str) -> tuple[int, str]:
+    normalized = str(name or "").replace("\\", "/").lower()
+    suffix = Path(normalized).suffix
+    ext_score = 0 if suffix == ".png" else 8
+
+    plate_match = re.search(r"(?:^|/)plate_(\d+)(?:_small)?\.(?:png|jpe?g|webp)$", normalized)
+    if plate_match:
+        try:
+            plate_num = int(plate_match.group(1))
+        except Exception:
+            plate_num = 999
+        small_penalty = 20 if "_small." in normalized else 0
+        return (100 + min(plate_num, 999) + small_penalty + ext_score, normalized)
+
+    if re.search(r"(?:^|/)(thumbnail|preview|cover)\.(?:png|jpe?g|webp)$", normalized):
+        return (200 + ext_score, normalized)
+
+    if re.search(r"(?:^|/)(top|pick)_\d+\.(?:png|jpe?g|webp)$", normalized):
+        return (300 + ext_score, normalized)
+
+    if normalized.startswith("metadata/"):
+        return (400 + ext_score, normalized)
+
+    return (500 + ext_score, normalized)
+
+
+def _write_3mf_embedded_thumbnail(archive_path: Path, output_png: Path, *, size_px: int) -> bool:
+    if Image is None or ImageOps is None:
+        return False
+
+    allowed_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
+    try:
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            candidates = []
+            for info in zf.infolist():
+                name = str(info.filename or "").replace("\\", "/")
+                suffix = Path(name.lower()).suffix
+                if suffix not in allowed_suffixes:
+                    continue
+                if info.file_size <= 0 or info.file_size > THREEMF_THUMBNAIL_MAX_IMAGE_BYTES:
+                    continue
+                if info.compress_type not in ZIP_UPLOAD_ALLOWED_COMPRESSION_METHODS:
+                    continue
+                candidates.append((_score_3mf_thumbnail_candidate(name), info))
+
+            if not candidates:
+                return False
+
+            safe_size_px = max(96, int(size_px or THUMB_SIZE_PX))
+            resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", getattr(Image, "LANCZOS", 1))
+            for _, info in sorted(candidates, key=lambda item: item[0]):
+                try:
+                    with zf.open(info, "r") as fp:
+                        data = fp.read(THREEMF_THUMBNAIL_MAX_IMAGE_BYTES + 1)
+                    if not data or len(data) > THREEMF_THUMBNAIL_MAX_IMAGE_BYTES:
+                        continue
+                    with Image.open(io.BytesIO(data)) as src_img:
+                        img = ImageOps.exif_transpose(src_img)
+                        img = img.convert("RGBA")
+                        img = ImageOps.contain(img, (safe_size_px, safe_size_px), method=resampling)
+                        canvas = Image.new("RGBA", (safe_size_px, safe_size_px), (15, 23, 33, 255))
+                        offset = ((safe_size_px - img.width) // 2, (safe_size_px - img.height) // 2)
+                        canvas.alpha_composite(img, offset)
+                        output_png.parent.mkdir(parents=True, exist_ok=True)
+                        canvas.save(str(output_png), format="PNG")
+                    return output_png.exists() and output_png.stat().st_size > 0
+                except Exception:
+                    try:
+                        output_png.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError):
+        return False
+    except Exception:
+        return False
+
+    return False
+
+
 def _load_mesh_for_thumbnail(mesh_path: Path):
     import trimesh
 
@@ -7640,9 +7721,7 @@ def _ensure_preview_glb_for_row(file_row: sqlite3.Row) -> Optional[Path]:
                     raise RuntimeError(f"STEP conversion failed: {convert_error}")
                 render_source = converted_obj
 
-            import trimesh
-
-            loaded = trimesh.load(str(render_source), force="mesh")
+            loaded = _load_mesh_for_thumbnail(render_source)
             if loaded is None:
                 raise RuntimeError("Preview: unable to load mesh")
             # Center model around origin for nicer framing in viewer
@@ -7766,6 +7845,10 @@ def _generate_thumbnail_file(file_row: sqlite3.Row, *, detailed: bool = False) -
     render_face_limit = THUMB_RENDER_FACE_LIMIT if detailed else THUMB_FAST_RENDER_FACE_LIMIT
     with tempfile.TemporaryDirectory(prefix="thumb-", dir=str(DATA_DIR)) as tmp:
         tmp_dir = Path(tmp)
+        if ext == ".3mf" and _write_3mf_embedded_thumbnail(source_path, temp_output, size_px=render_size_px):
+            temp_output.replace(thumb_path)
+            return rel_name
+
         if ext in {".step", ".stp"}:
             converted_obj, convert_error = _convert_step_to_obj(source_path, tmp_dir)
             if not converted_obj:

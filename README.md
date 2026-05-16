@@ -23,7 +23,7 @@ It is built for fast file sharing, per-print-file metadata, and Bambu Studio bas
 
 ### 3D and preview
 
-- 3D thumbnails in the file grid for `.glb`, `.gltf`, `.stl`, `.obj`, `.step`, `.stp`
+- 3D thumbnails in the file grid for `.glb`, `.gltf`, `.stl`, `.obj`, `.step`, `.stp`, `.3mf`
 - In-browser 3D viewer for `.glb`, `.gltf`, `.stl`, `.obj`
 
 ### Slicer integration (Bambu Studio)
