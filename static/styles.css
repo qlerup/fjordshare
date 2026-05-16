@@ -3543,9 +3543,62 @@ input[type="checkbox"] {
   gap: 12px;
 }
 
-.upload-model-links-textarea {
-  min-height: 132px;
-  resize: vertical;
+.upload-model-links-modal-card {
+  width: min(900px, calc(100vw - 24px));
+}
+
+.upload-model-links-adder {
+  display: grid;
+  gap: 6px;
+}
+
+.upload-model-links-input-row {
+  align-items: stretch;
+}
+
+.upload-model-links-input-row .input {
+  flex: 1 1 360px;
+  min-width: 240px;
+}
+
+.upload-model-links-input-row .btn {
+  min-height: 38px;
+}
+
+.upload-model-links-list-wrap {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(31, 36, 48, 0.42);
+  overflow: hidden;
+}
+
+.upload-model-links-list-head {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.upload-model-links-table {
+  table-layout: fixed;
+}
+
+.upload-model-links-table th:nth-child(2),
+.upload-model-links-table td:nth-child(2) {
+  width: 118px;
+}
+
+.upload-model-link-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.upload-model-links-table .btn {
+  width: 100%;
 }
 
 .import-preview-modal-card {

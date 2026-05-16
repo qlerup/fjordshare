@@ -875,10 +875,29 @@
       <h3>Model-links</h3>
       <button id="uploadModelLinksCloseBtn" class="btn" type="button">Luk</button>
     </div>
-    <p class="hint">Tilføj links til modellen, hvis projektet skal have en samlet reference.</p>
+    <p id="uploadModelLinksHint" class="hint">Tilføj links til modellen, hvis projektet skal have en samlet reference.</p>
     <div id="uploadModelLinksSummary" class="metadata-current-file">Upload færdig</div>
-    <label for="uploadModelLinksInput">Links (valgfrit)</label>
-    <textarea id="uploadModelLinksInput" class="input upload-model-links-textarea" rows="5" placeholder="Ét link pr. linje"></textarea>
+    <div class="upload-model-links-adder">
+      <label for="uploadModelLinksInput">Tilføj link</label>
+      <div class="toolbar upload-model-links-input-row">
+        <input id="uploadModelLinksInput" class="input" type="url" placeholder="https://..." autocomplete="off">
+        <button id="uploadModelLinksAddBtn" class="btn" type="button">Tilføj</button>
+      </div>
+    </div>
+    <div class="upload-model-links-list-wrap">
+      <div class="upload-model-links-list-head">Links klar til gem</div>
+      <table class="table compact upload-model-links-table">
+        <thead>
+          <tr>
+            <th>Link</th>
+            <th>Handling</th>
+          </tr>
+        </thead>
+        <tbody id="uploadModelLinksTableBody">
+          <tr><td colspan="2" class="hint">Ingen links tilføjet endnu.</td></tr>
+        </tbody>
+      </table>
+    </div>
     <div id="uploadModelLinksStatus" class="status hidden"></div>
     <div class="toolbar end">
       <button id="uploadModelLinksSkipBtn" class="btn" type="button">Spring over</button>

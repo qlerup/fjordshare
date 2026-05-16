@@ -59,6 +59,7 @@
     uploadModelLinksResolver: null,
     uploadModelLinksFolder: "",
     uploadModelLinksFiles: [],
+    uploadModelLinksUrls: [],
     imagePreviewImages: [],
     imagePreviewNames: [],
     imagePreviewIndex: 0,
@@ -370,8 +371,11 @@
     metadataSaveBtn: document.getElementById("metadataSaveBtn"),
     uploadModelLinksModal: document.getElementById("uploadModelLinksModal"),
     uploadModelLinksCloseBtn: document.getElementById("uploadModelLinksCloseBtn"),
+    uploadModelLinksHint: document.getElementById("uploadModelLinksHint"),
     uploadModelLinksSummary: document.getElementById("uploadModelLinksSummary"),
     uploadModelLinksInput: document.getElementById("uploadModelLinksInput"),
+    uploadModelLinksAddBtn: document.getElementById("uploadModelLinksAddBtn"),
+    uploadModelLinksTableBody: document.getElementById("uploadModelLinksTableBody"),
     uploadModelLinksStatus: document.getElementById("uploadModelLinksStatus"),
     uploadModelLinksSkipBtn: document.getElementById("uploadModelLinksSkipBtn"),
     uploadModelLinksSaveBtn: document.getElementById("uploadModelLinksSaveBtn"),
@@ -9441,10 +9445,82 @@
       });
   }
 
+  function renderUploadModelLinksList() {
+    if (!els.uploadModelLinksTableBody) return;
+    const urls = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls : [];
+    if (!urls.length) {
+      els.uploadModelLinksTableBody.innerHTML = `<tr><td colspan="2" class="hint">Ingen links tilføjet endnu.</td></tr>`;
+      return;
+    }
+    els.uploadModelLinksTableBody.innerHTML = urls
+      .map((url, index) => `
+        <tr>
+          <td><input class="input upload-model-link-input" type="text" readonly value="${esc(url)}"></td>
+          <td>
+            <button class="btn danger small" type="button" data-upload-model-link-action="remove" data-link-index="${index}">Fjern</button>
+          </td>
+        </tr>
+      `)
+      .join("");
+  }
+
   function updateUploadModelLinksButton() {
     if (!els.uploadModelLinksSaveBtn) return;
-    const urls = parseModelLinkText(els.uploadModelLinksInput && els.uploadModelLinksInput.value);
-    els.uploadModelLinksSaveBtn.textContent = urls.length ? "Gem links og fortsæt" : "Fortsæt";
+    const urls = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls : [];
+    const count = urls.length;
+    els.uploadModelLinksSaveBtn.textContent = count ? `Gem ${count} link${count === 1 ? "" : "s"} og fortsæt` : "Fortsæt";
+  }
+
+  function addUploadModelLinksFromInput() {
+    const rawText = String((els.uploadModelLinksInput && els.uploadModelLinksInput.value) || "").trim();
+    if (!rawText) return false;
+
+    const urls = parseModelLinkText(rawText);
+    if (!urls.length) {
+      showStatus(els.uploadModelLinksStatus, "Indsæt et link der starter med http:// eller https://.", "error");
+      if (els.uploadModelLinksInput) els.uploadModelLinksInput.focus();
+      return false;
+    }
+
+    const current = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls : [];
+    const seen = new Set(current);
+    const added = [];
+    urls.forEach((url) => {
+      if (seen.has(url)) return;
+      seen.add(url);
+      added.push(url);
+    });
+
+    if (!added.length) {
+      showStatus(els.uploadModelLinksStatus, urls.length === 1 ? "Linket er allerede på listen." : "Linksene er allerede på listen.", "error");
+      if (els.uploadModelLinksInput) els.uploadModelLinksInput.select();
+      return false;
+    }
+
+    state.uploadModelLinksUrls = current.concat(added);
+    if (els.uploadModelLinksInput) {
+      els.uploadModelLinksInput.value = "";
+      els.uploadModelLinksInput.focus();
+    }
+    renderUploadModelLinksList();
+    updateUploadModelLinksButton();
+    showStatus(
+      els.uploadModelLinksStatus,
+      added.length === 1 ? "Link tilføjet til listen." : `${added.length} links tilføjet til listen.`,
+      "ok",
+    );
+    return true;
+  }
+
+  function removeUploadModelLinkAt(index) {
+    const urls = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls.slice() : [];
+    const idx = Number(index);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= urls.length) return;
+    urls.splice(idx, 1);
+    state.uploadModelLinksUrls = urls;
+    renderUploadModelLinksList();
+    updateUploadModelLinksButton();
+    showStatus(els.uploadModelLinksStatus, "Link fjernet fra listen.", "ok");
   }
 
   function settleUploadModelLinks(result = {}) {
@@ -9452,8 +9528,10 @@
     state.uploadModelLinksResolver = null;
     state.uploadModelLinksFolder = "";
     state.uploadModelLinksFiles = [];
+    state.uploadModelLinksUrls = [];
     if (els.uploadModelLinksModal) els.uploadModelLinksModal.classList.add("hidden");
     if (els.uploadModelLinksInput) els.uploadModelLinksInput.value = "";
+    renderUploadModelLinksList();
     showStatus(els.uploadModelLinksStatus, "");
     if (els.uploadModelLinksSaveBtn) {
       els.uploadModelLinksSaveBtn.disabled = false;
@@ -9472,11 +9550,19 @@
 
     state.uploadModelLinksFolder = targetFolder;
     state.uploadModelLinksFiles = list;
+    state.uploadModelLinksUrls = [];
+    const count = list.length;
+    if (els.uploadModelLinksHint) {
+      els.uploadModelLinksHint.textContent = count === 1
+        ? "Tilføj links til modellen, hvis projektet skal have en samlet reference."
+        : "Tilføj links til modellerne, hvis projektet skal have en samlet reference.";
+    }
     if (els.uploadModelLinksSummary) {
-      const count = list.length;
-      els.uploadModelLinksSummary.textContent = `${count} fil(er) uploadet til ${targetFolder}`;
+      const fileWord = count === 1 ? "fil" : "filer";
+      els.uploadModelLinksSummary.textContent = `${count} ${fileWord} uploadet til ${targetFolder}`;
     }
     if (els.uploadModelLinksInput) els.uploadModelLinksInput.value = "";
+    renderUploadModelLinksList();
     showStatus(els.uploadModelLinksStatus, "");
     if (els.uploadModelLinksSaveBtn) {
       els.uploadModelLinksSaveBtn.disabled = false;
@@ -9495,12 +9581,14 @@
 
   async function saveUploadModelLinksAndContinue() {
     const rawText = String((els.uploadModelLinksInput && els.uploadModelLinksInput.value) || "").trim();
-    const urls = parseModelLinkText(rawText);
+    if (rawText) {
+      showStatus(els.uploadModelLinksStatus, "Tilføj linket til listen først, eller ryd feltet.", "error");
+      if (els.uploadModelLinksInput) els.uploadModelLinksInput.focus();
+      return;
+    }
+
+    const urls = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls.slice() : [];
     if (!urls.length) {
-      if (rawText) {
-        showStatus(els.uploadModelLinksStatus, "Indsæt links der starter med http:// eller https://.", "error");
-        return;
-      }
       settleUploadModelLinks({ savedCount: 0 });
       return;
     }
@@ -9516,7 +9604,7 @@
       els.uploadModelLinksSaveBtn.disabled = true;
       els.uploadModelLinksSaveBtn.textContent = "Gemmer...";
     }
-    showStatus(els.uploadModelLinksStatus, `Gemmer ${urls.length} link(s)...`, "ok");
+    showStatus(els.uploadModelLinksStatus, `Gemmer ${urls.length} link${urls.length === 1 ? "" : "s"}...`, "ok");
 
     try {
       const data = await api("/api/upload/model-links", {
@@ -9527,7 +9615,7 @@
       const skipped = Array.isArray(data && data.skipped) ? data.skipped.length : 0;
       const skippedPart = skipped ? ` · ${skipped} sprunget over` : "";
       if (savedCount > 0) {
-        showStatus(els.uploadStatus, `${savedCount} model-link(s) gemt i mappen${skippedPart}.`, "ok");
+        showStatus(els.uploadStatus, `${savedCount} model-link${savedCount === 1 ? "" : "s"} gemt i mappen${skippedPart}.`, "ok");
       }
       settleUploadModelLinks({ savedCount, skipped });
     } catch (err) {
@@ -16111,10 +16199,29 @@
         });
       });
     }
+    if (els.uploadModelLinksAddBtn) {
+      els.uploadModelLinksAddBtn.addEventListener("click", () => {
+        addUploadModelLinksFromInput();
+      });
+    }
+    if (els.uploadModelLinksTableBody) {
+      els.uploadModelLinksTableBody.addEventListener("click", (event) => {
+        const btn = event.target && event.target.closest ? event.target.closest("[data-upload-model-link-action]") : null;
+        if (!btn) return;
+        const action = String(btn.dataset.uploadModelLinkAction || "");
+        if (action === "remove") {
+          removeUploadModelLinkAt(btn.dataset.linkIndex);
+        }
+      });
+    }
     if (els.uploadModelLinksInput) {
       els.uploadModelLinksInput.addEventListener("input", () => {
         showStatus(els.uploadModelLinksStatus, "");
-        updateUploadModelLinksButton();
+      });
+      els.uploadModelLinksInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        addUploadModelLinksFromInput();
       });
     }
     if (els.uploadModelLinksModal) {
