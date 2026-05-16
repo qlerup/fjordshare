@@ -1826,8 +1826,10 @@ input[type="checkbox"] {
 .file-info-body {
   overflow: auto;
   padding: 12px;
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
 }
 
 .file-info-summary {
@@ -3387,6 +3389,9 @@ input[type="checkbox"] {
   display: block;
 }
 
+  position: relative;
+  z-index: 0;
+  flex: 0 0 auto;
 .import-preview-summary,
 .import-preview-section {
   min-width: 0;
@@ -3448,6 +3453,13 @@ input[type="checkbox"] {
 .import-license {
   display: grid;
   gap: 4px;
+  position: static !important;
+  z-index: 1;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
 }
 
 .import-license-value {
@@ -3611,6 +3623,9 @@ input[type="checkbox"] {
 }
 
 .tracking-assign-modal-card {
+  position: static !important;
+  z-index: 1;
+  margin: 0;
   width: min(560px, calc(100vw - 24px));
   display: grid;
   gap: 10px;
