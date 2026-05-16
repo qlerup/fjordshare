@@ -12,6 +12,7 @@
   const APP_ONBOARDING_FALLBACK_STEP_MS = 5000;
   const APP_ONBOARDING_STEP_BUFFER_MS = 450;
   const UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY = "fjordshare.unseenUploadsOverlayExpanded.v1";
+  const UNSEEN_UPLOADS_PAGE_SIZE = 24;
 
   function readPersistedUnseenUploadsOverlayExpanded() {
     try {
@@ -121,6 +122,10 @@
     unseenUploads: [],
     unseenUploadsExpanded: readPersistedUnseenUploadsOverlayExpanded(),
     unseenUploadsRequestToken: 0,
+    unseenUploadsLoading: false,
+    unseenUploadsHasMore: false,
+    unseenUploadsNextOffset: 0,
+    unseenUploadsPreserveScroll: false,
     newUploadsDwellTimer: null,
     modelPreviewLoadToken: 0,
     modelModalCloseGuardUntil: 0,
@@ -2619,6 +2624,10 @@
       clearNewUploadsDwellTimer();
       state.unseenUploadsTotal = 0;
       state.unseenUploads = [];
+      state.unseenUploadsLoading = false;
+      state.unseenUploadsHasMore = false;
+      state.unseenUploadsNextOffset = 0;
+      state.unseenUploadsPreserveScroll = false;
     }
     renderUnseenUploadsOverlay();
     updatePrintReadyNavBadge();
@@ -3480,6 +3489,9 @@
     if (els.newUploadsOverlayChevron) {
       els.newUploadsOverlayChevron.textContent = state.unseenUploadsExpanded ? "▴" : "▾";
     }
+    if (state.unseenUploadsExpanded) {
+      window.setTimeout(maybeLoadMoreUnseenUploads, 0);
+    }
   }
 
   function renderUnseenUploadsOverlay() {
@@ -3488,6 +3500,11 @@
     const total = Math.max(0, Math.floor(Number(state.unseenUploadsTotal || 0)));
     const items = Array.isArray(state.unseenUploads) ? state.unseenUploads : [];
     const shouldShow = state.role === "admin" && total > 0;
+    const preserveListScroll = !!state.unseenUploadsPreserveScroll;
+    const previousListScrollTop = preserveListScroll && els.newUploadsOverlayList
+      ? els.newUploadsOverlayList.scrollTop
+      : 0;
+    state.unseenUploadsPreserveScroll = false;
 
     if (!shouldShow) {
       els.newUploadsOverlay.classList.add("hidden");
@@ -3508,14 +3525,16 @@
     if (els.newUploadsOverlayMeta) {
       const shown = items.length;
       els.newUploadsOverlayMeta.textContent = shown > 0
-        ? `Viser ${shown} seneste af ${total} nye uploads`
+        ? `Viser ${shown} af ${total} nye uploads`
         : `${total} nye uploads`;
     }
     if (els.newUploadsOverlayList) {
       if (!items.length) {
-        els.newUploadsOverlayList.innerHTML = '<li class="new-uploads-overlay-empty">Ingen detaljer tilgængelige lige nu.</li>';
+        els.newUploadsOverlayList.innerHTML = state.unseenUploadsLoading
+          ? '<li class="new-uploads-overlay-empty">Indlæser nye uploads...</li>'
+          : '<li class="new-uploads-overlay-empty">Ingen detaljer tilgængelige lige nu.</li>';
       } else {
-        els.newUploadsOverlayList.innerHTML = items
+        const itemHtml = items
           .map((item) => {
             const filename = String((item && item.filename) || "Fil");
             const folderPathRaw = String((item && item.folder_path) || "");
@@ -3546,29 +3565,93 @@
             `;
           })
           .join("");
+        const loadingHtml = state.unseenUploadsLoading
+          ? '<li class="new-uploads-overlay-empty">Indlæser flere...</li>'
+          : "";
+        els.newUploadsOverlayList.innerHTML = `${itemHtml}${loadingHtml}`;
+      }
+      if (preserveListScroll) {
+        els.newUploadsOverlayList.scrollTop = previousListScrollTop;
       }
     }
 
     setUnseenUploadsExpanded(state.unseenUploadsExpanded);
   }
 
-  async function loadUnseenUploadsSummary(limit = 12) {
+  async function loadUnseenUploadsSummary(options = {}) {
+    const opts = typeof options === "number" ? { limit: options } : (options || {});
+    const reset = opts.reset !== false;
     if (state.role !== "admin") {
       state.unseenUploadsRequestToken = Number((state.unseenUploadsRequestToken || 0) + 1);
       state.unseenUploadsTotal = 0;
       state.unseenUploads = [];
+      state.unseenUploadsLoading = false;
+      state.unseenUploadsHasMore = false;
+      state.unseenUploadsNextOffset = 0;
+      state.unseenUploadsPreserveScroll = false;
       renderUnseenUploadsOverlay();
       return;
     }
 
-    const safeLimit = Math.max(1, Math.min(40, Number(limit || 12) || 12));
+    if (state.unseenUploadsLoading && !reset) return;
+
+    const safeLimit = Math.max(1, Math.min(100, Number(opts.limit || UNSEEN_UPLOADS_PAGE_SIZE) || UNSEEN_UPLOADS_PAGE_SIZE));
+    const safeOffset = reset
+      ? 0
+      : Math.max(0, Number(opts.offset == null ? state.unseenUploadsNextOffset : opts.offset) || 0);
     const requestToken = Number((state.unseenUploadsRequestToken || 0) + 1);
     state.unseenUploadsRequestToken = requestToken;
-    const data = await api(`/api/files/unseen-summary?limit=${safeLimit}`);
-    if (requestToken !== state.unseenUploadsRequestToken) return;
-    state.unseenUploadsTotal = Math.max(0, Math.floor(Number(data && data.total ? data.total : 0)));
-    state.unseenUploads = Array.isArray(data && data.items) ? data.items : [];
-    renderUnseenUploadsOverlay();
+    state.unseenUploadsLoading = true;
+    if (reset) {
+      state.unseenUploadsPreserveScroll = false;
+      renderUnseenUploadsOverlay();
+    }
+
+    try {
+      const params = new URLSearchParams({
+        limit: String(safeLimit),
+        offset: String(safeOffset),
+      });
+      const data = await api(`/api/files/unseen-summary?${params.toString()}`);
+      if (requestToken !== state.unseenUploadsRequestToken) return;
+
+      const incoming = Array.isArray(data && data.items) ? data.items : [];
+      state.unseenUploadsTotal = Math.max(0, Math.floor(Number(data && data.total ? data.total : 0)));
+      state.unseenUploadsNextOffset = Math.max(
+        0,
+        Math.floor(Number(data && data.next_offset != null ? data.next_offset : safeOffset + incoming.length) || 0)
+      );
+      state.unseenUploadsHasMore = !!(data && data.has_more);
+      if (reset) {
+        state.unseenUploads = incoming;
+      } else if (incoming.length) {
+        const seen = new Set(Array.from(state.unseenUploads || []).map((item) => Number(item && item.id ? item.id : 0)));
+        const merged = Array.from(state.unseenUploads || []);
+        incoming.forEach((item) => {
+          const id = Number(item && item.id ? item.id : 0);
+          if (id && seen.has(id)) return;
+          if (id) seen.add(id);
+          merged.push(item);
+        });
+        state.unseenUploads = merged;
+      }
+    } finally {
+      if (requestToken === state.unseenUploadsRequestToken) {
+        state.unseenUploadsLoading = false;
+        state.unseenUploadsPreserveScroll = !reset;
+        renderUnseenUploadsOverlay();
+      }
+    }
+  }
+
+  function maybeLoadMoreUnseenUploads() {
+    if (state.role !== "admin" || !state.unseenUploadsExpanded) return;
+    if (!state.unseenUploadsHasMore || state.unseenUploadsLoading) return;
+    const list = els.newUploadsOverlayList;
+    if (!list) return;
+    const remaining = list.scrollHeight - list.scrollTop - list.clientHeight;
+    if (remaining > 90) return;
+    loadUnseenUploadsSummary({ reset: false }).catch(() => {});
   }
 
   async function openUnseenUploadItem(fileId, folderPath) {
@@ -3851,6 +3934,10 @@
     } else {
       state.unseenUploadsTotal = 0;
       state.unseenUploads = [];
+      state.unseenUploadsLoading = false;
+      state.unseenUploadsHasMore = false;
+      state.unseenUploadsNextOffset = 0;
+      state.unseenUploadsPreserveScroll = false;
       renderUnseenUploadsOverlay();
     }
 
@@ -14884,6 +14971,8 @@
           showStatus(els.uploadStatus, err.message || "Kunne ikke åbne upload", "error");
         });
       });
+
+      els.newUploadsOverlayList.addEventListener("scroll", maybeLoadMoreUnseenUploads, { passive: true });
     }
 
     if (els.fileGrid) {

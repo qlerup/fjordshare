@@ -10641,6 +10641,7 @@ def _unseen_total_count_for_user(conn: sqlite3.Connection, user: User) -> int:
         return 0
 
     actor = _normalize_actor_identity(user.username)
+    excluded_folder_segment = f"/{PRINT_READY_PROJECT_FILES_FOLDER_NAME.lower()}/"
     row = conn.execute(
         """
         SELECT COUNT(*) AS c
@@ -10648,13 +10649,19 @@ def _unseen_total_count_for_user(conn: sqlite3.Connection, user: User) -> int:
         LEFT JOIN user_file_seen s ON s.user_id=? AND s.file_id=f.id
         WHERE s.file_id IS NULL
           AND lower(trim(COALESCE(f.uploaded_by, ''))) != ?
+          AND instr('/' || lower(COALESCE(f.folder_path, '')) || '/', ?) = 0
         """,
-        (int(user.id), actor),
+        (int(user.id), actor, excluded_folder_segment),
     ).fetchone()
     return int(row["c"] or 0) if row else 0
 
 
-def _unseen_file_rows_for_user(conn: sqlite3.Connection, user: User, limit: int = 12) -> list[sqlite3.Row]:
+def _unseen_file_rows_for_user(
+    conn: sqlite3.Connection,
+    user: User,
+    limit: int = 12,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
     if not user.is_admin:
         return []
 
@@ -10663,8 +10670,14 @@ def _unseen_file_rows_for_user(conn: sqlite3.Connection, user: User, limit: int 
     except Exception:
         safe_limit = 12
     safe_limit = max(1, min(100, safe_limit))
+    try:
+        safe_offset = int(offset)
+    except Exception:
+        safe_offset = 0
+    safe_offset = max(0, safe_offset)
 
     actor = _normalize_actor_identity(user.username)
+    excluded_folder_segment = f"/{PRINT_READY_PROJECT_FILES_FOLDER_NAME.lower()}/"
     rows = conn.execute(
         """
         SELECT f.*
@@ -10672,10 +10685,12 @@ def _unseen_file_rows_for_user(conn: sqlite3.Connection, user: User, limit: int 
         LEFT JOIN user_file_seen s ON s.user_id=? AND s.file_id=f.id
         WHERE s.file_id IS NULL
           AND lower(trim(COALESCE(f.uploaded_by, ''))) != ?
+          AND instr('/' || lower(COALESCE(f.folder_path, '')) || '/', ?) = 0
         ORDER BY f.uploaded_at DESC, f.id DESC
         LIMIT ?
+        OFFSET ?
         """,
-        (int(user.id), actor, safe_limit),
+        (int(user.id), actor, excluded_folder_segment, safe_limit, safe_offset),
     ).fetchall()
 
     visible: list[sqlite3.Row] = []
@@ -14714,18 +14729,32 @@ def api_files_unseen_summary():
         requested_limit = int(str(request.args.get("limit") or "12"))
     except Exception:
         requested_limit = 12
-    limit = max(1, min(40, requested_limit))
+    limit = max(1, min(100, requested_limit))
+    try:
+        requested_offset = int(str(request.args.get("offset") or "0"))
+    except Exception:
+        requested_offset = 0
+    offset = max(0, requested_offset)
 
     with closing(get_conn()) as conn:
         total = _unseen_total_count_for_user(conn, current_user)
-        rows = _unseen_file_rows_for_user(conn, current_user, limit=limit)
+        rows = _unseen_file_rows_for_user(conn, current_user, limit=limit, offset=offset)
 
     items = [
         serialize_file_row(row, is_new=True)
         for row in rows
     ]
+    next_offset = offset + len(items)
 
-    return jsonify({"ok": True, "total": int(total), "items": items})
+    return jsonify({
+        "ok": True,
+        "total": int(total),
+        "items": items,
+        "limit": int(limit),
+        "offset": int(offset),
+        "next_offset": int(next_offset),
+        "has_more": bool(next_offset < int(total)),
+    })
 
 
 @app.route("/api/files/<int:file_id>/content", methods=["GET"])
