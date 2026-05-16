@@ -8402,54 +8402,77 @@
     const licenseText = String(license.label || license.code || "").trim();
     const description = String(payload.description || "").trim();
     const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+    const files = Array.isArray(payload.files) ? payload.files : profiles;
+    const sourceKey = String(payload.source || file.external_source || "").trim().toLowerCase();
+    const collapseProfilesByDefault = sourceKey === "makerworld";
+
+    const filesCount = Number.isFinite(Number(payload.files_count)) ? Number(payload.files_count) : files.length;
+    const filesSectionTitle = String(payload.files_section_title || "Filer på linket").trim() || "Filer på linket";
+    const filesEmptyText = String(payload.files_empty_text || "Ingen filer fundet på linket.").trim() || "Ingen filer fundet på linket.";
+
     const profilesCount = Number.isFinite(Number(payload.profiles_count)) ? Number(payload.profiles_count) : profiles.length;
     const profilesSectionTitle = String(payload.profiles_section_title || "Printprofiler på linket").trim() || "Printprofiler på linket";
-    const shownProfiles = profiles.slice(0, 6);
-    const profilesHtml = shownProfiles
-      .map((profile, index) => {
-        const settings = profile && profile.settings && typeof profile.settings === "object" ? profile.settings : {};
-        const coverUrl = String((profile && profile.cover_url) || "").trim();
-        const title = String((profile && profile.title) || "Fil").trim() || "Fil";
-        const fileType = String((profile && profile.file_type) || "").trim();
-        const fileSize = Number((profile && profile.file_size) || 0);
-        const printTime = Number((profile && profile.print_time_seconds) || 0);
-        const plateCount = Number((profile && profile.plate_count) || 0);
-        const weightGrams = Number((profile && profile.weight_g) || 0);
-        const folder = String((profile && profile.folder) || "").trim();
-        const printers = (Array.isArray(profile && profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 3).join(", ");
-        const metaParts = [
-          fileType,
-          fileSize > 0 ? formatSize(fileSize) : "",
-          printTime > 0 ? formatImportDuration(printTime) : "",
-          plateCount > 0 ? `${formatImportNumber(plateCount)} plade${plateCount === 1 ? "" : "r"}` : "",
-          weightGrams > 0 ? `${formatImportNumber(weightGrams)}g` : "",
-        ].filter(Boolean);
-        const settingsHtml = [
-          settings.layer_height ? `${settings.layer_height}mm lag` : "",
-          settings.nozzle || "",
-          settings.wall_loops ? `${settings.wall_loops} vægge` : "",
-          settings.infill ? `${settings.infill} infill` : "",
-          profile && profile.need_ams ? "AMS" : "",
-        ]
-          .filter(Boolean)
-          .map((item) => `<span>${esc(item)}</span>`)
-          .join("");
-        const subText = folder || printers;
-        return `
-          <article class="file-info-link-profile">
-            ${coverUrl ? `<img class="file-info-link-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="file-info-link-profile-thumb placeholder">${index + 1}</div>`}
-            <div class="file-info-link-profile-main">
-              <div class="file-info-link-profile-title" title="${esc(title)}">${esc(title)}</div>
-              ${metaParts.length ? `<div class="file-info-link-profile-meta">${metaParts.map((item) => `<span>${esc(item)}</span>`).join("")}</div>` : ""}
-              ${settingsHtml ? `<div class="file-info-link-profile-settings">${settingsHtml}</div>` : ""}
-              ${subText ? `<div class="file-info-link-profile-sub">${esc(subText)}</div>` : ""}
-            </div>
-          </article>
-        `;
-      })
-      .join("");
-    const profilesMore = profilesCount > shownProfiles.length
-      ? `<div class="file-info-link-more">Viser ${esc(formatImportNumber(shownProfiles.length))} af ${esc(formatImportNumber(profilesCount))}</div>`
+    const profilesEmptyText = String(payload.profiles_empty_text || "Ingen data fundet på linket.").trim() || "Ingen data fundet på linket.";
+
+    const renderLinkCards = (items, limit, emptyText) => {
+      const shownItems = Array.isArray(items) ? items.slice(0, Math.max(0, Number(limit) || 0)) : [];
+      const html = shownItems
+        .map((profile, index) => {
+          const settings = profile && profile.settings && typeof profile.settings === "object" ? profile.settings : {};
+          const coverUrl = String((profile && profile.cover_url) || "").trim();
+          const title = String((profile && profile.title) || "Fil").trim() || "Fil";
+          const fileType = String((profile && profile.file_type) || "").trim();
+          const fileSize = Number((profile && profile.file_size) || 0);
+          const printTime = Number((profile && profile.print_time_seconds) || 0);
+          const plateCount = Number((profile && profile.plate_count) || 0);
+          const weightGrams = Number((profile && profile.weight_g) || 0);
+          const folder = String((profile && profile.folder) || "").trim();
+          const printers = (Array.isArray(profile && profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 3).join(", ");
+          const metaParts = [
+            fileType,
+            fileSize > 0 ? formatSize(fileSize) : "",
+            printTime > 0 ? formatImportDuration(printTime) : "",
+            plateCount > 0 ? `${formatImportNumber(plateCount)} plade${plateCount === 1 ? "" : "r"}` : "",
+            weightGrams > 0 ? `${formatImportNumber(weightGrams)}g` : "",
+          ].filter(Boolean);
+          const settingsHtml = [
+            settings.layer_height ? `${settings.layer_height}mm lag` : "",
+            settings.nozzle || "",
+            settings.wall_loops ? `${settings.wall_loops} vægge` : "",
+            settings.infill ? `${settings.infill} infill` : "",
+            profile && profile.need_ams ? "AMS" : "",
+          ]
+            .filter(Boolean)
+            .map((item) => `<span>${esc(item)}</span>`)
+            .join("");
+          const subText = folder || printers;
+          return `
+            <article class="file-info-link-profile">
+              ${coverUrl ? `<img class="file-info-link-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="file-info-link-profile-thumb placeholder">${index + 1}</div>`}
+              <div class="file-info-link-profile-main">
+                <div class="file-info-link-profile-title" title="${esc(title)}">${esc(title)}</div>
+                ${metaParts.length ? `<div class="file-info-link-profile-meta">${metaParts.map((item) => `<span>${esc(item)}</span>`).join("")}</div>` : ""}
+                ${settingsHtml ? `<div class="file-info-link-profile-settings">${settingsHtml}</div>` : ""}
+                ${subText ? `<div class="file-info-link-profile-sub">${esc(subText)}</div>` : ""}
+              </div>
+            </article>
+          `;
+        })
+        .join("");
+      return {
+        html: html || `<div class="file-info-link-empty">${esc(emptyText)}</div>`,
+        shownCount: shownItems.length,
+      };
+    };
+
+    const filesRendered = renderLinkCards(files, 8, filesEmptyText);
+    const profilesRendered = renderLinkCards(profiles, 6, profilesEmptyText);
+
+    const filesMore = filesCount > filesRendered.shownCount
+      ? `<div class="file-info-link-more">Viser ${esc(formatImportNumber(filesRendered.shownCount))} af ${esc(formatImportNumber(filesCount))}</div>`
+      : "";
+    const profilesMore = profilesCount > profilesRendered.shownCount
+      ? `<div class="file-info-link-more">Viser ${esc(formatImportNumber(profilesRendered.shownCount))} af ${esc(formatImportNumber(profilesCount))}</div>`
       : "";
 
     els.fileInfoLinkDetails.innerHTML = `
@@ -8464,13 +8487,21 @@
       ${categoriesHtml ? `<div class="file-info-link-tags">${categoriesHtml}</div>` : ""}
       ${licenseText ? `<div class="file-info-link-line"><span>Licens</span><strong>${esc(licenseText)}</strong></div>` : ""}
       ${description ? `<div class="file-info-link-description">${esc(description).replace(/\n/g, "<br>")}</div>` : ""}
-      ${(profilesHtml || profilesMore) ? `
-        <div class="file-info-link-section">
-          <div class="file-info-link-section-title">${esc(profilesSectionTitle)}</div>
-          <div class="file-info-link-profiles">${profilesHtml || `<div class="file-info-link-empty">${esc(payload.profiles_empty_text || "Ingen data fundet på linket.")}</div>`}</div>
+      <div class="file-info-link-section">
+        <div class="file-info-link-section-title">${esc(filesSectionTitle)}</div>
+        <div class="file-info-link-profiles">${filesRendered.html}</div>
+        ${filesMore}
+      </div>
+      <div class="file-info-link-section">
+        <details class="file-info-link-accordion"${collapseProfilesByDefault ? "" : " open"}>
+          <summary>
+            <span>${esc(profilesSectionTitle)}</span>
+            <span>${esc(formatImportNumber(profilesCount))}</span>
+          </summary>
+          <div class="file-info-link-profiles">${profilesRendered.html}</div>
           ${profilesMore}
-        </div>
-      ` : ""}
+        </details>
+      </div>
     `;
     els.fileInfoLinkDetails.classList.remove("hidden");
   }
@@ -13997,6 +14028,9 @@
     if (!els.importPreviewBody) return;
     const data = preview && typeof preview === "object" ? preview : {};
     const profiles = Array.isArray(data.profiles) ? data.profiles : [];
+    const files = Array.isArray(data.files) ? data.files : profiles;
+    const sourceKey = String(data.source || "").trim().toLowerCase();
+    const collapseProfilesByDefault = sourceKey === "makerworld";
     state.importLinkSelectedProfileIds = [];
     state.importLinkSelectedProfileId = "";
     if (els.importPreviewTitle) {
@@ -14053,64 +14087,80 @@
       .join("");
     const description = String(data.description || "Ingen beskrivelse fundet.").trim();
     const targetFolder = importLinkTargetFolder();
+    const filesCount = Number.isFinite(Number(data.files_count))
+      ? Number(data.files_count)
+      : files.length;
+    const filesOverviewLabel = String(data.files_overview_label || "Filer fundet").trim() || "Filer fundet";
+    const filesSectionTitle = String(data.files_section_title || "Filer på linket").trim() || "Filer på linket";
+    const filesEmptyText = String(data.files_empty_text || "Ingen filer fundet på linket.").trim() || "Ingen filer fundet på linket.";
     const profilesCount = Number.isFinite(Number(data.profiles_count))
       ? Number(data.profiles_count)
       : profiles.length;
     const profilesOverviewLabel = String(data.profiles_overview_label || "Profiler fundet").trim() || "Profiler fundet";
     const profilesSectionTitle = String(data.profiles_section_title || "Printprofiler på linket").trim() || "Printprofiler på linket";
     const profilesEmptyText = String(data.profiles_empty_text || "Ingen printprofiler fundet på linket.").trim() || "Ingen printprofiler fundet på linket.";
+
+    const renderImportCards = (items, fallbackTitle, emptyText) => {
+      if (!Array.isArray(items) || !items.length) {
+        return `<div class="empty-note">${esc(emptyText)}</div>`;
+      }
+      return items.map((item, index) => {
+        const profile = item && typeof item === "object" ? item : {};
+        const id = String(profile.id || "");
+        const settings = profile.settings && typeof profile.settings === "object" ? profile.settings : {};
+        const filamentHtml = (Array.isArray(profile.filaments) ? profile.filaments : [])
+          .slice(0, 4)
+          .map((filament) => {
+            const color = String(filament.color || "").trim();
+            const type = String(filament.type || "Filament").trim();
+            const used = String(filament.used_g || "").trim();
+            return `<span class="import-filament"><span style="background:${esc(color || "#6b7280")}"></span>${esc(type)}${used ? ` ${esc(used)}g` : ""}</span>`;
+          })
+          .join("");
+        const printers = (Array.isArray(profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 4).join(", ");
+        const coverUrl = String(profile.cover_url || (Array.isArray(profile.picture_urls) && profile.picture_urls[0]) || "").trim();
+        const fileType = String(profile.file_type || "").trim();
+        const fileSize = Number(profile.file_size || 0);
+        const plateCount = Number(profile.plate_count || 0);
+        return `
+          <article class="import-profile-card readonly"${id ? ` data-profile-id="${esc(id)}"` : ""}>
+            ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${index + 1}</div>`}
+            <div class="import-profile-main">
+              <div class="import-profile-title">${esc(profile.title || fallbackTitle)}</div>
+              <div class="import-profile-meta">
+                ${profile.is_designer ? `<span>Designer</span>` : ""}
+                ${fileType ? `<span>${esc(fileType)}</span>` : ""}
+                ${fileSize > 0 ? `<span>${esc(formatSize(fileSize))}</span>` : ""}
+                ${Number(profile.print_time_seconds || 0) > 0 ? `<span>${esc(formatImportDuration(profile.print_time_seconds))}</span>` : ""}
+                ${plateCount > 0 ? `<span>${esc(formatImportNumber(plateCount))} plade${plateCount === 1 ? "" : "r"}</span>` : ""}
+                ${profile.rating ? `<span>${esc(profile.rating)} (${esc(formatImportNumber(profile.rating_count))})</span>` : ""}
+              </div>
+              <div class="import-profile-settings">
+                ${settings.layer_height ? `<span>${esc(settings.layer_height)}mm lag</span>` : ""}
+                ${settings.nozzle ? `<span>${esc(settings.nozzle)}</span>` : ""}
+                ${settings.wall_loops ? `<span>${esc(settings.wall_loops)} vægge</span>` : ""}
+                ${settings.infill ? `<span>${esc(settings.infill)} infill</span>` : ""}
+                ${profile.need_ams ? `<span>AMS</span>` : ""}
+              </div>
+              ${filamentHtml ? `<div class="import-filaments">${filamentHtml}</div>` : ""}
+              ${printers ? `<div class="import-profile-printers">${esc(printers)}</div>` : ""}
+            </div>
+          </article>
+        `;
+      }).join("");
+    };
+
+    const filesHtml = renderImportCards(files, "Fil", filesEmptyText);
+    const profileHtml = renderImportCards(profiles, "Printprofil", profilesEmptyText);
+
     const overviewHtml = `
       <div class="import-link-overview">
         <div><span>Gemmes i</span><strong>${esc(targetFolder || "-")}</strong></div>
         <div><span>Kilde</span><strong>${esc(data.source_label || "Link")}</strong></div>
+        <div><span>${esc(filesOverviewLabel)}</span><strong>${esc(formatImportNumber(filesCount))}</strong></div>
         <div><span>${esc(profilesOverviewLabel)}</span><strong>${esc(formatImportNumber(profilesCount))}</strong></div>
       </div>
     `;
-    const profileHtml = profiles.length
-      ? profiles.map((profile, index) => {
-          const id = String(profile.id || "");
-          const settings = profile.settings || {};
-          const filamentHtml = (Array.isArray(profile.filaments) ? profile.filaments : [])
-            .slice(0, 4)
-            .map((filament) => {
-              const color = String(filament.color || "").trim();
-              const type = String(filament.type || "Filament").trim();
-              const used = String(filament.used_g || "").trim();
-              return `<span class="import-filament"><span style="background:${esc(color || "#6b7280")}"></span>${esc(type)}${used ? ` ${esc(used)}g` : ""}</span>`;
-            })
-            .join("");
-          const printers = (Array.isArray(profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 4).join(", ");
-          const coverUrl = String(profile.cover_url || (Array.isArray(profile.picture_urls) && profile.picture_urls[0]) || "").trim();
-          const profileFileType = String(profile.file_type || "").trim();
-          const profileFileSize = Number(profile.file_size || 0);
-          const profilePlateCount = Number(profile.plate_count || 0);
-          return `
-            <article class="import-profile-card readonly" data-profile-id="${esc(id)}">
-              ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${index + 1}</div>`}
-              <div class="import-profile-main">
-                <div class="import-profile-title">${esc(profile.title || "Printprofil")}</div>
-                <div class="import-profile-meta">
-                  ${profile.is_designer ? `<span>Designer</span>` : ""}
-                  ${profileFileType ? `<span>${esc(profileFileType)}</span>` : ""}
-                  ${profileFileSize > 0 ? `<span>${esc(formatSize(profileFileSize))}</span>` : ""}
-                  ${Number(profile.print_time_seconds || 0) > 0 ? `<span>${esc(formatImportDuration(profile.print_time_seconds))}</span>` : ""}
-                  ${profilePlateCount > 0 ? `<span>${esc(formatImportNumber(profilePlateCount))} plade${profilePlateCount === 1 ? "" : "r"}</span>` : ""}
-                  ${profile.rating ? `<span>${esc(profile.rating)} (${esc(formatImportNumber(profile.rating_count))})</span>` : ""}
-                </div>
-                <div class="import-profile-settings">
-                  ${settings.layer_height ? `<span>${esc(settings.layer_height)}mm lag</span>` : ""}
-                  ${settings.nozzle ? `<span>${esc(settings.nozzle)}</span>` : ""}
-                  ${settings.wall_loops ? `<span>${esc(settings.wall_loops)} vægge</span>` : ""}
-                  ${settings.infill ? `<span>${esc(settings.infill)} infill</span>` : ""}
-                  ${profile.need_ams ? `<span>AMS</span>` : ""}
-                </div>
-                ${filamentHtml ? `<div class="import-filaments">${filamentHtml}</div>` : ""}
-                ${printers ? `<div class="import-profile-printers">${esc(printers)}</div>` : ""}
-              </div>
-            </article>
-          `;
-        }).join("")
-      : `<div class="empty-note">${esc(profilesEmptyText)}</div>`;
 
     els.importPreviewBody.innerHTML = `
       <div class="import-preview-grid">
@@ -14136,8 +14186,17 @@
         <div class="import-description">${esc(description).replace(/\n/g, "<br>")}</div>
       </div>
       <div class="import-preview-section">
-        <div class="import-section-title">${esc(profilesSectionTitle)}</div>
-        <div class="import-profiles">${profileHtml}</div>
+        <div class="import-section-title">${esc(filesSectionTitle)}</div>
+        <div class="import-profiles">${filesHtml}</div>
+      </div>
+      <div class="import-preview-section">
+        <details class="import-profiles-accordion"${collapseProfilesByDefault ? "" : " open"}>
+          <summary>
+            <span>${esc(profilesSectionTitle)}</span>
+            <span>${esc(formatImportNumber(profilesCount))}</span>
+          </summary>
+          <div class="import-profiles">${profileHtml}</div>
+        </details>
       </div>
     `;
   }

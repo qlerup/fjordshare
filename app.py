@@ -11297,39 +11297,51 @@ def _external_link_payload_for_client(row: sqlite3.Row) -> dict[str, Any]:
     license_data = data.get("license") if isinstance(data.get("license"), dict) else {}
     categories = _unique_strings(data.get("categories") if isinstance(data.get("categories"), list) else [], limit=8)
 
+    def _normalize_link_item(item: dict[str, Any], fallback_title: str = "Fil") -> dict[str, Any]:
+        settings = item.get("settings") if isinstance(item.get("settings"), dict) else {}
+        return {
+            "id": str(item.get("id") or "").strip(),
+            "title": str(item.get("title") or fallback_title).strip()[:180],
+            "cover_url": str(item.get("cover_url") or "").strip()[:1000],
+            "file_type": str(item.get("file_type") or "").strip()[:40],
+            "file_size": _int_from_any(item.get("file_size")),
+            "folder": str(item.get("folder") or "").strip()[:180],
+            "print_time_seconds": _int_from_any(item.get("print_time_seconds")),
+            "weight_g": _int_from_any(item.get("weight_g")),
+            "plate_count": _int_from_any(item.get("plate_count")),
+            "rating": item.get("rating"),
+            "rating_count": _int_from_any(item.get("rating_count")),
+            "need_ams": bool(item.get("need_ams")),
+            "settings": {
+                "layer_height": str(settings.get("layer_height") or "").strip()[:40],
+                "nozzle": str(settings.get("nozzle") or "").strip()[:80],
+                "wall_loops": str(settings.get("wall_loops") or "").strip()[:40],
+                "infill": str(settings.get("infill") or "").strip()[:40],
+            },
+            "compatible_printers": _unique_strings(
+                item.get("compatible_printers") if isinstance(item.get("compatible_printers"), list) else [],
+                limit=4,
+            ),
+        }
+
     profiles_out: list[dict[str, Any]] = []
     for item in data.get("profiles") if isinstance(data.get("profiles"), list) else []:
         if not isinstance(item, dict):
             continue
-        settings = item.get("settings") if isinstance(item.get("settings"), dict) else {}
-        profiles_out.append(
-            {
-                "id": str(item.get("id") or "").strip(),
-                "title": str(item.get("title") or "Fil").strip()[:180],
-                "cover_url": str(item.get("cover_url") or "").strip()[:1000],
-                "file_type": str(item.get("file_type") or "").strip()[:40],
-                "file_size": _int_from_any(item.get("file_size")),
-                "folder": str(item.get("folder") or "").strip()[:180],
-                "print_time_seconds": _int_from_any(item.get("print_time_seconds")),
-                "weight_g": _int_from_any(item.get("weight_g")),
-                "plate_count": _int_from_any(item.get("plate_count")),
-                "rating": item.get("rating"),
-                "rating_count": _int_from_any(item.get("rating_count")),
-                "need_ams": bool(item.get("need_ams")),
-                "settings": {
-                    "layer_height": str(settings.get("layer_height") or "").strip()[:40],
-                    "nozzle": str(settings.get("nozzle") or "").strip()[:80],
-                    "wall_loops": str(settings.get("wall_loops") or "").strip()[:40],
-                    "infill": str(settings.get("infill") or "").strip()[:40],
-                },
-                "compatible_printers": _unique_strings(
-                    item.get("compatible_printers") if isinstance(item.get("compatible_printers"), list) else [],
-                    limit=4,
-                ),
-            }
-        )
+        profiles_out.append(_normalize_link_item(item, fallback_title="Fil"))
         if len(profiles_out) >= 12:
             break
+
+    files_out: list[dict[str, Any]] = []
+    for item in data.get("files") if isinstance(data.get("files"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        files_out.append(_normalize_link_item(item, fallback_title="Fil"))
+        if len(files_out) >= 40:
+            break
+
+    if not files_out and profiles_out:
+        files_out = list(profiles_out)
 
     return {
         "source": str(data.get("source") or "").strip()[:80],
@@ -11351,6 +11363,11 @@ def _external_link_payload_for_client(row: sqlite3.Row) -> dict[str, Any]:
             "files": _int_from_any(stats.get("files")),
         },
         "categories": categories,
+        "files": files_out,
+        "files_count": _int_from_any(data.get("files_count"), len(files_out)),
+        "files_overview_label": str(data.get("files_overview_label") or "Filer fundet").strip()[:80],
+        "files_section_title": str(data.get("files_section_title") or "Filer på linket").strip()[:120],
+        "files_empty_text": str(data.get("files_empty_text") or "Ingen filer fundet på linket.").strip()[:180],
         "profiles": profiles_out,
         "profiles_count": _int_from_any(data.get("profiles_count"), len(profiles_out)),
         "profiles_overview_label": str(data.get("profiles_overview_label") or "Profiler fundet").strip()[:80],
@@ -12654,6 +12671,70 @@ def _makerworld_image_url(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _makerworld_model_file_summary(item: dict[str, Any], index: int, folder_hint: str = "") -> dict[str, Any]:
+    model_name = str(item.get("modelName") or item.get("modelFileName") or item.get("name") or "").strip()
+    if not model_name:
+        model_name = f"Fil {index + 1}"
+
+    suffix = str(Path(model_name).suffix or "").strip().lstrip(".").lower()
+    model_type = str(item.get("modelType") or "").strip().lower() or suffix
+    file_type = str(model_type or suffix or "fil").upper()
+
+    settings = item.get("projectSettings") if isinstance(item.get("projectSettings"), dict) else {}
+    folder = str(item.get("dirName") or folder_hint or "").strip()
+    cover_url = str(item.get("thumbnailUrl") or _makerworld_image_url(item.get("thumbnail")) or "").strip()
+
+    return {
+        "id": str(item.get("unikey") or item.get("id") or f"makerworld-file-{index}").strip(),
+        "title": model_name,
+        "cover_url": cover_url,
+        "picture_urls": _unique_strings([cover_url], limit=1),
+        "file_type": file_type,
+        "file_size": _int_from_any(item.get("modelSize") or item.get("size")),
+        "folder": folder,
+        "print_time_seconds": 0,
+        "weight_g": 0,
+        "settings": {
+            "layer_height": str(settings.get("layerHeight") or "").strip(),
+            "nozzle": str(settings.get("nozzle") or "").strip(),
+            "wall_loops": str(settings.get("wallLoops") or "").strip(),
+            "infill": str(settings.get("sparseInfillDensity") or "").strip(),
+        },
+        "compatible_printers": [],
+    }
+
+
+def _makerworld_collect_model_files(raw_items: Any, limit: int = 60) -> list[dict[str, Any]]:
+    files_out: list[dict[str, Any]] = []
+
+    def walk(items: Any, folder_prefix: str = "") -> None:
+        if len(files_out) >= limit or not isinstance(items, list):
+            return
+        for item in items:
+            if len(files_out) >= limit:
+                return
+            if not isinstance(item, dict):
+                continue
+
+            dir_name = str(item.get("dirName") or "").strip()
+            current_folder = folder_prefix
+            if dir_name:
+                current_folder = f"{folder_prefix}/{dir_name}" if folder_prefix else dir_name
+
+            children = item.get("children") if isinstance(item.get("children"), list) else []
+            is_dir = bool(item.get("isDir")) or (children and not str(item.get("modelName") or "").strip())
+            if is_dir:
+                walk(children, current_folder)
+                continue
+
+            files_out.append(_makerworld_model_file_summary(item, len(files_out), folder_hint=current_folder))
+            if children:
+                walk(children, current_folder)
+
+    walk(raw_items)
+    return files_out
+
+
 def _makerworld_profile_summary(
     instance: dict[str, Any],
     selected_profile_hint: Optional[int],
@@ -12739,6 +12820,7 @@ def makerworld_preview_from_url(raw_url: str) -> dict[str, Any]:
     creator = data.get("designCreator") if isinstance(data.get("designCreator"), dict) else {}
     extension = data.get("designExtension") if isinstance(data.get("designExtension"), dict) else {}
     design_pictures = extension.get("design_pictures") if isinstance(extension.get("design_pictures"), list) else []
+    model_files = _makerworld_collect_model_files(extension.get("model_files"), limit=80)
     license_code = str(data.get("license") or "").strip()
     profiles = [
         _makerworld_profile_summary(instance, selected_profile_hint, creator.get("uid"))
@@ -12796,6 +12878,15 @@ def makerworld_preview_from_url(raw_url: str) -> dict[str, Any]:
         },
         "categories": _unique_strings(categories, limit=6),
         "profiles": profiles,
+        "profiles_count": len(profiles),
+        "profiles_overview_label": "Profiler fundet",
+        "profiles_section_title": "Printprofiler på linket",
+        "profiles_empty_text": "Ingen printprofiler fundet på linket.",
+        "files": model_files,
+        "files_count": len(model_files),
+        "files_overview_label": "STL/CAD filer",
+        "files_section_title": "STL/CAD filer på linket",
+        "files_empty_text": "Ingen STL/CAD filer fundet på linket.",
     }
 
 
@@ -12977,6 +13068,11 @@ def printables_preview_from_url(raw_url: str) -> dict[str, Any]:
             "files": _int_from_any(data.get("filesCount")),
         },
         "categories": _unique_strings([category_name, *tag_names], limit=6),
+        "files": file_profiles,
+        "files_count": _int_from_any(data.get("filesCount"), len(file_profiles)),
+        "files_overview_label": "Filer fundet",
+        "files_section_title": "Filer på linket",
+        "files_empty_text": "Ingen filer fundet på linket.",
         "profiles": file_profiles,
         "profiles_count": _int_from_any(data.get("filesCount"), len(file_profiles)),
         "profiles_overview_label": "Filer fundet",
