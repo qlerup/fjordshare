@@ -2103,6 +2103,29 @@
     return d.toLocaleString("da-DK");
   }
 
+  function formatImportNumber(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "0";
+    return Math.round(n).toLocaleString("da-DK");
+  }
+
+  function formatImportDuration(totalSeconds) {
+    const raw = Number(totalSeconds || 0);
+    if (!Number.isFinite(raw) || raw <= 0) return "";
+    const minutesTotal = Math.max(1, Math.round(raw / 60));
+    const days = Math.floor(minutesTotal / (24 * 60));
+    const hours = Math.floor((minutesTotal % (24 * 60)) / 60);
+    const minutes = minutesTotal % 60;
+
+    if (days > 0) {
+      return `${days}d ${hours}t`;
+    }
+    if (hours > 0) {
+      return `${hours}t ${minutes}m`;
+    }
+    return `${minutes}m`;
+  }
+
   const SCALE_UP_UNITS = new Set(["%", "mm", "cm", "m"]);
 
   function scaleUpUnit(value) {
