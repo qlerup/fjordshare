@@ -65,7 +65,6 @@
         <div class="mapper-current-row">
           <div class="mapper-current-actions">
             <span id="mapperSelectSummary" class="mapper-select-summary hidden" aria-live="polite"></span>
-            <button id="mapperImportLinkBtn" class="btn mapper-import-link-btn" type="button">Gem link</button>
             <button id="mapperDesktopUploadBtn" class="btn primary mapper-desktop-upload-btn" type="button">Upload</button>
             <button id="mapperSelectPrintReadyBtn" class="btn primary" type="button">Vælg filer til print</button>
             <button id="mapperSelectClearBtn" class="btn hidden" type="button">Fravælg alle</button>
@@ -124,24 +123,20 @@
 
         <div id="fileInfoLinkDetails" class="file-info-link-details hidden"></div>
 
-        <div class="file-info-fields">
-          <label for="fileInfoNote">Bemærkning</label>
-          <input id="fileInfoNote" class="input" type="text" placeholder="Bemærkning">
-        </div>
-
-        <div class="file-info-attachments">
-          <div class="file-info-attachments-head">
-            <div class="file-info-attachments-title">Billeder til filen</div>
-            <button id="fileInfoAttachUploadBtn" class="btn" type="button">Upload billede</button>
+        <div id="fileInfoModelLinkFields" class="file-info-fields">
+          <label for="fileInfoModelLinkInput">Model-link</label>
+          <div class="file-info-model-link-row">
+            <input id="fileInfoModelLinkInput" class="input" type="url" placeholder="MakerWorld eller Printables link">
+            <button id="fileInfoModelLinkSaveBtn" class="btn primary" type="button">Gem link</button>
           </div>
-          <input id="fileInfoAttachInput" type="file" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.avif,.heic,.heif" multiple style="display:none;">
-          <div id="fileInfoAttachDropZone" class="file-info-attach-dropzone">Slip billeder her for at uploade</div>
-          <div id="fileInfoAttachStatus" class="status hidden"></div>
-          <div id="fileInfoAttachList" class="file-info-attach-list"></div>
+          <div class="file-info-model-link-actions">
+            <a id="fileInfoModelLinkOpen" class="btn hidden" href="#" target="_blank" rel="noopener">Åbn link</a>
+            <button id="fileInfoModelLinkClearBtn" class="btn hidden" type="button">Fjern link</button>
+          </div>
+          <div id="fileInfoModelLinkStatus" class="status hidden"></div>
         </div>
       </div>
       <div class="file-info-actions">
-        <button id="fileInfoSaveBtn" class="btn" type="button">Gem bemærkning</button>
         <a id="fileInfoDownloadLink" class="btn" href="#" target="_blank" rel="noopener">Download</a>
         <a id="fileInfoSliceDownloadLink" class="btn hidden" href="#" target="_blank" rel="noopener">Download G-code</a>
         <button id="fileInfoSliceBtn" class="btn hidden admin-only" type="button" disabled>Slice STL</button>
@@ -852,81 +847,6 @@
   </div>
 </div>
 
-<div id="importLinkModal" class="modal hidden">
-  <div class="modal-backdrop"></div>
-  <div class="modal-card import-link-modal-card">
-    <div class="toolbar">
-      <h3>Gem model-link</h3>
-      <button id="importLinkCloseBtn" class="btn" type="button">Luk</button>
-    </div>
-    <p class="hint">Indsæt et link til en model. FjordShare genkender kilden og viser et overblik, før linket gemmes i mappen.</p>
-    <label for="importLinkInput">Model-link</label>
-    <input id="importLinkInput" class="input" type="url" placeholder="MakerWorld eller Printables model-link" autocomplete="off">
-    <div id="importLinkStatus" class="status hidden"></div>
-    <div class="toolbar end">
-      <button id="importLinkCancelBtn" class="btn" type="button">Annuller</button>
-      <button id="importLinkNextBtn" class="btn primary" type="button">Næste</button>
-    </div>
-  </div>
-</div>
-
-<div id="importPreviewModal" class="modal hidden">
-  <div class="modal-backdrop"></div>
-  <div class="modal-card import-preview-modal-card">
-    <div class="toolbar import-preview-head">
-      <div>
-        <h3 id="importPreviewTitle">Gem link</h3>
-        <div id="importPreviewSubtitle" class="hint"></div>
-      </div>
-      <button id="importPreviewCloseBtn" class="btn" type="button">Luk</button>
-    </div>
-    <div id="importPreviewBody" class="import-preview-body"></div>
-    <div id="importPreviewStatus" class="status hidden"></div>
-    <div class="toolbar end">
-      <button id="importPreviewBackBtn" class="btn" type="button">Tilbage</button>
-      <button id="importPreviewUseBtn" class="btn primary" type="button">Gem fil-link</button>
-    </div>
-  </div>
-</div>
-
-<div id="uploadModelLinksModal" class="modal hidden">
-  <div class="modal-backdrop"></div>
-  <div class="modal-card import-link-modal-card upload-model-links-modal-card">
-    <div class="toolbar">
-      <h3>Model-links</h3>
-      <button id="uploadModelLinksCloseBtn" class="btn" type="button">Luk</button>
-    </div>
-    <p id="uploadModelLinksHint" class="hint">Tilføj links til modellen, hvis projektet skal have en samlet reference.</p>
-    <div id="uploadModelLinksSummary" class="metadata-current-file">Upload færdig</div>
-    <div class="upload-model-links-adder">
-      <label for="uploadModelLinksInput">Tilføj link</label>
-      <div class="toolbar upload-model-links-input-row">
-        <input id="uploadModelLinksInput" class="input" type="url" placeholder="https://..." autocomplete="off">
-        <button id="uploadModelLinksAddBtn" class="btn" type="button">Tilføj</button>
-      </div>
-    </div>
-    <div class="upload-model-links-list-wrap">
-      <div class="upload-model-links-list-head">Links klar til gem</div>
-      <table class="table compact upload-model-links-table">
-        <thead>
-          <tr>
-            <th>Link</th>
-            <th>Handling</th>
-          </tr>
-        </thead>
-        <tbody id="uploadModelLinksTableBody">
-          <tr><td colspan="2" class="hint">Ingen links tilføjet endnu.</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div id="uploadModelLinksStatus" class="status hidden"></div>
-    <div class="toolbar end">
-      <button id="uploadModelLinksSkipBtn" class="btn" type="button">Spring over</button>
-      <button id="uploadModelLinksSaveBtn" class="btn primary" type="button">Fortsæt</button>
-    </div>
-  </div>
-</div>
-
 <div id="shareModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card share-modal-card">
@@ -1421,7 +1341,7 @@
           </button>
           <button class="app-onboarding-nav-item" data-guide-panel="file-info" type="button">
             <span class="app-onboarding-nav-label">Filinformation</span>
-            <span class="app-onboarding-nav-meta">Tilfoj antal, noter, skalering og billeder</span>
+            <span class="app-onboarding-nav-meta">Se filinfo og gem model-link pr. fil</span>
           </button>
           <button class="app-onboarding-nav-item" data-guide-panel="print-ready" type="button">
             <span class="app-onboarding-nav-label">Send til print</span>
@@ -1481,13 +1401,13 @@
             data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
           >
           <div class="app-onboarding-guide-text">
-            <p>Gå til Mapper og upload filer eller gem model-links i den mappe du arbejder i.</p>
+            <p>Gå til Mapper og upload filer til den mappe du arbejder i.</p>
             <ul>
               <li>Brug Upload-knappen eller slip filer direkte i uploadfeltet; statusboksen nederst viser fremdrift og hvornår upload er færdig.</li>
-              <li>Efter upload kan du tilføje et model-link, hvis filerne hører til en samlet reference fra f.eks. MakerWorld.</li>
-              <li>Du kan springe link-trinnet over, hvis projektet kun består af lokale filer.</li>
-              <li>Tilføj bemærkninger eller billeder til de enkelte filer i guiden, eller spring videre hvis der ikke er ekstra info.</li>
-              <li>Gemte links vises som egne kort i mappen, og fil-info viser linkdata, billeder og tilknyttede CAD/STL-filer.</li>
+              <li>Upload-flowet er færdigt, når filerne ligger i mappen; der kommer ikke længere ekstra link- eller bemærkningspopup efter upload.</li>
+              <li>Åbn fil-info på en enkelt fil, hvis du vil gemme et model-link til netop den fil.</li>
+              <li>Bemærkninger og billeder tilføjes først, når du vælger filerne og sender projektet til print.</li>
+              <li>Tilladte filtyper er: .stl, .step, .zip, .3mf, .obj, .lys og .pwscene.</li>
             </ul>
           </div>
         </section>
@@ -1517,11 +1437,11 @@
             data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
           >
           <div class="app-onboarding-guide-text">
-            <p>Åbn en fil og tilføj bemærkning eller billeder, hvis filen skal have ekstra kontekst.</p>
+            <p>Åbn en fil for at se detaljer og tilføje et model-link til den enkelte fil.</p>
             <ul>
-              <li>Brug bemærkninger til specielle ønsker.</li>
-              <li>Tilføj billeder hvis de hjælper med at forstå filen.</li>
-              <li>Antal og printstørrelse vælges først, når projektet sendes til print.</li>
+              <li>Brug model-link feltet til MakerWorld, Printables eller en anden reference for filen.</li>
+              <li>Download, 3D-visning og slicing ligger stadig i fil-info panelet.</li>
+              <li>Bemærkninger, antal, printstørrelse og billeder vælges først, når projektet sendes til print.</li>
             </ul>
           </div>
         </section>
@@ -1538,7 +1458,7 @@
             <ul>
               <li>Du kan vælge filer på tværs af dine mapper i samme projekt.</li>
               <li>Du kan også vælge hele mapper, hvis alt i mappen skal med.</li>
-              <li>Udfyld antal, større printstørrelse og ekstra billeder pr. fil inden du sender.</li>
+              <li>Udfyld antal, bemærkning, større printstørrelse og ekstra billeder pr. fil inden du sender.</li>
               <li>Kontrollér filvalget inden projektet sendes.</li>
               <li>Når projektet er sendt, kan admin følge og afslutte det.</li>
             </ul>

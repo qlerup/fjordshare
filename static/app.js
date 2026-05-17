@@ -56,10 +56,6 @@
     metadataMode: "upload",
     metadataProjectId: 0,
     metadataContinueProject: null,
-    uploadModelLinksResolver: null,
-    uploadModelLinksFolder: "",
-    uploadModelLinksFiles: [],
-    uploadModelLinksUrls: [],
     imagePreviewImages: [],
     imagePreviewNames: [],
     imagePreviewIndex: 0,
@@ -69,7 +65,6 @@
     currentTab: "files",
     currentSettingsTab: "shares",
     currentInfoFileId: 0,
-    currentFileAttachments: [],
     currentSliceFileId: 0,
     sliceProfiles: null,
     slicerSettings: null,
@@ -163,10 +158,6 @@
     appOnboardingButtonCountdownSeconds: null,
     appOnboardingStepToken: 0,
     appOnboardingDurationCache: Object.create(null),
-    importLinkPreview: null,
-    importLinkSelectedProfileId: "",
-    importLinkSelectedProfileIds: [],
-    importLinkSelectedImageUrl: "",
     fileInfoSelectedImageUrl: "",
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
@@ -219,7 +210,6 @@
     folderSelect: document.getElementById("folderSelect"),
     refreshFilesBtn: document.getElementById("refreshFilesBtn"),
     uploadBtn: document.getElementById("uploadBtn"),
-    mapperImportLinkBtn: document.getElementById("mapperImportLinkBtn"),
     mapperDesktopUploadBtn: document.getElementById("mapperDesktopUploadBtn"),
     fileInput: document.getElementById("fileInput"),
     newFolderInput: document.getElementById("newFolderInput"),
@@ -293,13 +283,12 @@
     fileInfoFilamentGrams: document.getElementById("fileInfoFilamentGrams"),
     fileInfoRowFilamentCost: document.getElementById("fileInfoRowFilamentCost"),
     fileInfoFilamentCost: document.getElementById("fileInfoFilamentCost"),
-    fileInfoNote: document.getElementById("fileInfoNote"),
-    fileInfoAttachUploadBtn: document.getElementById("fileInfoAttachUploadBtn"),
-    fileInfoAttachInput: document.getElementById("fileInfoAttachInput"),
-    fileInfoAttachDropZone: document.getElementById("fileInfoAttachDropZone"),
-    fileInfoAttachStatus: document.getElementById("fileInfoAttachStatus"),
-    fileInfoAttachList: document.getElementById("fileInfoAttachList"),
-    fileInfoSaveBtn: document.getElementById("fileInfoSaveBtn"),
+    fileInfoModelLinkFields: document.getElementById("fileInfoModelLinkFields"),
+    fileInfoModelLinkInput: document.getElementById("fileInfoModelLinkInput"),
+    fileInfoModelLinkSaveBtn: document.getElementById("fileInfoModelLinkSaveBtn"),
+    fileInfoModelLinkOpen: document.getElementById("fileInfoModelLinkOpen"),
+    fileInfoModelLinkClearBtn: document.getElementById("fileInfoModelLinkClearBtn"),
+    fileInfoModelLinkStatus: document.getElementById("fileInfoModelLinkStatus"),
     fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
     fileInfoSliceDownloadLink: document.getElementById("fileInfoSliceDownloadLink"),
     fileInfoSliceBtn: document.getElementById("fileInfoSliceBtn"),
@@ -376,16 +365,6 @@
     metadataPrevBtn: document.getElementById("metadataPrevBtn"),
     metadataNextBtn: document.getElementById("metadataNextBtn"),
     metadataSaveBtn: document.getElementById("metadataSaveBtn"),
-    uploadModelLinksModal: document.getElementById("uploadModelLinksModal"),
-    uploadModelLinksCloseBtn: document.getElementById("uploadModelLinksCloseBtn"),
-    uploadModelLinksHint: document.getElementById("uploadModelLinksHint"),
-    uploadModelLinksSummary: document.getElementById("uploadModelLinksSummary"),
-    uploadModelLinksInput: document.getElementById("uploadModelLinksInput"),
-    uploadModelLinksAddBtn: document.getElementById("uploadModelLinksAddBtn"),
-    uploadModelLinksTableBody: document.getElementById("uploadModelLinksTableBody"),
-    uploadModelLinksStatus: document.getElementById("uploadModelLinksStatus"),
-    uploadModelLinksSkipBtn: document.getElementById("uploadModelLinksSkipBtn"),
-    uploadModelLinksSaveBtn: document.getElementById("uploadModelLinksSaveBtn"),
     imagePreviewModal: document.getElementById("imagePreviewModal"),
     imagePreviewTitle: document.getElementById("imagePreviewTitle"),
     imagePreviewImg: document.getElementById("imagePreviewImg"),
@@ -525,20 +504,6 @@
     nonUserFolderStatus: document.getElementById("nonUserFolderStatus"),
     nonUserFolderCancelBtn: document.getElementById("nonUserFolderCancelBtn"),
     nonUserFolderCreateBtn: document.getElementById("nonUserFolderCreateBtn"),
-    importLinkModal: document.getElementById("importLinkModal"),
-    importLinkCloseBtn: document.getElementById("importLinkCloseBtn"),
-    importLinkCancelBtn: document.getElementById("importLinkCancelBtn"),
-    importLinkNextBtn: document.getElementById("importLinkNextBtn"),
-    importLinkInput: document.getElementById("importLinkInput"),
-    importLinkStatus: document.getElementById("importLinkStatus"),
-    importPreviewModal: document.getElementById("importPreviewModal"),
-    importPreviewCloseBtn: document.getElementById("importPreviewCloseBtn"),
-    importPreviewBackBtn: document.getElementById("importPreviewBackBtn"),
-    importPreviewUseBtn: document.getElementById("importPreviewUseBtn"),
-    importPreviewTitle: document.getElementById("importPreviewTitle"),
-    importPreviewSubtitle: document.getElementById("importPreviewSubtitle"),
-    importPreviewBody: document.getElementById("importPreviewBody"),
-    importPreviewStatus: document.getElementById("importPreviewStatus"),
     userStatus: document.getElementById("userStatus"),
     usersTableBody: document.getElementById("usersTableBody"),
     signupRequestsStatus: document.getElementById("signupRequestsStatus"),
@@ -2921,6 +2886,8 @@
       const isLink = !!(file && file.is_external_link);
       const externalUrl = String((file && file.external_url) || "").trim();
       const externalSource = String((file && file.external_source) || "").trim();
+      const modelLinkUrl = String((file && file.model_link_url) || "").trim();
+      const modelLinkSource = String((file && file.model_link_source) || "").trim();
       const attachments = Array.isArray(file.attachments) ? file.attachments : [];
       const infoParts = [];
       if (note) infoParts.push(esc(note));
@@ -2928,6 +2895,10 @@
       if (externalUrl) {
         const label = externalSource ? `Link: ${externalSource}` : "Link";
         infoParts.push(`<a href="${esc(externalUrl)}" target="_blank" rel="noopener">${esc(label)}</a>`);
+      }
+      if (modelLinkUrl) {
+        const label = modelLinkSource ? `Model-link: ${modelLinkSource}` : "Model-link";
+        infoParts.push(`<a href="${esc(modelLinkUrl)}" target="_blank" rel="noopener">${esc(label)}</a>`);
       }
       const metaParts = [
         String(file.display_path || file.folder_path || "-"),
@@ -3360,10 +3331,6 @@
     }
     if (els.mapperMenuUpload) {
       els.mapperMenuUpload.disabled = writeDisabled;
-    }
-    if (els.mapperImportLinkBtn) {
-      els.mapperImportLinkBtn.classList.toggle("hidden", on || !writeAllowed);
-      els.mapperImportLinkBtn.disabled = writeDisabled;
     }
     if (els.mapperDesktopUploadBtn) {
       els.mapperDesktopUploadBtn.classList.toggle("hidden", on || !writeAllowed);
@@ -8502,62 +8469,6 @@
     return state.files.find((f) => Number(f.id || 0) === id) || null;
   }
 
-  function renderFileAttachments(items) {
-    if (!els.fileInfoAttachList) return;
-    const list = Array.isArray(items) ? items : [];
-    if (!list.length) {
-      els.fileInfoAttachList.innerHTML = `<div class="file-info-attach-empty">Ingen billeder tilknyttet denne fil endnu.</div>`;
-      return;
-    }
-    els.fileInfoAttachList.innerHTML = `
-      <div class="file-info-attach-grid">
-        ${list
-          .map((item) => {
-            const contentUrl = String(item.content_url || "#");
-            const name = String(item.original_name || "Billede");
-            return `
-              <button class="file-info-attach-card" type="button" data-image-url="${esc(contentUrl)}" data-image-name="${esc(name)}">
-                <img src="${esc(contentUrl)}" alt="${esc(name)}" loading="lazy">
-                <div class="file-info-attach-meta">
-                  <div class="file-info-attach-name" title="${esc(name)}">${esc(name)}</div>
-                  <div class="file-info-attach-sub">${formatSize(item.file_size)} · ${formatDate(item.uploaded_at)}</div>
-                </div>
-              </button>
-            `;
-          })
-          .join("")}
-      </div>
-    `;
-  }
-
-  async function loadFileAttachments(fileId) {
-    const id = Number(fileId || 0);
-    if (!id) return;
-    const data = await api(`/api/files/${id}/attachments`);
-    if (Number(state.currentInfoFileId || 0) !== id) return;
-    state.currentFileAttachments = Array.isArray(data.items) ? data.items : [];
-    renderFileAttachments(state.currentFileAttachments);
-  }
-
-  async function uploadFileAttachments(fileId, files) {
-    const id = Number(fileId || 0);
-    const uploadFiles = Array.from(files || []).filter(Boolean);
-    if (!id || !uploadFiles.length) return;
-
-    const form = new FormData();
-    uploadFiles.forEach((file) => form.append("images", file));
-    showStatus(els.fileInfoAttachStatus, `Uploader ${uploadFiles.length} billede(r)...`, "ok");
-    const data = await api(`/api/files/${id}/attachments`, { method: "POST", body: form });
-    const created = Number(data.created || 0);
-    const skippedCount = Array.isArray(data.skipped) ? data.skipped.length : 0;
-    let message = `${created} billede(r) uploadet.`;
-    if (skippedCount > 0) {
-      message += ` ${skippedCount} blev sprunget over.`;
-    }
-    showStatus(els.fileInfoAttachStatus, message, "ok");
-    await loadFileAttachments(id);
-  }
-
   function fileInfoLinkChip(label, value) {
     const text = String(value || "").trim();
     if (!text || text === "0") return "";
@@ -8717,6 +8628,34 @@
     els.fileInfoLinkDetails.classList.remove("hidden");
   }
 
+  function renderFileInfoModelLink(file) {
+    const isExternalLink = !!(file && file.is_external_link);
+    const url = String((file && file.model_link_url) || "").trim();
+    const source = String((file && file.model_link_source) || "").trim();
+    const title = String((file && file.model_link_title) || "").trim();
+    if (els.fileInfoModelLinkFields) {
+      els.fileInfoModelLinkFields.classList.toggle("hidden", isExternalLink);
+    }
+    if (els.fileInfoModelLinkInput) {
+      els.fileInfoModelLinkInput.value = url;
+      els.fileInfoModelLinkInput.disabled = isExternalLink;
+    }
+    if (els.fileInfoModelLinkSaveBtn) {
+      els.fileInfoModelLinkSaveBtn.disabled = isExternalLink;
+      els.fileInfoModelLinkSaveBtn.textContent = "Gem link";
+    }
+    if (els.fileInfoModelLinkOpen) {
+      els.fileInfoModelLinkOpen.classList.toggle("hidden", !url || isExternalLink);
+      els.fileInfoModelLinkOpen.href = url || "#";
+      els.fileInfoModelLinkOpen.textContent = source ? `Åbn ${source}` : "Åbn link";
+      if (title) els.fileInfoModelLinkOpen.title = title;
+      else els.fileInfoModelLinkOpen.removeAttribute("title");
+    }
+    if (els.fileInfoModelLinkClearBtn) {
+      els.fileInfoModelLinkClearBtn.classList.toggle("hidden", !url || isExternalLink);
+    }
+  }
+
   function renderFileInfoDrawer(file) {
     if (!file || !els.fileInfoDrawer) return;
     const id = Number(file.id || 0);
@@ -8771,8 +8710,8 @@
     }
 
     renderFileInfoLinkDetails(file);
+    renderFileInfoModelLink(file);
 
-    if (els.fileInfoNote) els.fileInfoNote.value = String(file.note || "");
     if (els.fileInfoDownloadLink) {
       const externalUrl = String(file.external_url || "").trim();
       els.fileInfoDownloadLink.href = externalUrl || String(file.download_url || "#");
@@ -8845,9 +8784,6 @@
     state.currentInfoFileId = Number(file.id || 0);
     state.fileInfoSelectedImageUrl = "";
     renderFileInfoDrawer(file);
-    state.currentFileAttachments = [];
-    renderFileAttachments([]);
-    showStatus(els.fileInfoAttachStatus, "");
 
     if (state.infoDrawerHideTimer) {
       clearTimeout(state.infoDrawerHideTimer);
@@ -8869,19 +8805,12 @@
       });
     }
 
-    try {
-      await loadFileAttachments(state.currentInfoFileId);
-    } catch (err) {
-      showStatus(els.fileInfoAttachStatus, err.message || "Kunne ikke hente billeder", "error");
-    }
   }
 
   function closeFileInfoDrawer() {
     state.currentInfoFileId = 0;
     state.fileInfoSelectedImageUrl = "";
-    state.currentFileAttachments = [];
-    renderFileAttachments([]);
-    showStatus(els.fileInfoAttachStatus, "");
+    showStatus(els.fileInfoModelLinkStatus, "");
     if (els.fileInfoDrawer) {
       els.fileInfoDrawer.classList.remove("open");
       els.fileInfoDrawer.setAttribute("aria-hidden", "true");
@@ -8902,13 +8831,43 @@
     }, 200);
   }
 
-  async function saveCurrentFileInfo() {
+  async function saveCurrentFileModelLink(options = {}) {
     const id = Number(state.currentInfoFileId || 0);
     if (!id) return;
-    const note = String((els.fileInfoNote && els.fileInfoNote.value) || "");
-    await api(`/api/files/${id}/metadata`, { method: "PATCH", body: { note } });
-    showStatus(els.uploadStatus, "Bemærkning gemt.", "ok");
-    await loadFiles();
+    const clear = !!(options && options.clear);
+    const url = clear ? "" : String((els.fileInfoModelLinkInput && els.fileInfoModelLinkInput.value) || "").trim();
+    if (url && !/^https?:\/\//i.test(url)) {
+      showStatus(els.fileInfoModelLinkStatus, "Linket skal starte med http:// eller https://.", "error");
+      if (els.fileInfoModelLinkInput) els.fileInfoModelLinkInput.focus();
+      return;
+    }
+    if (els.fileInfoModelLinkSaveBtn) {
+      els.fileInfoModelLinkSaveBtn.disabled = true;
+      els.fileInfoModelLinkSaveBtn.textContent = "Gemmer...";
+    }
+    if (els.fileInfoModelLinkClearBtn) els.fileInfoModelLinkClearBtn.disabled = true;
+    try {
+      const data = await api(`/api/files/${id}/model-link`, {
+        method: "PATCH",
+        body: { url },
+      });
+      if (data && data.item) {
+        const idx = state.files.findIndex((file) => Number(file && file.id ? file.id : 0) === id);
+        if (idx >= 0) state.files[idx] = data.item;
+      }
+      await loadFiles();
+      const refreshed = fileById(id);
+      if (refreshed) renderFileInfoDrawer(refreshed);
+      showStatus(els.fileInfoModelLinkStatus, url ? "Model-link gemt." : "Model-link fjernet.", "ok");
+    } catch (err) {
+      showStatus(els.fileInfoModelLinkStatus, err.message || "Kunne ikke gemme model-link", "error");
+    } finally {
+      if (els.fileInfoModelLinkSaveBtn) {
+        els.fileInfoModelLinkSaveBtn.disabled = false;
+        els.fileInfoModelLinkSaveBtn.textContent = "Gem link";
+      }
+      if (els.fileInfoModelLinkClearBtn) els.fileInfoModelLinkClearBtn.disabled = false;
+    }
   }
 
   async function sliceFileById(fileId, profileSelection = null) {
@@ -9439,202 +9398,6 @@
     return resolved;
   }
 
-  function parseModelLinkText(value) {
-    const seen = new Set();
-    return String(value || "")
-      .split(/[\s,]+/)
-      .map((part) => part.trim())
-      .filter((part) => {
-        if (!part || seen.has(part)) return false;
-        if (!/^https?:\/\//i.test(part)) return false;
-        seen.add(part);
-        return true;
-      });
-  }
-
-  function renderUploadModelLinksList() {
-    if (!els.uploadModelLinksTableBody) return;
-    const urls = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls : [];
-    if (!urls.length) {
-      els.uploadModelLinksTableBody.innerHTML = `<tr><td colspan="2" class="hint">Ingen links tilføjet endnu.</td></tr>`;
-      return;
-    }
-    els.uploadModelLinksTableBody.innerHTML = urls
-      .map((url, index) => `
-        <tr>
-          <td><input class="input upload-model-link-input" type="text" readonly value="${esc(url)}"></td>
-          <td>
-            <button class="btn danger small" type="button" data-upload-model-link-action="remove" data-link-index="${index}">Fjern</button>
-          </td>
-        </tr>
-      `)
-      .join("");
-  }
-
-  function updateUploadModelLinksButton() {
-    if (!els.uploadModelLinksSaveBtn) return;
-    const urls = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls : [];
-    const count = urls.length;
-    els.uploadModelLinksSaveBtn.textContent = count ? `Gem ${count} link${count === 1 ? "" : "s"} og fortsæt` : "Fortsæt";
-  }
-
-  function addUploadModelLinksFromInput() {
-    const rawText = String((els.uploadModelLinksInput && els.uploadModelLinksInput.value) || "").trim();
-    if (!rawText) return false;
-
-    const urls = parseModelLinkText(rawText);
-    if (!urls.length) {
-      showStatus(els.uploadModelLinksStatus, "Indsæt et link der starter med http:// eller https://.", "error");
-      if (els.uploadModelLinksInput) els.uploadModelLinksInput.focus();
-      return false;
-    }
-
-    const current = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls : [];
-    const seen = new Set(current);
-    const added = [];
-    urls.forEach((url) => {
-      if (seen.has(url)) return;
-      seen.add(url);
-      added.push(url);
-    });
-
-    if (!added.length) {
-      showStatus(els.uploadModelLinksStatus, urls.length === 1 ? "Linket er allerede på listen." : "Linksene er allerede på listen.", "error");
-      if (els.uploadModelLinksInput) els.uploadModelLinksInput.select();
-      return false;
-    }
-
-    state.uploadModelLinksUrls = current.concat(added);
-    if (els.uploadModelLinksInput) {
-      els.uploadModelLinksInput.value = "";
-      els.uploadModelLinksInput.focus();
-    }
-    renderUploadModelLinksList();
-    updateUploadModelLinksButton();
-    showStatus(
-      els.uploadModelLinksStatus,
-      added.length === 1 ? "Link tilføjet til listen." : `${added.length} links tilføjet til listen.`,
-      "ok",
-    );
-    return true;
-  }
-
-  function removeUploadModelLinkAt(index) {
-    const urls = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls.slice() : [];
-    const idx = Number(index);
-    if (!Number.isInteger(idx) || idx < 0 || idx >= urls.length) return;
-    urls.splice(idx, 1);
-    state.uploadModelLinksUrls = urls;
-    renderUploadModelLinksList();
-    updateUploadModelLinksButton();
-    showStatus(els.uploadModelLinksStatus, "Link fjernet fra listen.", "ok");
-  }
-
-  function settleUploadModelLinks(result = {}) {
-    const resolver = state.uploadModelLinksResolver;
-    state.uploadModelLinksResolver = null;
-    state.uploadModelLinksFolder = "";
-    state.uploadModelLinksFiles = [];
-    state.uploadModelLinksUrls = [];
-    if (els.uploadModelLinksModal) els.uploadModelLinksModal.classList.add("hidden");
-    if (els.uploadModelLinksInput) els.uploadModelLinksInput.value = "";
-    renderUploadModelLinksList();
-    showStatus(els.uploadModelLinksStatus, "");
-    if (els.uploadModelLinksSaveBtn) {
-      els.uploadModelLinksSaveBtn.disabled = false;
-      delete els.uploadModelLinksSaveBtn.dataset.busy;
-      updateUploadModelLinksButton();
-    }
-    if (typeof resolver === "function") resolver(result || {});
-  }
-
-  function openUploadModelLinksModal(files, folder) {
-    const list = Array.isArray(files) ? files : [];
-    const targetFolder = normalizeFolderPath(folder || "");
-    if (!els.uploadModelLinksModal || !targetFolder) {
-      return Promise.resolve({ savedCount: 0 });
-    }
-
-    state.uploadModelLinksFolder = targetFolder;
-    state.uploadModelLinksFiles = list;
-    state.uploadModelLinksUrls = [];
-    const count = list.length;
-    if (els.uploadModelLinksHint) {
-      els.uploadModelLinksHint.textContent = count === 1
-        ? "Tilføj links til modellen, hvis projektet skal have en samlet reference."
-        : "Tilføj links til modellerne, hvis projektet skal have en samlet reference.";
-    }
-    if (els.uploadModelLinksSummary) {
-      const fileWord = count === 1 ? "fil" : "filer";
-      els.uploadModelLinksSummary.textContent = `${count} ${fileWord} uploadet til ${targetFolder}`;
-    }
-    if (els.uploadModelLinksInput) els.uploadModelLinksInput.value = "";
-    renderUploadModelLinksList();
-    showStatus(els.uploadModelLinksStatus, "");
-    if (els.uploadModelLinksSaveBtn) {
-      els.uploadModelLinksSaveBtn.disabled = false;
-      delete els.uploadModelLinksSaveBtn.dataset.busy;
-      updateUploadModelLinksButton();
-    }
-    els.uploadModelLinksModal.classList.remove("hidden");
-    window.setTimeout(() => {
-      if (els.uploadModelLinksInput) els.uploadModelLinksInput.focus();
-    }, 0);
-
-    return new Promise((resolve) => {
-      state.uploadModelLinksResolver = resolve;
-    });
-  }
-
-  async function saveUploadModelLinksAndContinue() {
-    const rawText = String((els.uploadModelLinksInput && els.uploadModelLinksInput.value) || "").trim();
-    if (rawText) {
-      showStatus(els.uploadModelLinksStatus, "Tilføj linket til listen først, eller ryd feltet.", "error");
-      if (els.uploadModelLinksInput) els.uploadModelLinksInput.focus();
-      return;
-    }
-
-    const urls = Array.isArray(state.uploadModelLinksUrls) ? state.uploadModelLinksUrls.slice() : [];
-    if (!urls.length) {
-      settleUploadModelLinks({ savedCount: 0 });
-      return;
-    }
-
-    const folder = normalizeFolderPath(state.uploadModelLinksFolder || "");
-    if (!folder) {
-      showStatus(els.uploadModelLinksStatus, "Mappen mangler.", "error");
-      return;
-    }
-    if (els.uploadModelLinksSaveBtn && els.uploadModelLinksSaveBtn.dataset.busy === "1") return;
-    if (els.uploadModelLinksSaveBtn) {
-      els.uploadModelLinksSaveBtn.dataset.busy = "1";
-      els.uploadModelLinksSaveBtn.disabled = true;
-      els.uploadModelLinksSaveBtn.textContent = "Gemmer...";
-    }
-    showStatus(els.uploadModelLinksStatus, `Gemmer ${urls.length} link${urls.length === 1 ? "" : "s"}...`, "ok");
-
-    try {
-      const data = await api("/api/upload/model-links", {
-        method: "POST",
-        body: { folder, urls },
-      });
-      const savedCount = Math.max(0, Number((data && data.saved_count) || 0));
-      const skipped = Array.isArray(data && data.skipped) ? data.skipped.length : 0;
-      const skippedPart = skipped ? ` · ${skipped} sprunget over` : "";
-      if (savedCount > 0) {
-        showStatus(els.uploadStatus, `${savedCount} model-link${savedCount === 1 ? "" : "s"} gemt i mappen${skippedPart}.`, "ok");
-      }
-      settleUploadModelLinks({ savedCount, skipped });
-    } catch (err) {
-      showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme links", "error");
-      if (els.uploadModelLinksSaveBtn) {
-        els.uploadModelLinksSaveBtn.disabled = false;
-        delete els.uploadModelLinksSaveBtn.dataset.busy;
-        updateUploadModelLinksButton();
-      }
-    }
-  }
-
   function getMetadataCurrentItem() {
     if (!Array.isArray(state.pendingMetadata) || !state.pendingMetadata.length) return null;
     const lastIndex = state.pendingMetadata.length - 1;
@@ -9654,21 +9417,19 @@
   function syncMetadataModeUi() {
     const printMode = isPrintReadyMetadataMode();
     if (els.metadataModal) {
-      els.metadataModal.classList.toggle("metadata-note-only", !printMode);
+      els.metadataModal.classList.toggle("metadata-note-only", false);
     }
     if (els.metadataModalTitle) {
-      els.metadataModalTitle.textContent = printMode ? "Printdetaljer pr. fil" : "Tilføj bemærkning og billeder";
+      els.metadataModalTitle.textContent = "Printdetaljer pr. fil";
     }
     if (els.metadataModalHint) {
-      els.metadataModalHint.textContent = printMode
-        ? "Tjek hver fil før projektet sendes til print."
-        : "Skriv en bemærkning og tilføj billeder til den uploadede fil.";
+      els.metadataModalHint.textContent = "Tjek hver fil før projektet sendes til print.";
     }
     if (els.metadataSaveBtn) {
-      els.metadataSaveBtn.textContent = printMode ? "Gem og se projekt" : "Gem";
+      els.metadataSaveBtn.textContent = "Gem og se projekt";
     }
     if (els.metadataCancelBtn) {
-      els.metadataCancelBtn.textContent = printMode ? "Spring over og se projekt" : "Spring over";
+      els.metadataCancelBtn.textContent = "Spring over og se projekt";
       els.metadataCancelBtn.classList.toggle("hidden", printMode);
     }
   }
@@ -9826,6 +9587,7 @@
   function openMetadataModal(files, options = {}) {
     const list = Array.isArray(files) ? files : [];
     const mode = String((options && options.mode) || "upload") === "print-ready" ? "print-ready" : "upload";
+    if (mode !== "print-ready") return false;
     state.metadataMode = mode;
     state.metadataProjectId = Number((options && options.projectId) || 0);
     state.metadataContinueProject = (options && options.continueProject) || null;
@@ -9968,36 +9730,28 @@
     }
 
     persistMetadataStepInputs();
-    if (isPrintReadyMetadataMode()) {
-      const projectId = Number(state.metadataProjectId || 0);
-      if (!projectId) throw new Error("Projektet mangler");
-      const items = state.pendingMetadata.map((file) => {
-        const scaleUpEnabled = !!file.scale_up_enabled;
-        return {
-          project_file_id: Number(file.project_file_id || file.id || 0),
-          note: String(file.note || ""),
-          quantity: Math.max(1, Number(file.quantity || 1) || 1),
-          scale_up_enabled: scaleUpEnabled,
-          scale_up_value: scaleUpEnabled ? normalizeScaleUpValue(file.scale_up_value) : "",
-          scale_up_unit: scaleUpUnit(file.scale_up_unit),
-        };
-      });
-      const data = await api(`/api/print-ready/${projectId}/metadata-batch`, { method: "POST", body: { items } });
-      const project = data && data.project ? data.project : state.metadataContinueProject;
-      state.metadataContinueProject = project;
-      closeMetadataModal({ continueFlow: true });
-      showStatus(els.uploadStatus, "Printdetaljer gemt.", "ok");
+    if (!isPrintReadyMetadataMode()) {
+      closeMetadataModal({ continueFlow: false });
       return;
     }
-
-    const items = state.pendingMetadata.map((file) => ({
-      file_id: metadataAttachmentFileId(file),
-      note: String(file.note || ""),
-    }));
-    await api("/api/files/metadata-batch", { method: "POST", body: { items } });
-    closeMetadataModal({ continueFlow: false });
-    await loadFiles();
-    showStatus(els.uploadStatus, "Bemærkning gemt for de uploadede filer.", "ok");
+    const projectId = Number(state.metadataProjectId || 0);
+    if (!projectId) throw new Error("Projektet mangler");
+    const items = state.pendingMetadata.map((file) => {
+      const scaleUpEnabled = !!file.scale_up_enabled;
+      return {
+        project_file_id: Number(file.project_file_id || file.id || 0),
+        note: String(file.note || ""),
+        quantity: Math.max(1, Number(file.quantity || 1) || 1),
+        scale_up_enabled: scaleUpEnabled,
+        scale_up_value: scaleUpEnabled ? normalizeScaleUpValue(file.scale_up_value) : "",
+        scale_up_unit: scaleUpUnit(file.scale_up_unit),
+      };
+    });
+    const data = await api(`/api/print-ready/${projectId}/metadata-batch`, { method: "POST", body: { items } });
+    const project = data && data.project ? data.project : state.metadataContinueProject;
+    state.metadataContinueProject = project;
+    closeMetadataModal({ continueFlow: true });
+    showStatus(els.uploadStatus, "Printdetaljer gemt.", "ok");
   }
 
   async function _readDirectoryEntriesRecursive(entry, basePath) {
@@ -10290,11 +10044,11 @@
       }
       await loadFiles();
       if (resolved.length) {
-        const linkResult = await openUploadModelLinksModal(resolved, firstFolder || currentFolder() || state.homeFolder || "");
-        if (Number(linkResult && linkResult.savedCount ? linkResult.savedCount : 0) > 0) {
-          await loadFiles();
-        }
-        openMetadataModal(resolved, { mode: "upload" });
+        showStatus(
+          els.uploadStatus,
+          `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}. Tilføj eventuelt model-link via fil-info på den enkelte fil.`,
+          uploadUiState.failedFiles ? "error" : "ok"
+        );
       }
     } else {
       showStatus(els.uploadStatus, uploadWasStopped ? "Upload stoppet." : "Ingen filer blev uploadet.", uploadWasStopped ? "ok" : "error");
@@ -10899,13 +10653,17 @@
     const scale = scaleUpLabel(file);
     const externalUrl = String((file && file.external_url) || "").trim();
     const externalSource = String((file && file.external_source) || "").trim();
-    if (!note && !scale && !externalUrl) return `<span class="hint">-</span>`;
+    const modelLinkUrl = String((file && file.model_link_url) || "").trim();
+    const modelLinkSource = String((file && file.model_link_source) || "").trim();
+    if (!note && !scale && !externalUrl && !modelLinkUrl) return `<span class="hint">-</span>`;
     const linkLabel = externalSource ? `Åbn link · ${externalSource}` : "Åbn link";
+    const modelLinkLabel = modelLinkSource ? `Åbn model-link · ${modelLinkSource}` : "Åbn model-link";
     return `
       <div class="print-ready-file-info">
         ${note ? `<div>${esc(note)}</div>` : ""}
         ${scale ? `<div class="print-ready-scale-up">Større: ${esc(scale)}</div>` : ""}
         ${externalUrl ? `<div><a href="${esc(externalUrl)}" target="_blank" rel="noopener">${esc(linkLabel)}</a></div>` : ""}
+        ${modelLinkUrl ? `<div><a href="${esc(modelLinkUrl)}" target="_blank" rel="noopener">${esc(modelLinkLabel)}</a></div>` : ""}
       </div>
     `;
   }
@@ -14651,285 +14409,6 @@
     if (els.fileInput) els.fileInput.click();
   }
 
-  function importLinkTargetFolder() {
-    return currentFolder() || state.homeFolder || "";
-  }
-
-  function openImportLinkModal() {
-    if (state.selectMode) return;
-    if (!currentFolderAllowsUserWrites()) {
-      showStatus(els.uploadStatus, "Links kan kun gemmes inde i en datomappe.", "error");
-      return;
-    }
-    if (!els.importLinkModal) return;
-    showStatus(els.importLinkStatus, "");
-    if (els.importLinkInput) {
-      els.importLinkInput.value = "";
-    }
-    els.importLinkModal.classList.remove("hidden");
-    window.setTimeout(() => {
-      if (els.importLinkInput) els.importLinkInput.focus();
-    }, 0);
-  }
-
-  function closeImportLinkModal() {
-    if (els.importLinkModal) els.importLinkModal.classList.add("hidden");
-    showStatus(els.importLinkStatus, "");
-  }
-
-  function closeImportPreviewModal() {
-    if (els.importPreviewModal) els.importPreviewModal.classList.add("hidden");
-    showStatus(els.importPreviewStatus, "");
-  }
-
-  function formatImportDuration(seconds) {
-    const total = Math.max(0, Number(seconds || 0));
-    if (!Number.isFinite(total) || total <= 0) return "-";
-    const hours = total / 3600;
-    if (hours >= 1) return `${hours.toFixed(hours >= 10 ? 0 : 1)} t`;
-    const minutes = Math.max(1, Math.round(total / 60));
-    return `${minutes} min`;
-  }
-
-  function formatImportNumber(value) {
-    const n = Number(value || 0);
-    if (!Number.isFinite(n) || n <= 0) return "0";
-    return n.toLocaleString("da-DK");
-  }
-
-  function importMetaChip(label, value) {
-    const text = String(value || "").trim();
-    if (!text || text === "0") return "";
-    return `<span class="import-meta-chip"><strong>${esc(label)}</strong>${esc(text)}</span>`;
-  }
-
-  function renderImportPreview(preview) {
-    if (!els.importPreviewBody) return;
-    const data = preview && typeof preview === "object" ? preview : {};
-    const profiles = Array.isArray(data.profiles) ? data.profiles : [];
-    const files = Array.isArray(data.files) ? data.files : profiles;
-    const sourceKey = String(data.source || "").trim().toLowerCase();
-    const collapseProfilesByDefault = sourceKey === "makerworld";
-    state.importLinkSelectedProfileIds = [];
-    state.importLinkSelectedProfileId = "";
-    if (els.importPreviewTitle) {
-      els.importPreviewTitle.textContent = String(data.title || "Gem link");
-    }
-    if (els.importPreviewSubtitle) {
-      const creator = String(data.creator || "").trim();
-      const source = String(data.source_label || "Link").trim();
-      els.importPreviewSubtitle.textContent = creator ? `${source} · ${creator}` : source;
-    }
-    if (els.importPreviewUseBtn) {
-      els.importPreviewUseBtn.disabled = !String(data.url || "").trim();
-      els.importPreviewUseBtn.textContent = "Gem fil-link";
-    }
-
-    const images = Array.isArray(data.image_urls) ? data.image_urls.filter(Boolean).slice(0, 12) : [];
-    const cover = String(data.cover_url || "").trim();
-    const galleryImages = [];
-    if (cover) galleryImages.push(cover);
-    images.forEach((url) => {
-      const normalized = String(url || "").trim();
-      if (!normalized || galleryImages.includes(normalized)) return;
-      galleryImages.push(normalized);
-    });
-    const selectedImage = String(state.importLinkSelectedImageUrl || "").trim();
-    const activeImage = galleryImages.includes(selectedImage) ? selectedImage : (galleryImages[0] || "");
-    state.importLinkSelectedImageUrl = activeImage;
-    const imageHtml = activeImage
-      ? `
-        <div class="import-preview-gallery">
-          <button class="import-preview-cover-btn" type="button" data-import-preview-open="${esc(activeImage)}" aria-label="Åbn billede i stor visning">
-            <img class="import-preview-cover" src="${esc(activeImage)}" alt="${esc(data.title || "Model billede")}" loading="lazy" decoding="async">
-          </button>
-          <div class="import-preview-thumbs">
-            ${galleryImages.map((url, index) => {
-              const isActive = url === activeImage;
-              return `<button class="import-preview-thumb-btn${isActive ? " is-active" : ""}" type="button" data-import-preview-image="${esc(url)}" aria-label="Vis billede ${index + 1}"><img src="${esc(url)}" alt="" loading="lazy" decoding="async"></button>`;
-            }).join("")}
-          </div>
-        </div>
-      `
-      : `<div class="import-preview-empty-media">Intet billede fundet</div>`;
-
-    const stats = data.stats || {};
-    const statsHtml = [
-      importMetaChip("Downloads", formatImportNumber(stats.downloads)),
-      importMetaChip("Print", formatImportNumber(stats.prints)),
-      importMetaChip("Likes", formatImportNumber(stats.likes)),
-      importMetaChip("Kommentarer", formatImportNumber(stats.comments)),
-    ].join("");
-    const license = data.license || {};
-    const categoryHtml = (Array.isArray(data.categories) ? data.categories : [])
-      .map((item) => `<span class="import-category">${esc(item)}</span>`)
-      .join("");
-    const description = String(data.description || "Ingen beskrivelse fundet.").trim();
-    const targetFolder = importLinkTargetFolder();
-    const filesCount = Number.isFinite(Number(data.files_count))
-      ? Number(data.files_count)
-      : files.length;
-    const filesOverviewLabel = String(data.files_overview_label || "Filer fundet").trim() || "Filer fundet";
-    const filesSectionTitle = String(data.files_section_title || "Filer på linket").trim() || "Filer på linket";
-    const filesEmptyText = String(data.files_empty_text || "Ingen filer fundet på linket.").trim() || "Ingen filer fundet på linket.";
-    const profilesCount = Number.isFinite(Number(data.profiles_count))
-      ? Number(data.profiles_count)
-      : profiles.length;
-    const profilesOverviewLabel = String(data.profiles_overview_label || "Profiler fundet").trim() || "Profiler fundet";
-    const profilesSectionTitle = String(data.profiles_section_title || "Printprofiler på linket").trim() || "Printprofiler på linket";
-    const profilesEmptyText = String(data.profiles_empty_text || "Ingen printprofiler fundet på linket.").trim() || "Ingen printprofiler fundet på linket.";
-
-    const renderImportCards = (items, fallbackTitle, emptyText) => {
-      if (!Array.isArray(items) || !items.length) {
-        return `<div class="empty-note">${esc(emptyText)}</div>`;
-      }
-      return items.map((item, index) => {
-        const profile = item && typeof item === "object" ? item : {};
-        const id = String(profile.id || "");
-        const settings = profile.settings && typeof profile.settings === "object" ? profile.settings : {};
-        const filamentHtml = (Array.isArray(profile.filaments) ? profile.filaments : [])
-          .slice(0, 4)
-          .map((filament) => {
-            const color = String(filament.color || "").trim();
-            const type = String(filament.type || "Filament").trim();
-            const used = String(filament.used_g || "").trim();
-            return `<span class="import-filament"><span style="background:${esc(color || "#6b7280")}"></span>${esc(type)}${used ? ` ${esc(used)}g` : ""}</span>`;
-          })
-          .join("");
-        const printers = (Array.isArray(profile.compatible_printers) ? profile.compatible_printers : []).slice(0, 4).join(", ");
-        const coverUrl = String(profile.cover_url || (Array.isArray(profile.picture_urls) && profile.picture_urls[0]) || "").trim();
-        const fileType = String(profile.file_type || "").trim();
-        const titleText = String(profile.title || "").trim();
-        const titleExt = (titleText.match(/\.([a-z0-9]+)$/i) || [])[1] || "";
-        const displayFileType = formatFileTypeLabel(fileType || titleExt || "");
-        const placeholderLabel = formatFileTypeLabel(fileType || titleExt || "", "FIL");
-        const fileSize = Number(profile.file_size || 0);
-        const plateCount = Number(profile.plate_count || 0);
-        return `
-          <article class="import-profile-card readonly"${id ? ` data-profile-id="${esc(id)}"` : ""}>
-            ${coverUrl ? `<img class="import-profile-thumb" src="${esc(coverUrl)}" alt="" loading="lazy" decoding="async">` : `<div class="import-profile-thumb placeholder">${esc(placeholderLabel)}</div>`}
-            <div class="import-profile-main">
-              <div class="import-profile-title">${esc(profile.title || fallbackTitle)}</div>
-              <div class="import-profile-meta">
-                ${profile.is_designer ? `<span>Designer</span>` : ""}
-                ${displayFileType ? `<span>${esc(displayFileType)}</span>` : ""}
-                ${fileSize > 0 ? `<span>${esc(formatSize(fileSize))}</span>` : ""}
-                ${Number(profile.print_time_seconds || 0) > 0 ? `<span>${esc(formatImportDuration(profile.print_time_seconds))}</span>` : ""}
-                ${plateCount > 0 ? `<span>${esc(formatImportNumber(plateCount))} plade${plateCount === 1 ? "" : "r"}</span>` : ""}
-                ${profile.rating ? `<span>${esc(profile.rating)} (${esc(formatImportNumber(profile.rating_count))})</span>` : ""}
-              </div>
-              <div class="import-profile-settings">
-                ${settings.layer_height ? `<span>${esc(settings.layer_height)}mm lag</span>` : ""}
-                ${settings.nozzle ? `<span>${esc(settings.nozzle)}</span>` : ""}
-                ${settings.wall_loops ? `<span>${esc(settings.wall_loops)} vægge</span>` : ""}
-                ${settings.infill ? `<span>${esc(settings.infill)} infill</span>` : ""}
-                ${profile.need_ams ? `<span>AMS</span>` : ""}
-              </div>
-              ${filamentHtml ? `<div class="import-filaments">${filamentHtml}</div>` : ""}
-              ${printers ? `<div class="import-profile-printers">${esc(printers)}</div>` : ""}
-            </div>
-          </article>
-        `;
-      }).join("");
-    };
-
-    const filesHtml = renderImportCards(files, "Fil", filesEmptyText);
-    const profileHtml = renderImportCards(profiles, "Printprofil", profilesEmptyText);
-
-    const overviewHtml = `
-      <div class="import-link-overview">
-        <div><span>Gemmes i</span><strong>${esc(targetFolder || "-")}</strong></div>
-        <div><span>Kilde</span><strong>${esc(data.source_label || "Link")}</strong></div>
-        <div><span>${esc(filesOverviewLabel)}</span><strong>${esc(formatImportNumber(filesCount))}</strong></div>
-        <div><span>${esc(profilesOverviewLabel)}</span><strong>${esc(formatImportNumber(profilesCount))}</strong></div>
-      </div>
-    `;
-
-    els.importPreviewBody.innerHTML = `
-      <div class="import-preview-grid">
-        ${imageHtml}
-        <div class="import-preview-summary">
-          <div class="import-preview-source">${esc(data.source_label || "Link")}</div>
-          <h4>${esc(data.title || "Model fra link")}</h4>
-          ${data.creator ? `<div class="import-preview-creator">Af ${esc(data.creator)}</div>` : ""}
-          ${statsHtml ? `<div class="import-meta-chips">${statsHtml}</div>` : ""}
-          ${categoryHtml ? `<div class="import-categories">${categoryHtml}</div>` : ""}
-          <div class="import-license">
-            <div class="import-section-title">Licens</div>
-            <div class="import-license-value">${esc(license.label || license.code || "Ukendt licens")}</div>
-          </div>
-        </div>
-      </div>
-      <div class="import-preview-section">
-        <div class="import-section-title">Overblik</div>
-        ${overviewHtml}
-      </div>
-      <div class="import-preview-section">
-        <div class="import-section-title">Beskrivelse</div>
-        <div class="import-description">${esc(description).replace(/\n/g, "<br>")}</div>
-      </div>
-      <div class="import-preview-section">
-        <div class="import-section-title">${esc(filesSectionTitle)}</div>
-        <div class="import-profiles">${filesHtml}</div>
-      </div>
-      <div class="import-preview-section">
-        <details class="import-profiles-accordion"${collapseProfilesByDefault ? "" : " open"}>
-          <summary>
-            <span>${esc(profilesSectionTitle)}</span>
-            <span>${esc(formatImportNumber(profilesCount))}</span>
-          </summary>
-          <div class="import-profiles">${profileHtml}</div>
-        </details>
-      </div>
-    `;
-  }
-
-  function openImportPreviewModal(preview) {
-    state.importLinkPreview = preview || null;
-    state.importLinkSelectedProfileIds = [];
-    state.importLinkSelectedProfileId = "";
-    state.importLinkSelectedImageUrl = "";
-    renderImportPreview(preview);
-    showStatus(els.importPreviewStatus, "");
-    if (els.importPreviewModal) els.importPreviewModal.classList.remove("hidden");
-  }
-
-  async function fetchImportLinkPreview() {
-    if (!els.importLinkInput) return;
-    const url = String(els.importLinkInput.value || "").trim();
-    if (!url) {
-      showStatus(els.importLinkStatus, "Indsæt et link først.", "error");
-      return;
-    }
-    if (!currentFolderAllowsUserWrites()) {
-      showStatus(els.importLinkStatus, "Links kan kun gemmes inde i en datomappe.", "error");
-      return;
-    }
-    if (els.importLinkNextBtn) {
-      els.importLinkNextBtn.disabled = true;
-      els.importLinkNextBtn.textContent = "Henter...";
-    }
-    showStatus(els.importLinkStatus, "Henter oplysninger...", "ok");
-    try {
-      const data = await api("/api/import-link/preview", {
-        method: "POST",
-        body: {
-          url,
-          folder: importLinkTargetFolder(),
-        },
-      });
-      closeImportLinkModal();
-      openImportPreviewModal(data.preview || {});
-    } catch (err) {
-      showStatus(els.importLinkStatus, err.message || "Kunne ikke hente link-oplysninger", "error");
-    } finally {
-      if (els.importLinkNextBtn) {
-        els.importLinkNextBtn.disabled = false;
-        els.importLinkNextBtn.textContent = "Næste";
-      }
-    }
-  }
-
   async function onMapperMenuAction(action) {
     const cmd = String(action || "").trim().toLowerCase();
     if (!cmd) return;
@@ -15300,12 +14779,6 @@
       });
     }
 
-    if (els.mapperImportLinkBtn) {
-      els.mapperImportLinkBtn.addEventListener("click", () => {
-        openImportLinkModal();
-      });
-    }
-
     if (els.mapperDropZone) {
       const dropZone = els.mapperDropZone;
       dropZone.addEventListener("click", () => {
@@ -15544,29 +15017,33 @@
         );
       });
     }
-    if (els.fileInfoSaveBtn) {
-      els.fileInfoSaveBtn.addEventListener("click", () => {
-        saveCurrentFileInfo().catch((err) => {
-          showStatus(els.uploadStatus, err.message || "Kunne ikke gemme bemærkning", "error");
+    if (els.fileInfoModelLinkSaveBtn) {
+      els.fileInfoModelLinkSaveBtn.addEventListener("click", () => {
+        saveCurrentFileModelLink().catch((err) => {
+          showStatus(els.fileInfoModelLinkStatus, err.message || "Kunne ikke gemme model-link", "error");
         });
       });
     }
-    const queueInfoAttachmentUpload = (files) => {
-      const id = Number(state.currentInfoFileId || 0);
-      const list = Array.from(files || []);
-      if (!id || !list.length) {
-        if (els.fileInfoAttachInput) els.fileInfoAttachInput.value = "";
-        return;
-      }
-      uploadFileAttachments(id, list)
-        .catch((err) => {
-          showStatus(els.fileInfoAttachStatus, err.message || "Kunne ikke uploade billeder", "error");
-        })
-        .finally(() => {
-          if (els.fileInfoAttachInput) els.fileInfoAttachInput.value = "";
+    if (els.fileInfoModelLinkClearBtn) {
+      els.fileInfoModelLinkClearBtn.addEventListener("click", () => {
+        if (els.fileInfoModelLinkInput) els.fileInfoModelLinkInput.value = "";
+        saveCurrentFileModelLink({ clear: true }).catch((err) => {
+          showStatus(els.fileInfoModelLinkStatus, err.message || "Kunne ikke fjerne model-link", "error");
         });
-    };
-
+      });
+    }
+    if (els.fileInfoModelLinkInput) {
+      els.fileInfoModelLinkInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        saveCurrentFileModelLink().catch((err) => {
+          showStatus(els.fileInfoModelLinkStatus, err.message || "Kunne ikke gemme model-link", "error");
+        });
+      });
+      els.fileInfoModelLinkInput.addEventListener("input", () => {
+        showStatus(els.fileInfoModelLinkStatus, "");
+      });
+    }
     const onAttachmentCardClick = (event) => {
       const card = event.target.closest(".file-info-attach-card");
       if (!card) return;
@@ -15591,59 +15068,10 @@
       });
     };
 
-    if (els.fileInfoAttachList) {
-      els.fileInfoAttachList.addEventListener("click", onAttachmentCardClick);
-    }
     if (els.metadataAttachList) {
       els.metadataAttachList.addEventListener("click", onAttachmentCardClick);
     }
 
-    if (els.fileInfoAttachUploadBtn && els.fileInfoAttachInput) {
-      els.fileInfoAttachUploadBtn.addEventListener("click", () => {
-        const id = Number(state.currentInfoFileId || 0);
-        if (!id) return;
-        els.fileInfoAttachInput.click();
-      });
-      els.fileInfoAttachInput.addEventListener("change", () => {
-        queueInfoAttachmentUpload((els.fileInfoAttachInput && els.fileInfoAttachInput.files) || []);
-      });
-    }
-
-    if (els.fileInfoAttachDropZone) {
-      const zone = els.fileInfoAttachDropZone;
-      zone.addEventListener("click", () => {
-        const id = Number(state.currentInfoFileId || 0);
-        if (!id || !els.fileInfoAttachInput) return;
-        els.fileInfoAttachInput.click();
-      });
-      zone.addEventListener("dragenter", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        globalDropDepth = 0;
-        hideGlobalDropOverlay();
-        zone.classList.add("dragover");
-      });
-      zone.addEventListener("dragover", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        globalDropDepth = 0;
-        hideGlobalDropOverlay();
-        zone.classList.add("dragover");
-      });
-      zone.addEventListener("dragleave", (event) => {
-        event.stopPropagation();
-        zone.classList.remove("dragover");
-      });
-      zone.addEventListener("drop", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        globalDropDepth = 0;
-        hideGlobalDropOverlay();
-        zone.classList.remove("dragover");
-        const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
-        queueInfoAttachmentUpload(files);
-      });
-    }
     if (els.fileInfoOpen3DBtn) {
       els.fileInfoOpen3DBtn.addEventListener("click", () => {
         const id = Number((els.fileInfoOpen3DBtn && els.fileInfoOpen3DBtn.dataset.fileId) || state.currentInfoFileId || 0);
@@ -16107,11 +15535,6 @@
         closePrintReadyModal();
         return;
       }
-      const uploadModelLinksModalOpen = !!(els.uploadModelLinksModal && !els.uploadModelLinksModal.classList.contains("hidden"));
-      if (uploadModelLinksModalOpen) {
-        settleUploadModelLinks({ savedCount: 0 });
-        return;
-      }
       const metadataModalOpen = !!(els.metadataModal && !els.metadataModal.classList.contains("hidden"));
       if (metadataModalOpen) {
         closeMetadataModal();
@@ -16272,52 +15695,6 @@
       });
     }
 
-    if (els.uploadModelLinksCloseBtn) {
-      els.uploadModelLinksCloseBtn.addEventListener("click", () => settleUploadModelLinks({ savedCount: 0 }));
-    }
-    if (els.uploadModelLinksSkipBtn) {
-      els.uploadModelLinksSkipBtn.addEventListener("click", () => settleUploadModelLinks({ savedCount: 0 }));
-    }
-    if (els.uploadModelLinksSaveBtn) {
-      els.uploadModelLinksSaveBtn.addEventListener("click", () => {
-        saveUploadModelLinksAndContinue().catch((err) => {
-          showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme links", "error");
-        });
-      });
-    }
-    if (els.uploadModelLinksAddBtn) {
-      els.uploadModelLinksAddBtn.addEventListener("click", () => {
-        addUploadModelLinksFromInput();
-      });
-    }
-    if (els.uploadModelLinksTableBody) {
-      els.uploadModelLinksTableBody.addEventListener("click", (event) => {
-        const btn = event.target && event.target.closest ? event.target.closest("[data-upload-model-link-action]") : null;
-        if (!btn) return;
-        const action = String(btn.dataset.uploadModelLinkAction || "");
-        if (action === "remove") {
-          removeUploadModelLinkAt(btn.dataset.linkIndex);
-        }
-      });
-    }
-    if (els.uploadModelLinksInput) {
-      els.uploadModelLinksInput.addEventListener("input", () => {
-        showStatus(els.uploadModelLinksStatus, "");
-      });
-      els.uploadModelLinksInput.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter") return;
-        event.preventDefault();
-        addUploadModelLinksFromInput();
-      });
-    }
-    if (els.uploadModelLinksModal) {
-      els.uploadModelLinksModal.addEventListener("click", (event) => {
-        if (event.target === els.uploadModelLinksModal || event.target.classList.contains("modal-backdrop")) {
-          settleUploadModelLinks({ savedCount: 0 });
-        }
-      });
-    }
-
     if (els.closeImagePreviewBtn) {
       els.closeImagePreviewBtn.addEventListener("click", closeImagePreviewModal);
     }
@@ -16373,126 +15750,6 @@
     if (els.shareFoldersSelect) {
       els.shareFoldersSelect.addEventListener("change", () => {
         updateShareModalSelectionSummary();
-      });
-    }
-
-    if (els.importLinkCloseBtn) {
-      els.importLinkCloseBtn.addEventListener("click", closeImportLinkModal);
-    }
-    if (els.importLinkCancelBtn) {
-      els.importLinkCancelBtn.addEventListener("click", closeImportLinkModal);
-    }
-    if (els.importLinkNextBtn) {
-      els.importLinkNextBtn.addEventListener("click", () => {
-        fetchImportLinkPreview().catch((err) => {
-          showStatus(els.importLinkStatus, err.message || "Kunne ikke hente link-oplysninger", "error");
-        });
-      });
-    }
-    if (els.importLinkInput) {
-      els.importLinkInput.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter") return;
-        event.preventDefault();
-        fetchImportLinkPreview().catch((err) => {
-          showStatus(els.importLinkStatus, err.message || "Kunne ikke hente link-oplysninger", "error");
-        });
-      });
-    }
-    if (els.importLinkModal) {
-      els.importLinkModal.addEventListener("click", (event) => {
-        if (event.target === els.importLinkModal || event.target.classList.contains("modal-backdrop")) {
-          closeImportLinkModal();
-        }
-      });
-    }
-    if (els.importPreviewCloseBtn) {
-      els.importPreviewCloseBtn.addEventListener("click", closeImportPreviewModal);
-    }
-    if (els.importPreviewBackBtn) {
-      els.importPreviewBackBtn.addEventListener("click", () => {
-        closeImportPreviewModal();
-        openImportLinkModal();
-      });
-    }
-    if (els.importPreviewUseBtn) {
-      els.importPreviewUseBtn.addEventListener("click", async () => {
-        const preview = state.importLinkPreview || {};
-        const sourceUrl = String((preview && preview.url) || "").trim();
-        const folder = importLinkTargetFolder();
-        if (!sourceUrl) {
-          showStatus(els.importPreviewStatus, "Mangler kilde-link.", "error");
-          return;
-        }
-        if (!folder) {
-          showStatus(els.importPreviewStatus, "Vælg en mappe før linket gemmes.", "error");
-          return;
-        }
-
-        if (els.importPreviewUseBtn.dataset.busy === "1") return;
-        els.importPreviewUseBtn.dataset.busy = "1";
-        els.importPreviewUseBtn.disabled = true;
-        els.importPreviewUseBtn.textContent = "Gemmer...";
-
-        const source = String((preview && preview.source_label) || "Link").trim() || "Link";
-        showStatus(els.importPreviewStatus, `Gemmer link fra ${source} i den valgte mappe...`, "ok");
-
-        try {
-          const data = await api("/api/import-link/commit", {
-            method: "POST",
-            body: {
-              url: sourceUrl,
-              folder,
-            },
-          });
-
-          const savedCount = Math.max(0, Number((data && data.saved_count) || 0));
-          showStatus(els.uploadStatus, savedCount > 0 ? `Link fra ${source} er gemt i mappen.` : "Linket blev gemt.", "ok");
-          await loadFiles();
-          closeImportPreviewModal();
-        } catch (err) {
-          const errData = err && err.data && typeof err.data === "object" ? err.data : {};
-          const details = Array.isArray(errData.details)
-            ? errData.details.map((entry) => String(entry || "").trim()).filter(Boolean)
-            : [];
-          const errMessage = String((err && err.message) || "").trim();
-          const detailText = details.length ? ` (${details.slice(0, 2).join(" | ")})` : "";
-          showStatus(els.importPreviewStatus, `${errMessage || "Kunne ikke gemme linket."}${detailText}`, "error");
-        } finally {
-          delete els.importPreviewUseBtn.dataset.busy;
-          els.importPreviewUseBtn.disabled = !String(state.importLinkPreview && state.importLinkPreview.url || "").trim();
-          els.importPreviewUseBtn.textContent = "Gem fil-link";
-        }
-      });
-    }
-    if (els.importPreviewBody) {
-      els.importPreviewBody.addEventListener("change", (event) => {
-        const input = event.target && event.target.closest ? event.target.closest('input[name="importProfiles"]') : null;
-        if (!input) return;
-        showStatus(els.importPreviewStatus, "");
-      });
-      els.importPreviewBody.addEventListener("click", (event) => {
-        const thumb = event.target && event.target.closest ? event.target.closest(".import-preview-thumb-btn") : null;
-        if (thumb) {
-          const imageUrl = String((thumb.dataset && thumb.dataset.importPreviewImage) || "").trim();
-          if (!imageUrl || imageUrl === String(state.importLinkSelectedImageUrl || "")) return;
-          state.importLinkSelectedImageUrl = imageUrl;
-          renderImportPreview(state.importLinkPreview || {});
-          return;
-        }
-
-        const cover = event.target && event.target.closest ? event.target.closest(".import-preview-cover-btn") : null;
-        if (!cover) return;
-        const imageUrl = String((cover.dataset && cover.dataset.importPreviewOpen) || "").trim();
-        if (!imageUrl) return;
-        const imageName = String((state.importLinkPreview && state.importLinkPreview.title) || "Model billede").trim() || "Model billede";
-        openImagePreviewModal(imageUrl, imageName);
-      });
-    }
-    if (els.importPreviewModal) {
-      els.importPreviewModal.addEventListener("click", (event) => {
-        if (event.target === els.importPreviewModal || event.target.classList.contains("modal-backdrop")) {
-          closeImportPreviewModal();
-        }
       });
     }
 

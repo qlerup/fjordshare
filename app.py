@@ -412,6 +412,11 @@ def print_info_with_scale(row: sqlite3.Row) -> str:
         source = _print_ready_external_source(row)
         label = f"Link ({source})" if source else "Link"
         parts.append(f"{label}: {link_url}")
+    model_link_url = _model_link_url_from_row(row)
+    if model_link_url:
+        model_source = _model_link_source_from_row(row)
+        model_label = f"Model-link ({model_source})" if model_source else "Model-link"
+        parts.append(f"{model_label}: {model_link_url}")
     return " | ".join(parts)
 
 
@@ -8604,7 +8609,10 @@ def init_db() -> None:
                 external_source TEXT,
                 external_title TEXT,
                 external_cover_url TEXT,
-                external_payload_json TEXT
+                external_payload_json TEXT,
+                model_link_url TEXT,
+                model_link_source TEXT,
+                model_link_title TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_path);
             CREATE INDEX IF NOT EXISTS idx_files_uploaded_at ON files(uploaded_at DESC);
@@ -8825,6 +8833,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE files ADD COLUMN external_cover_url TEXT")
         if "external_payload_json" not in file_cols:
             conn.execute("ALTER TABLE files ADD COLUMN external_payload_json TEXT")
+        if "model_link_url" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN model_link_url TEXT")
+        if "model_link_source" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN model_link_source TEXT")
+        if "model_link_title" not in file_cols:
+            conn.execute("ALTER TABLE files ADD COLUMN model_link_title TEXT")
         if "printed" not in file_cols:
             conn.execute("ALTER TABLE files ADD COLUMN printed INTEGER NOT NULL DEFAULT 0")
         if "printed_at" not in file_cols:
@@ -10898,6 +10912,31 @@ def _print_ready_external_cover_url(row: sqlite3.Row) -> str:
     return value[:1000]
 
 
+def _model_link_url_from_row(row: sqlite3.Row) -> str:
+    return _clean_http_url(
+        _row_value(row, "current_model_link_url", "")
+        or _row_value(row, "model_link_url", "")
+    )
+
+
+def _model_link_source_from_row(row: sqlite3.Row) -> str:
+    value = str(
+        _row_value(row, "current_model_link_source", "")
+        or _row_value(row, "model_link_source", "")
+        or ""
+    ).strip()
+    return value[:120]
+
+
+def _model_link_title_from_row(row: sqlite3.Row) -> str:
+    value = str(
+        _row_value(row, "current_model_link_title", "")
+        or _row_value(row, "model_link_title", "")
+        or ""
+    ).strip()
+    return value[:240]
+
+
 def _print_ready_display_name(row: sqlite3.Row) -> str:
     if _print_ready_external_url(row):
         title = _print_ready_external_title(row)
@@ -11282,6 +11321,9 @@ def serialize_file_row(
     external_source = str(_row_value(row, "external_source", "") or "").strip()
     external_title = str(_row_value(row, "external_title", "") or "").strip()
     external_cover_url = str(_row_value(row, "external_cover_url", "") or "").strip()
+    model_link_url = _model_link_url_from_row(row)
+    model_link_source = _model_link_source_from_row(row)
+    model_link_title = _model_link_title_from_row(row)
     is_external_link = bool(external_url)
 
     preview_model_url = ""
@@ -11342,6 +11384,9 @@ def serialize_file_row(
         "external_title": external_title,
         "external_cover_url": external_cover_url,
         "external_payload": _external_link_payload_for_client(row) if is_external_link else {},
+        "model_link_url": model_link_url,
+        "model_link_source": model_link_source,
+        "model_link_title": model_link_title,
         "content_url": content_url,
         "download_url": download_url,
         "slice_output": _serialize_slice_output_row(slice_output_row, share_token=share_token) if slice_output_row is not None else None,
@@ -11850,7 +11895,7 @@ def create_print_ready_project(
                     str(row["rel_path"] or ""),
                     display_path,
                     filename,
-                    str(row["note"] or ""),
+                    "",
                     1,
                     0,
                     "",
@@ -12053,7 +12098,10 @@ def _print_ready_file_rows(conn: sqlite3.Connection, project_id: int) -> list[sq
             f.external_url AS current_external_url,
             f.external_source AS current_external_source,
             f.external_title AS current_external_title,
-            f.external_cover_url AS current_external_cover_url
+            f.external_cover_url AS current_external_cover_url,
+            f.model_link_url AS current_model_link_url,
+            f.model_link_source AS current_model_link_source,
+            f.model_link_title AS current_model_link_title
         FROM print_ready_project_files pf
         LEFT JOIN files f ON f.id = pf.file_id
         WHERE pf.project_id=?
@@ -12157,6 +12205,9 @@ def serialize_print_ready_project(
                     "external_source": _print_ready_external_source(row) if is_external_link else "",
                     "external_title": _print_ready_external_title(row) if is_external_link else "",
                     "external_cover_url": _print_ready_external_cover_url(row) if is_external_link else "",
+                    "model_link_url": _model_link_url_from_row(row),
+                    "model_link_source": _model_link_source_from_row(row),
+                    "model_link_title": _model_link_title_from_row(row),
                     "printed": is_printed,
                     "printed_at": str(row["current_printed_at"] or ""),
                     "printed_by": str(row["current_printed_by"] or ""),
@@ -12630,6 +12681,20 @@ def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attach
                         f"Sti: {display_folder or '.'}",
                         f"Kilde: {source or '-'}",
                         f"URL: {link_url}",
+                        "",
+                    ]
+                )
+            model_link_url = _model_link_url_from_row(row)
+            if model_link_url:
+                model_source = _model_link_source_from_row(row)
+                model_title = _model_link_title_from_row(row)
+                link_summary_lines.extend(
+                    [
+                        f"Fil: {display_name}",
+                        f"Sti: {display_folder or '.'}",
+                        f"Model-link: {model_title or model_source or '-'}",
+                        f"Kilde: {model_source or '-'}",
+                        f"URL: {model_link_url}",
                         "",
                     ]
                 )
@@ -14928,6 +14993,71 @@ def api_files_thumbnails_cancel():
             "ids": cancelled_ids,
         }
     )
+
+
+@app.route("/api/files/<int:file_id>/model-link", methods=["PATCH"])
+@login_required
+def api_file_model_link(file_id: int):
+    body = request.get_json(silent=True) or {}
+    raw_url = str(body.get("url") or "").strip()
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+        if row is None:
+            return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
+        if not user_can_access_file(current_user, row, "upload"):
+            return jsonify({"ok": False, "error": "Ingen rettighed til at opdatere filen"}), 403
+        if _external_link_url_from_row(row):
+            return jsonify({"ok": False, "error": "Model-link kan kun tilføjes på uploadede filer."}), 400
+
+    if not raw_url:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "UPDATE files SET model_link_url='', model_link_source='', model_link_title='' WHERE id=?",
+                (int(file_id),),
+            )
+            row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+            conn.commit()
+        return jsonify({"ok": True, "item": serialize_file_row(row) if row is not None else None})
+
+    clean_url = _clean_http_url(raw_url)
+    if not clean_url:
+        return jsonify({"ok": False, "error": "Indsæt et gyldigt http/https-link."}), 400
+
+    try:
+        preview = external_link_preview_from_url(clean_url)
+    except Exception:
+        preview = generic_external_link_preview_from_url(clean_url)
+
+    source = str(preview.get("source_label") or preview.get("source") or "Link").strip() or "Link"
+    title = str(preview.get("title") or clean_url).strip() or clean_url
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            UPDATE files
+            SET model_link_url=?, model_link_source=?, model_link_title=?
+            WHERE id=?
+            """,
+            (clean_url, source[:120], title[:240], int(file_id)),
+        )
+        row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+        conn.commit()
+
+    try:
+        log_activity(
+            kind="upload",
+            action="file-model-link-saved",
+            message="Model-link gemt på fil",
+            level="info",
+            folder_path=str(row["folder_path"] or "") if row is not None else "",
+            target=str(row["filename"] or "") if row is not None else str(file_id),
+            actor=str(current_user.username or ""),
+            file_id=int(file_id),
+        )
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "item": serialize_file_row(row) if row is not None else None})
 
 
 @app.route("/api/files/<int:file_id>/metadata", methods=["PATCH"])
@@ -19014,92 +19144,6 @@ def _finalize_tus_upload(
         pass
 
     return True, row, ""
-
-
-def _extract_model_link_urls(value: Any) -> list[str]:
-    raw_values: list[str] = []
-    if isinstance(value, list):
-        raw_values = [str(item or "") for item in value]
-    else:
-        raw_values = re.split(r"[\s,]+", str(value or ""))
-
-    out: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_values:
-        clean = _clean_http_url(raw)
-        if not clean or clean in seen:
-            continue
-        seen.add(clean)
-        out.append(clean)
-    return out
-
-
-@app.route("/api/upload/model-links", methods=["POST"])
-@login_required
-def api_upload_model_links():
-    body = request.get_json(silent=True) or {}
-    folder = normalize_folder_path(str(body.get("folder") or ""))
-    urls = _extract_model_link_urls(body.get("urls") if "urls" in body else body.get("links"))
-
-    if not folder:
-        return jsonify({"ok": False, "error": "Vælg en mappe før links gemmes."}), 400
-    if not permission_allows(permission_for_user_folder(current_user, folder), "upload"):
-        return jsonify({"ok": False, "error": "Ingen upload-adgang til valgt mappe"}), 403
-    if not folder_allows_upload_target(folder, allow_users_subfolders=current_user.is_admin):
-        return jsonify({"ok": False, "error": "Upload er ikke tilladt i denne mappe."}), 403
-
-    items: list[dict[str, Any]] = []
-    skipped: list[str] = []
-    created_count = 0
-    for raw_url in urls:
-        with closing(get_conn()) as conn:
-            existing = conn.execute(
-                "SELECT * FROM files WHERE folder_path=? AND external_url=? LIMIT 1",
-                (folder, raw_url),
-            ).fetchone()
-        if existing is not None:
-            items.append(serialize_file_row(existing))
-            skipped.append(f"{raw_url}: findes allerede")
-            continue
-
-        try:
-            preview = external_link_preview_from_url(raw_url)
-        except Exception:
-            preview = generic_external_link_preview_from_url(raw_url)
-
-        try:
-            row = create_external_link_file_record(
-                folder_path=folder,
-                raw_url=raw_url,
-                preview=preview,
-                uploaded_by=str(current_user.username or ""),
-            )
-            items.append(serialize_file_row(row))
-            created_count += 1
-            try:
-                log_activity(
-                    kind="upload",
-                    action="link-saved",
-                    message="Model-link gemt efter upload",
-                    level="info",
-                    folder_path=folder,
-                    actor=str(current_user.username or ""),
-                    target=str(preview.get("title") or raw_url),
-                    file_id=int(row["id"]),
-                )
-            except Exception:
-                pass
-        except Exception as exc:
-            skipped.append(f"{raw_url}: {exc}")
-
-    return jsonify(
-        {
-            "ok": True,
-            "saved_count": created_count,
-            "items": items,
-            "skipped": skipped,
-        }
-    )
 
 
 @app.route("/api/import-link/preview", methods=["POST"])
