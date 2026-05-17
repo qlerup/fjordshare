@@ -8961,10 +8961,22 @@
       els.uploadModelLinksStepCounter.textContent = `${idx + 1}/${Math.max(1, total)}`;
     }
     if (els.uploadModelLinksCurrentFileName) {
+      const name = fileDisplayName(item);
       const folder = String(item.folder_path || "").trim();
+      const uploadedAt = formatDate(item.uploaded_at);
       const size = formatSize(item.file_size);
-      const meta = [folder, size].filter(Boolean).join(" · ");
-      els.uploadModelLinksCurrentFileName.textContent = meta ? `${fileDisplayName(item)} · ${meta}` : fileDisplayName(item);
+      const safeFolder = folder || "-";
+      els.uploadModelLinksCurrentFileName.innerHTML = `
+        <div class="upload-model-current-file-title">${esc(name)}</div>
+        <div class="upload-model-current-file-line">
+          <span class="upload-model-current-file-label">Mappe</span>
+          <span class="upload-model-current-file-value" title="${esc(safeFolder)}">${esc(safeFolder)}</span>
+        </div>
+        <div class="upload-model-current-file-inline">
+          <span class="upload-model-current-file-badge">Uploadet: ${esc(uploadedAt)}</span>
+          <span class="upload-model-current-file-badge">Størrelse: ${esc(size)}</span>
+        </div>
+      `;
     }
     if (els.uploadModelLinksInput) {
       els.uploadModelLinksInput.value = pendingUrl;
