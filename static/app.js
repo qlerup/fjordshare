@@ -4068,8 +4068,9 @@
   function filePreviewHtml(file, options = {}) {
     const displayName = fileDisplayName(file);
     const interactive = !!(options && options.interactive);
+    const hasModelLink = !!String((file && file.model_link_url) || "").trim();
 
-    if (file && file.is_external_link) {
+    if (file && (file.is_external_link || hasModelLink)) {
       const galleryImages = fileInfoPreviewImageUrls(file);
       if (galleryImages.length) {
         const selected = String(state.fileInfoSelectedImageUrl || "").trim();
@@ -4136,6 +4137,23 @@
     } catch (_err) {
       return "";
     }
+  }
+
+  function fileModelLinkSourceLabel(file) {
+    const explicit = String((file && file.model_link_source) || "").trim();
+    if (explicit) return explicit;
+    const rawUrl = String((file && file.model_link_url) || "").trim();
+    if (!rawUrl) return "";
+    try {
+      const parsed = new URL(rawUrl);
+      return parsed.hostname.replace(/^www\./i, "");
+    } catch (_err) {
+      return "";
+    }
+  }
+
+  function fileCardSourceLabel(file) {
+    return fileExternalSourceLabel(file) || fileModelLinkSourceLabel(file);
   }
 
   function formatFileTypeLabel(rawType, fallback = "") {
@@ -8529,8 +8547,9 @@
   function renderFileInfoLinkDetails(file) {
     if (!els.fileInfoLinkDetails) return;
     const payload = file && file.external_payload && typeof file.external_payload === "object" ? file.external_payload : {};
-    const isLink = !!(file && file.is_external_link);
-    if (!isLink || !Object.keys(payload).length) {
+    const isExternalLink = !!(file && file.is_external_link);
+    const hasModelLink = !!String((file && file.model_link_url) || "").trim();
+    if ((!isExternalLink && !hasModelLink) || !Object.keys(payload).length) {
       els.fileInfoLinkDetails.classList.add("hidden");
       els.fileInfoLinkDetails.innerHTML = "";
       return;
@@ -8572,7 +8591,7 @@
     const description = String(payload.description || "").trim();
     const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
     const files = Array.isArray(payload.files) ? payload.files : profiles;
-    const sourceKey = String(payload.source || file.external_source || "").trim().toLowerCase();
+    const sourceKey = String(payload.source || file.external_source || file.model_link_source || "").trim().toLowerCase();
     const collapseProfilesByDefault = sourceKey === "makerworld";
 
     const filesCount = Number.isFinite(Number(payload.files_count)) ? Number(payload.files_count) : files.length;
@@ -9187,7 +9206,7 @@
         const newBadge = isNew ? '<span class="file-new-badge" title="Ny fil">Ny</span>' : "";
         const typeBadge = fileTypeBadgeHtml(file);
         const displayName = fileDisplayName(file);
-        const externalSource = fileExternalSourceLabel(file);
+        const externalSource = fileCardSourceLabel(file);
         const captionClass = externalSource ? "file-caption file-caption-with-source" : "file-caption";
         return `
           <article class="file-card file-card-compact ${isSelected ? "selected" : ""}" data-file-id="${id}">

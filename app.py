@@ -11322,7 +11322,7 @@ def serialize_file_row(
         "external_source": external_source,
         "external_title": external_title,
         "external_cover_url": external_cover_url,
-        "external_payload": _external_link_payload_for_client(row) if is_external_link else {},
+        "external_payload": _external_link_payload_for_client(row) if (is_external_link or model_link_url) else {},
         "model_link_url": model_link_url,
         "model_link_source": model_link_source,
         "model_link_title": model_link_title,
@@ -15061,7 +15061,16 @@ def api_file_model_link(file_id: int):
     if not raw_url:
         with closing(get_conn()) as conn:
             conn.execute(
-                "UPDATE files SET model_link_url='', model_link_source='', model_link_title='' WHERE id=?",
+                """
+                UPDATE files
+                SET
+                    model_link_url='',
+                    model_link_source='',
+                    model_link_title='',
+                    external_cover_url='',
+                    external_payload_json=''
+                WHERE id=?
+                """,
                 (int(file_id),),
             )
             row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
@@ -15076,17 +15085,33 @@ def api_file_model_link(file_id: int):
         preview = external_link_preview_from_url(clean_url)
     except Exception:
         preview = generic_external_link_preview_from_url(clean_url)
+    if not isinstance(preview, dict):
+        preview = {}
 
     source = str(preview.get("source_label") or preview.get("source") or "Link").strip() or "Link"
     title = str(preview.get("title") or clean_url).strip() or clean_url
+    cover_url = str(preview.get("cover_url") or "").strip()
+    preview["url"] = clean_url
+    preview["source_label"] = source
+    preview["title"] = title
+    try:
+        payload_json = json.dumps(preview, ensure_ascii=False)
+    except Exception:
+        payload_json = ""
+
     with closing(get_conn()) as conn:
         conn.execute(
             """
             UPDATE files
-            SET model_link_url=?, model_link_source=?, model_link_title=?
+            SET
+                model_link_url=?,
+                model_link_source=?,
+                model_link_title=?,
+                external_cover_url=?,
+                external_payload_json=?
             WHERE id=?
             """,
-            (clean_url, source[:120], title[:240], int(file_id)),
+            (clean_url, source[:120], title[:240], cover_url[:1000], payload_json, int(file_id)),
         )
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
         conn.commit()
