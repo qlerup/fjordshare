@@ -4069,8 +4069,9 @@
     const displayName = fileDisplayName(file);
     const interactive = !!(options && options.interactive);
     const hasModelLink = !!String((file && file.model_link_url) || "").trim();
+    const allowLinkPreview = !!(file && (file.is_external_link || (interactive && hasModelLink)));
 
-    if (file && (file.is_external_link || hasModelLink)) {
+    if (allowLinkPreview) {
       const galleryImages = fileInfoPreviewImageUrls(file);
       if (galleryImages.length) {
         const selected = String(state.fileInfoSelectedImageUrl || "").trim();
@@ -4094,7 +4095,7 @@
     if (file.thumb_url) {
       return `<img src="${esc(file.thumb_url)}" alt="${esc(displayName)}" loading="lazy">`;
     }
-    if (file.external_cover_url) {
+    if (file.external_cover_url && allowLinkPreview) {
       return `<img src="${esc(file.external_cover_url)}" alt="${esc(displayName || "Link")}" loading="lazy" decoding="async">`;
     }
     if (file.preview_3d_thumbnail) {
