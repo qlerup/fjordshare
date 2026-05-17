@@ -807,18 +807,18 @@
 <div id="nonUserFolderModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card non-user-folder-modal-card">
-    <form id="nonUserFolderForm">
+    <form id="nonUserFolderForm" novalidate>
       <div class="toolbar">
         <h3>Opret mappe</h3>
       </div>
       <div class="create-user-grid">
         <div>
           <label for="nonUserFolderFirstName">Fornavn</label>
-          <input id="nonUserFolderFirstName" class="input" type="text" autocomplete="given-name" required>
+          <input id="nonUserFolderFirstName" class="input" type="text" autocomplete="given-name">
         </div>
         <div>
           <label for="nonUserFolderLastName">Efternavn</label>
-          <input id="nonUserFolderLastName" class="input" type="text" autocomplete="family-name" required>
+          <input id="nonUserFolderLastName" class="input" type="text" autocomplete="family-name">
         </div>
       </div>
       <div id="nonUserFolderPreview" class="non-user-folder-preview">Ikke bruger mappe</div>
@@ -826,6 +826,27 @@
       <div class="toolbar end">
         <button id="nonUserFolderCancelBtn" class="btn" type="button">Annuller</button>
         <button id="nonUserFolderCreateBtn" class="btn primary" type="submit">Opret mappe</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="createFolderModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card create-folder-modal-card">
+    <form id="createFolderModalForm" novalidate>
+      <div class="toolbar">
+        <h3>Opret mappe</h3>
+      </div>
+      <p id="createFolderModalTarget" class="hint"></p>
+      <label class="modal-field" for="createFolderModalInput">
+        <span>Mappenavn</span>
+        <input id="createFolderModalInput" class="input" type="text" maxlength="160" autocomplete="off" placeholder="Ny mappe">
+      </label>
+      <div id="createFolderModalStatus" class="status hidden"></div>
+      <div class="toolbar end">
+        <button id="createFolderModalCancelBtn" class="btn" type="button">Annuller</button>
+        <button id="createFolderModalCreateBtn" class="btn primary" type="submit">Opret mappe</button>
       </div>
     </form>
   </div>
@@ -1460,13 +1481,13 @@
             data-fallback-src="{{ url_for('static', filename='guide-gifs/navi.gif', v=app_build) }}"
           >
           <div class="app-onboarding-guide-text">
-            <p>Gå til Mapper og upload filer til den mappe du arbejder i.</p>
+            <p>Gå til Mapper og upload filer eller gem model-links i den mappe du arbejder i.</p>
             <ul>
-              <li>Du kan uploade enkelte filer med upload-knappen.</li>
-              <li>Du kan også slippe hele mapper via drag-and-drop.</li>
-              <li>Du kan uploade en .zip fil, som automatisk udpakkes efter upload i den valgte mappe.</li>
-              <li>Tilladte filtyper er: .stl, .step, .zip, .3mf, .obj, .lys og .pwscene.</li>
-              <li>Hold filerne samlet i den rigtige mappe, så projektet er let at finde senere.</li>
+              <li>Brug Upload-knappen eller slip filer direkte i uploadfeltet; statusboksen nederst viser fremdrift og hvornår upload er færdig.</li>
+              <li>Efter upload kan du tilføje et model-link, hvis filerne hører til en samlet reference fra f.eks. MakerWorld.</li>
+              <li>Du kan springe link-trinnet over, hvis projektet kun består af lokale filer.</li>
+              <li>Tilføj bemærkninger eller billeder til de enkelte filer i guiden, eller spring videre hvis der ikke er ekstra info.</li>
+              <li>Gemte links vises som egne kort i mappen, og fil-info viser linkdata, billeder og tilknyttede CAD/STL-filer.</li>
             </ul>
           </div>
         </section>

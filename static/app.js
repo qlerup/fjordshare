@@ -224,6 +224,13 @@
     fileInput: document.getElementById("fileInput"),
     newFolderInput: document.getElementById("newFolderInput"),
     createFolderBtn: document.getElementById("createFolderBtn"),
+    createFolderModal: document.getElementById("createFolderModal"),
+    createFolderModalForm: document.getElementById("createFolderModalForm"),
+    createFolderModalInput: document.getElementById("createFolderModalInput"),
+    createFolderModalTarget: document.getElementById("createFolderModalTarget"),
+    createFolderModalStatus: document.getElementById("createFolderModalStatus"),
+    createFolderModalCancelBtn: document.getElementById("createFolderModalCancelBtn"),
+    createFolderModalCreateBtn: document.getElementById("createFolderModalCreateBtn"),
     uploadStatus: document.getElementById("uploadStatus"),
     uploadOverlay: document.getElementById("uploadOverlay"),
     uploadProgressBar: document.getElementById("uploadProgressBar"),
@@ -10382,19 +10389,82 @@
     }
   }
 
-  async function createFolder(nameOverride = "") {
+  function resetCreateFolderModal() {
+    if (els.createFolderModalInput) els.createFolderModalInput.value = "";
+    if (els.createFolderModalCreateBtn) els.createFolderModalCreateBtn.disabled = false;
+    if (els.createFolderModalTarget) {
+      const target = currentFolder() || state.homeFolder || "";
+      els.createFolderModalTarget.textContent = target ? `Oprettes i: ${target}` : "";
+    }
+    showStatus(els.createFolderModalStatus, "");
+  }
+
+  function openCreateFolderModal() {
+    if (state.selectMode) return;
+    if (isAdminUsersRootFolder()) {
+      openNonUserFolderModal();
+      return;
+    }
+    if (!currentFolderAllowsUserWrites()) {
+      showStatus(els.uploadStatus, "Mapper kan kun oprettes inde i en datomappe.", "error");
+      return;
+    }
+    if (!els.createFolderModal || !els.createFolderModalInput) {
+      showStatus(els.uploadStatus, "Mappe-dialogen kunne ikke åbnes.", "error");
+      return;
+    }
+    resetCreateFolderModal();
+    els.createFolderModal.classList.remove("hidden");
+    window.setTimeout(() => {
+      if (els.createFolderModalInput) els.createFolderModalInput.focus();
+    }, 0);
+  }
+
+  function closeCreateFolderModal() {
+    if (els.createFolderModal) els.createFolderModal.classList.add("hidden");
+    resetCreateFolderModal();
+  }
+
+  async function submitCreateFolderModal() {
+    const name = String((els.createFolderModalInput && els.createFolderModalInput.value) || "").trim();
+    if (!name) {
+      showStatus(els.createFolderModalStatus, "Skriv et mappenavn først.", "error");
+      if (els.createFolderModalInput) els.createFolderModalInput.focus();
+      return;
+    }
+    if (!currentFolderAllowsUserWrites()) {
+      showStatus(els.createFolderModalStatus, "Mapper kan kun oprettes inde i en datomappe.", "error");
+      return;
+    }
+    if (els.createFolderModalCreateBtn) els.createFolderModalCreateBtn.disabled = true;
+    try {
+      await createFolder(name, {
+        statusEl: els.createFolderModalStatus,
+        successStatusEl: els.uploadStatus,
+      });
+      closeCreateFolderModal();
+    } catch (err) {
+      showStatus(els.createFolderModalStatus, err.message || "Kunne ikke oprette mappe", "error");
+    } finally {
+      if (els.createFolderModalCreateBtn) els.createFolderModalCreateBtn.disabled = false;
+    }
+  }
+
+  async function createFolder(nameOverride = "", options = {}) {
+    const statusEl = (options && options.statusEl) || els.uploadStatus;
+    const successStatusEl = (options && options.successStatusEl) || statusEl;
     const name = String(nameOverride || (els.newFolderInput && els.newFolderInput.value) || "").trim();
     if (!name && isAdminUsersRootFolder()) {
       openNonUserFolderModal();
       return;
     }
     if (!name) {
-      showStatus(els.uploadStatus, "Skriv et mappenavn først.", "error");
+      showStatus(statusEl, "Skriv et mappenavn først.", "error");
       return;
     }
     const parent = currentFolder();
     if (!folderAllowsUserWrites(parent)) {
-      showStatus(els.uploadStatus, "Mapper kan kun oprettes inde i en datomappe.", "error");
+      showStatus(statusEl, "Mapper kan kun oprettes inde i en datomappe.", "error");
       return;
     }
     await api("/api/folders", {
@@ -10409,7 +10479,7 @@
       state.currentFolder = next;
     }
     await loadFiles();
-    showStatus(els.uploadStatus, "Mappe oprettet.", "ok");
+    showStatus(successStatusEl, "Mappe oprettet.", "ok");
   }
 
   function selectedShareFolders() {
@@ -14875,18 +14945,7 @@
     }
 
     if (cmd === "create-folder") {
-      if (state.selectMode) return;
-      if (!currentFolderAllowsUserWrites()) {
-        showStatus(els.uploadStatus, "Mapper kan kun oprettes inde i en datomappe.", "error");
-        return;
-      }
-      if (isAdminUsersRootFolder()) {
-        openNonUserFolderModal();
-        return;
-      }
-      const name = window.prompt("Nyt mappenavn:");
-      if (!name) return;
-      await createFolder(name);
+      openCreateFolderModal();
       return;
     }
 
@@ -15366,6 +15425,28 @@
     if (els.createFolderBtn) {
       els.createFolderBtn.addEventListener("click", async () => {
         await createFolder();
+      });
+    }
+
+    if (els.createFolderModalCancelBtn) {
+      els.createFolderModalCancelBtn.addEventListener("click", closeCreateFolderModal);
+    }
+    if (els.createFolderModalForm) {
+      els.createFolderModalForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitCreateFolderModal();
+      });
+    }
+    if (els.createFolderModalInput) {
+      els.createFolderModalInput.addEventListener("input", () => {
+        showStatus(els.createFolderModalStatus, "");
+      });
+    }
+    if (els.createFolderModal) {
+      els.createFolderModal.addEventListener("click", (event) => {
+        if (event.target === els.createFolderModal || event.target.classList.contains("modal-backdrop")) {
+          closeCreateFolderModal();
+        }
       });
     }
 
@@ -16054,6 +16135,11 @@
       const nonUserFolderModalOpen = !!(els.nonUserFolderModal && !els.nonUserFolderModal.classList.contains("hidden"));
       if (nonUserFolderModalOpen) {
         closeNonUserFolderModal();
+        return;
+      }
+      const createFolderModalOpen = !!(els.createFolderModal && !els.createFolderModal.classList.contains("hidden"));
+      if (createFolderModalOpen) {
+        closeCreateFolderModal();
         return;
       }
       const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
