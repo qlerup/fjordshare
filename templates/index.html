@@ -1261,6 +1261,35 @@
   </div>
 </div>
 
+<div id="uploadModelLinksModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card upload-model-links-modal-card">
+    <div class="metadata-head">
+      <h3>Tilføj model-link pr. fil</h3>
+      <div id="uploadModelLinksStepCounter" class="metadata-step-counter">1/1</div>
+    </div>
+    <p class="hint">Indsæt et model-link for den viste fil, eller lad feltet stå tomt og gå videre.</p>
+
+    <div id="uploadModelLinksCurrentFileName" class="metadata-current-file">-</div>
+
+    <div class="upload-model-link-field">
+      <label for="uploadModelLinksInput">Model-link</label>
+      <input id="uploadModelLinksInput" class="input" type="url" placeholder="MakerWorld eller Printables link" autocomplete="off">
+    </div>
+
+    <div id="uploadModelLinksStatus" class="status hidden"></div>
+
+    <div class="toolbar metadata-nav">
+      <button id="uploadModelLinksSkipBtn" class="btn" type="button">Spring over</button>
+      <div class="metadata-nav-right">
+        <button id="uploadModelLinksPrevBtn" class="btn" type="button">Forrige</button>
+        <button id="uploadModelLinksNextBtn" class="btn" type="button">Næste</button>
+        <button id="uploadModelLinksDoneBtn" class="btn primary hidden" type="button">Færdig</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="imagePreviewModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card modal-image-preview">
@@ -1404,8 +1433,9 @@
             <p>Gå til Mapper og upload filer til den mappe du arbejder i.</p>
             <ul>
               <li>Brug Upload-knappen eller slip filer direkte i uploadfeltet; statusboksen nederst viser fremdrift og hvornår upload er færdig.</li>
-              <li>Upload-flowet er færdigt, når filerne ligger i mappen; der kommer ikke længere ekstra link- eller bemærkningspopup efter upload.</li>
-              <li>Åbn fil-info på en enkelt fil, hvis du vil gemme et model-link til netop den fil.</li>
+              <li>Når upload er færdig, åbner en popup med de uploadede filer én ad gangen.</li>
+              <li>Indsæt eventuelt model-link for filen og tryk Næste; du kan også lade feltet være tomt og gå videre.</li>
+              <li>Model-linket kan stadig ændres senere via fil-info på den enkelte fil.</li>
               <li>Bemærkninger og billeder tilføjes først, når du vælger filerne og sender projektet til print.</li>
               <li>Tilladte filtyper er: .stl, .step, .zip, .3mf, .obj, .lys og .pwscene.</li>
             </ul>

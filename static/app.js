@@ -56,6 +56,9 @@
     metadataMode: "upload",
     metadataProjectId: 0,
     metadataContinueProject: null,
+    uploadModelLinkFiles: [],
+    uploadModelLinkIndex: 0,
+    uploadModelLinkSaving: false,
     imagePreviewImages: [],
     imagePreviewNames: [],
     imagePreviewIndex: 0,
@@ -365,6 +368,15 @@
     metadataPrevBtn: document.getElementById("metadataPrevBtn"),
     metadataNextBtn: document.getElementById("metadataNextBtn"),
     metadataSaveBtn: document.getElementById("metadataSaveBtn"),
+    uploadModelLinksModal: document.getElementById("uploadModelLinksModal"),
+    uploadModelLinksStepCounter: document.getElementById("uploadModelLinksStepCounter"),
+    uploadModelLinksCurrentFileName: document.getElementById("uploadModelLinksCurrentFileName"),
+    uploadModelLinksInput: document.getElementById("uploadModelLinksInput"),
+    uploadModelLinksStatus: document.getElementById("uploadModelLinksStatus"),
+    uploadModelLinksSkipBtn: document.getElementById("uploadModelLinksSkipBtn"),
+    uploadModelLinksPrevBtn: document.getElementById("uploadModelLinksPrevBtn"),
+    uploadModelLinksNextBtn: document.getElementById("uploadModelLinksNextBtn"),
+    uploadModelLinksDoneBtn: document.getElementById("uploadModelLinksDoneBtn"),
     imagePreviewModal: document.getElementById("imagePreviewModal"),
     imagePreviewTitle: document.getElementById("imagePreviewTitle"),
     imagePreviewImg: document.getElementById("imagePreviewImg"),
@@ -8870,6 +8882,153 @@
     }
   }
 
+  function getUploadModelLinkCurrentItem() {
+    if (!Array.isArray(state.uploadModelLinkFiles) || !state.uploadModelLinkFiles.length) return null;
+    const lastIndex = state.uploadModelLinkFiles.length - 1;
+    const idx = Math.max(0, Math.min(lastIndex, Number(state.uploadModelLinkIndex || 0)));
+    state.uploadModelLinkIndex = idx;
+    return state.uploadModelLinkFiles[idx] || null;
+  }
+
+  function setUploadModelLinkBusy(busy) {
+    state.uploadModelLinkSaving = !!busy;
+    const total = Array.isArray(state.uploadModelLinkFiles) ? state.uploadModelLinkFiles.length : 0;
+    const idx = Math.max(0, Math.min(Math.max(0, total - 1), Number(state.uploadModelLinkIndex || 0)));
+    const isLast = total > 0 && idx >= total - 1;
+    if (els.uploadModelLinksInput) els.uploadModelLinksInput.disabled = !!busy;
+    if (els.uploadModelLinksSkipBtn) els.uploadModelLinksSkipBtn.disabled = !!busy;
+    if (els.uploadModelLinksPrevBtn) els.uploadModelLinksPrevBtn.disabled = !!busy || idx <= 0;
+    if (els.uploadModelLinksNextBtn) els.uploadModelLinksNextBtn.disabled = !!busy || isLast;
+    if (els.uploadModelLinksDoneBtn) els.uploadModelLinksDoneBtn.disabled = !!busy;
+  }
+
+  function persistUploadModelLinkStepInput() {
+    const item = getUploadModelLinkCurrentItem();
+    if (!item || !els.uploadModelLinksInput) return;
+    item.pending_model_link_url = String(els.uploadModelLinksInput.value || "").trim();
+  }
+
+  function renderUploadModelLinkStep() {
+    const item = getUploadModelLinkCurrentItem();
+    const total = Array.isArray(state.uploadModelLinkFiles) ? state.uploadModelLinkFiles.length : 0;
+    if (!item || !els.uploadModelLinksModal) return;
+    const idx = Number(state.uploadModelLinkIndex || 0);
+    const isLast = idx >= total - 1;
+    const pendingUrl = Object.prototype.hasOwnProperty.call(item, "pending_model_link_url")
+      ? String(item.pending_model_link_url || "")
+      : String(item.model_link_url || "");
+
+    if (els.uploadModelLinksStepCounter) {
+      els.uploadModelLinksStepCounter.textContent = `${idx + 1}/${Math.max(1, total)}`;
+    }
+    if (els.uploadModelLinksCurrentFileName) {
+      const folder = String(item.folder_path || "").trim();
+      const size = formatSize(item.file_size);
+      const meta = [folder, size].filter(Boolean).join(" · ");
+      els.uploadModelLinksCurrentFileName.textContent = meta ? `${fileDisplayName(item)} · ${meta}` : fileDisplayName(item);
+    }
+    if (els.uploadModelLinksInput) {
+      els.uploadModelLinksInput.value = pendingUrl;
+    }
+    if (els.uploadModelLinksNextBtn) els.uploadModelLinksNextBtn.classList.toggle("hidden", isLast);
+    if (els.uploadModelLinksDoneBtn) els.uploadModelLinksDoneBtn.classList.toggle("hidden", !isLast);
+    showStatus(els.uploadModelLinksStatus, "");
+    setUploadModelLinkBusy(false);
+  }
+
+  function openUploadModelLinksModal(files) {
+    const items = (Array.isArray(files) ? files : [])
+      .map((file) => {
+        const id = Number(file && file.id ? file.id : 0);
+        const latest = id ? fileById(id) : null;
+        const item = latest || file;
+        if (!item || !Number(item.id || 0) || item.is_external_link) return null;
+        return {
+          ...item,
+          pending_model_link_url: String(item.model_link_url || "").trim(),
+        };
+      })
+      .filter(Boolean);
+
+    if (!items.length || !els.uploadModelLinksModal) return false;
+    state.uploadModelLinkFiles = items;
+    state.uploadModelLinkIndex = 0;
+    renderUploadModelLinkStep();
+    els.uploadModelLinksModal.classList.remove("hidden");
+    window.setTimeout(() => {
+      if (els.uploadModelLinksInput) els.uploadModelLinksInput.focus();
+    }, 0);
+    return true;
+  }
+
+  function closeUploadModelLinksModal() {
+    state.uploadModelLinkFiles = [];
+    state.uploadModelLinkIndex = 0;
+    state.uploadModelLinkSaving = false;
+    showStatus(els.uploadModelLinksStatus, "");
+    if (els.uploadModelLinksModal) els.uploadModelLinksModal.classList.add("hidden");
+    if (els.uploadModelLinksInput) els.uploadModelLinksInput.value = "";
+  }
+
+  async function saveUploadModelLinkCurrentStep() {
+    const item = getUploadModelLinkCurrentItem();
+    if (!item) return true;
+    persistUploadModelLinkStepInput();
+    const id = Number(item.id || 0);
+    const url = String(item.pending_model_link_url || "").trim();
+    const originalUrl = String(item.model_link_url || "").trim();
+    if (url && !/^https?:\/\//i.test(url)) {
+      showStatus(els.uploadModelLinksStatus, "Linket skal starte med http:// eller https://.", "error");
+      if (els.uploadModelLinksInput) els.uploadModelLinksInput.focus();
+      return false;
+    }
+    if (!id || url === originalUrl) return true;
+    if (!url && !originalUrl) return true;
+
+    setUploadModelLinkBusy(true);
+    showStatus(els.uploadModelLinksStatus, url ? "Gemmer model-link..." : "Fjerner model-link...", "ok");
+    try {
+      const data = await api(`/api/files/${id}/model-link`, {
+        method: "PATCH",
+        body: { url },
+      });
+      if (data && data.item) {
+        const updated = {
+          ...data.item,
+          pending_model_link_url: String(data.item.model_link_url || "").trim(),
+        };
+        state.uploadModelLinkFiles[state.uploadModelLinkIndex] = updated;
+        const idx = state.files.findIndex((file) => Number(file && file.id ? file.id : 0) === id);
+        if (idx >= 0) state.files[idx] = data.item;
+      }
+      showStatus(els.uploadModelLinksStatus, url ? "Model-link gemt." : "Model-link fjernet.", "ok");
+      return true;
+    } catch (err) {
+      showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme model-link", "error");
+      return false;
+    } finally {
+      setUploadModelLinkBusy(false);
+    }
+  }
+
+  async function moveUploadModelLinkStep(offset) {
+    if (state.uploadModelLinkSaving) return;
+    const ok = await saveUploadModelLinkCurrentStep();
+    if (!ok) return;
+    const total = Array.isArray(state.uploadModelLinkFiles) ? state.uploadModelLinkFiles.length : 0;
+    state.uploadModelLinkIndex = Math.max(0, Math.min(Math.max(0, total - 1), Number(state.uploadModelLinkIndex || 0) + Number(offset || 0)));
+    renderUploadModelLinkStep();
+  }
+
+  async function finishUploadModelLinksModal() {
+    if (state.uploadModelLinkSaving) return;
+    const ok = await saveUploadModelLinkCurrentStep();
+    if (!ok) return;
+    await loadFiles();
+    closeUploadModelLinksModal();
+    showStatus(els.uploadStatus, "Model-links er opdateret.", "ok");
+  }
+
   async function sliceFileById(fileId, profileSelection = null) {
     const id = Number(fileId || 0);
     if (!id) return;
@@ -10044,9 +10203,15 @@
       }
       await loadFiles();
       if (resolved.length) {
+        const uploadedFilesForLinks = resolved
+          .map((item) => fileById(Number(item && item.id ? item.id : 0)) || item)
+          .filter((item) => item && Number(item.id || 0) && !item.is_external_link);
+        const openedLinkModal = openUploadModelLinksModal(uploadedFilesForLinks);
         showStatus(
           els.uploadStatus,
-          `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}. Tilføj eventuelt model-link via fil-info på den enkelte fil.`,
+          openedLinkModal
+            ? `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}. Tilføj eventuelt model-link pr. fil i popuppen.`
+            : `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}. Tilføj eventuelt model-link via fil-info på den enkelte fil.`,
           uploadUiState.failedFiles ? "error" : "ok"
         );
       }
@@ -15042,6 +15207,53 @@
       });
       els.fileInfoModelLinkInput.addEventListener("input", () => {
         showStatus(els.fileInfoModelLinkStatus, "");
+      });
+    }
+    if (els.uploadModelLinksSkipBtn) {
+      els.uploadModelLinksSkipBtn.addEventListener("click", closeUploadModelLinksModal);
+    }
+    if (els.uploadModelLinksPrevBtn) {
+      els.uploadModelLinksPrevBtn.addEventListener("click", () => {
+        moveUploadModelLinkStep(-1).catch((err) => {
+          showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme model-link", "error");
+        });
+      });
+    }
+    if (els.uploadModelLinksNextBtn) {
+      els.uploadModelLinksNextBtn.addEventListener("click", () => {
+        moveUploadModelLinkStep(1).catch((err) => {
+          showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme model-link", "error");
+        });
+      });
+    }
+    if (els.uploadModelLinksDoneBtn) {
+      els.uploadModelLinksDoneBtn.addEventListener("click", () => {
+        finishUploadModelLinksModal().catch((err) => {
+          showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme model-links", "error");
+        });
+      });
+    }
+    if (els.uploadModelLinksInput) {
+      els.uploadModelLinksInput.addEventListener("input", () => {
+        persistUploadModelLinkStepInput();
+        showStatus(els.uploadModelLinksStatus, "");
+      });
+      els.uploadModelLinksInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        const total = Array.isArray(state.uploadModelLinkFiles) ? state.uploadModelLinkFiles.length : 0;
+        const isLast = Number(state.uploadModelLinkIndex || 0) >= total - 1;
+        const action = isLast ? finishUploadModelLinksModal() : moveUploadModelLinkStep(1);
+        action.catch((err) => {
+          showStatus(els.uploadModelLinksStatus, err.message || "Kunne ikke gemme model-link", "error");
+        });
+      });
+    }
+    if (els.uploadModelLinksModal) {
+      els.uploadModelLinksModal.addEventListener("click", (event) => {
+        if (event.target === els.uploadModelLinksModal || event.target.classList.contains("modal-backdrop")) {
+          closeUploadModelLinksModal();
+        }
       });
     }
     const onAttachmentCardClick = (event) => {

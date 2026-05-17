@@ -2157,6 +2157,22 @@ input[type="checkbox"] {
   flex-wrap: wrap;
 }
 
+.upload-model-links-modal-card {
+  width: min(720px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
+}
+
+.upload-model-link-field {
+  display: grid;
+  gap: 6px;
+}
+
+.upload-model-link-field label {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .scale-up-field {
   display: grid;
   gap: 8px;
