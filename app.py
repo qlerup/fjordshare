@@ -10725,6 +10725,26 @@ def allocate_unique_target(folder_abs: Path, filename: str) -> Path:
     return target
 
 
+def allocate_unique_record_filename(folder_path: str, preferred_filename: str) -> str:
+    folder = normalize_folder_path(folder_path)
+    _, abs_folder = folder_abs_path(folder)
+    preferred = sanitize_filename(preferred_filename)
+    stem = str(Path(preferred).stem or "link").strip() or "link"
+    suffix = str(Path(preferred).suffix or ".url").strip() or ".url"
+
+    with closing(get_conn()) as conn:
+        counter = 0
+        while counter < 5000:
+            candidate = sanitize_filename(f"{stem}{'' if counter == 0 else f'_{counter}'}{suffix}")
+            rel_path = upload_relative_path(folder, candidate)
+            row = conn.execute("SELECT 1 FROM files WHERE rel_path=? LIMIT 1", (rel_path,)).fetchone()
+            if row is None and not (abs_folder / candidate).exists():
+                return candidate
+            counter += 1
+
+    return sanitize_filename(f"{stem}-{secrets.token_hex(4)}{suffix}")
+
+
 def upsert_file_record(
     folder_path: str,
     filename: str,
@@ -14912,6 +14932,120 @@ def api_files_thumbnails_cancel():
             "ids": cancelled_ids,
         }
     )
+
+
+@app.route("/api/files/external-link", methods=["POST"])
+@login_required
+def api_files_external_link_create():
+    body = request.get_json(silent=True) or {}
+    folder = normalize_folder_path(str(body.get("folder_path") or ""))
+    raw_url = str(body.get("url") or "").strip()
+
+    if not folder:
+        return jsonify({"ok": False, "error": "Vælg en mappe først."}), 400
+    if _is_print_ready_project_files_folder_path(folder):
+        return jsonify({"ok": False, "error": "Link kan ikke oprettes i projektfil-mappen."}), 400
+    if not raw_url:
+        return jsonify({"ok": False, "error": "Indsæt et link først."}), 400
+
+    if not permission_allows(permission_for_user_folder(current_user, folder), "upload"):
+        return jsonify({"ok": False, "error": "Ingen adgang til at oprette link her."}), 403
+    if not folder_allows_upload_target(folder, allow_users_subfolders=current_user.is_admin):
+        return jsonify({"ok": False, "error": "Link kan kun oprettes inde i en datomappe."}), 403
+
+    clean_url = _clean_http_url(raw_url)
+    if not clean_url:
+        return jsonify({"ok": False, "error": "Indsæt et gyldigt http/https-link."}), 400
+
+    try:
+        preview = external_link_preview_from_url(clean_url)
+    except Exception:
+        preview = generic_external_link_preview_from_url(clean_url)
+    if not isinstance(preview, dict):
+        preview = {}
+
+    source = str(preview.get("source_label") or preview.get("source") or "Link").strip() or "Link"
+    title = str(preview.get("title") or clean_url).strip() or clean_url
+    cover_url = str(preview.get("cover_url") or "").strip()
+
+    preview["url"] = clean_url
+    preview["source_label"] = source
+    preview["title"] = title
+
+    try:
+        payload_json = json.dumps(preview, ensure_ascii=False)
+    except Exception:
+        payload_json = ""
+    if len(payload_json) > 400_000:
+        try:
+            payload_json = json.dumps(generic_external_link_preview_from_url(clean_url), ensure_ascii=False)
+        except Exception:
+            payload_json = ""
+
+    preferred_name = sanitize_filename(f"{title}.url") or "link.url"
+    filename = allocate_unique_record_filename(folder, preferred_name)
+    rel_path = upload_relative_path(folder, filename)
+    now = now_iso()
+    actor = str(current_user.username or "")
+
+    ensure_folder_record(folder, owner_user_id=int(current_user.id))
+    with closing(get_conn()) as conn:
+        conn.execute(
+            """
+            INSERT INTO files(
+                folder_path, rel_path, filename, ext, mime_type, file_size,
+                uploaded_by, uploaded_at, note, quantity,
+                slice_status, slice_error, slice_updated_at, upload_client_id,
+                thumb_rel, thumb_status, thumb_error, thumb_updated_at,
+                external_url, external_source, external_title, external_cover_url, external_payload_json,
+                model_link_url, model_link_source, model_link_title
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', '')
+            """,
+            (
+                folder,
+                rel_path,
+                filename,
+                ".url",
+                "text/uri-list",
+                0,
+                actor,
+                now,
+                "none",
+                "",
+                now,
+                None,
+                "",
+                "none",
+                "",
+                now,
+                clean_url,
+                source[:120],
+                title[:240],
+                cover_url[:1000],
+                payload_json,
+            ),
+        )
+        row = conn.execute("SELECT * FROM files WHERE rel_path=?", (rel_path,)).fetchone()
+        conn.commit()
+
+    if row is None:
+        return jsonify({"ok": False, "error": "Kunne ikke gemme linket."}), 500
+
+    try:
+        log_activity(
+            kind="upload",
+            action="external-link-created",
+            message="Eksternt link oprettet som objekt",
+            level="info",
+            folder_path=folder,
+            target=str(row["filename"] or title),
+            actor=actor,
+            file_id=int(row["id"]),
+        )
+    except Exception:
+        pass
+
+    return jsonify({"ok": True, "item": serialize_file_row(row)})
 
 
 @app.route("/api/files/<int:file_id>/model-link", methods=["PATCH"])

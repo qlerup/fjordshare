@@ -55,6 +55,7 @@
                 <button id="mapperMenuSelect" class="menu-item" type="button" data-mapper-action="select" role="menuitem">Vælg mode</button>
                 <button id="mapperMenuShare" class="menu-item admin-only" type="button" data-mapper-action="share" role="menuitem">Del</button>
                 <button id="mapperMenuUpload" class="menu-item" type="button" data-mapper-action="upload" role="menuitem">Upload</button>
+                <button id="mapperMenuAddLink" class="menu-item" type="button" data-mapper-action="add-link" role="menuitem">Tilføj link</button>
                 <button id="mapperMenuCreateFolder" class="menu-item" type="button" data-mapper-action="create-folder" role="menuitem">Opret mappe</button>
                 <button id="mapperMenuRenameFolder" class="menu-item" type="button" data-mapper-action="rename-folder" role="menuitem">Omdøb mappe</button>
               </div>
@@ -66,6 +67,7 @@
           <div class="mapper-current-actions">
             <span id="mapperSelectSummary" class="mapper-select-summary hidden" aria-live="polite"></span>
             <button id="mapperDesktopUploadBtn" class="btn primary mapper-desktop-upload-btn" type="button">Upload</button>
+            <button id="mapperAddLinkBtn" class="btn" type="button">Tilføj link</button>
             <button id="mapperSelectPrintReadyBtn" class="btn primary" type="button">Vælg filer til print</button>
             <button id="mapperSelectClearBtn" class="btn hidden" type="button">Fravælg alle</button>
             <button id="mapperSelectDeleteBtn" class="btn danger hidden" type="button">Slet</button>
@@ -842,6 +844,27 @@
       <div class="toolbar end">
         <button id="createFolderModalCancelBtn" class="btn" type="button">Annuller</button>
         <button id="createFolderModalCreateBtn" class="btn primary" type="submit">Opret mappe</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="externalLinkModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card external-link-modal-card">
+    <form id="externalLinkForm" novalidate>
+      <div class="toolbar">
+        <h3>Tilføj link som objekt</h3>
+      </div>
+      <p id="externalLinkTarget" class="hint"></p>
+      <label class="modal-field" for="externalLinkInput">
+        <span>Link</span>
+        <input id="externalLinkInput" class="input" type="url" autocomplete="off" placeholder="MakerWorld eller Printables link" required>
+      </label>
+      <div id="externalLinkStatus" class="status hidden"></div>
+      <div class="toolbar end">
+        <button id="externalLinkCancelBtn" class="btn" type="button">Annuller</button>
+        <button id="externalLinkSaveBtn" class="btn primary" type="submit">Gem som objekt</button>
       </div>
     </form>
   </div>

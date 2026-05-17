@@ -214,6 +214,7 @@
     refreshFilesBtn: document.getElementById("refreshFilesBtn"),
     uploadBtn: document.getElementById("uploadBtn"),
     mapperDesktopUploadBtn: document.getElementById("mapperDesktopUploadBtn"),
+    mapperAddLinkBtn: document.getElementById("mapperAddLinkBtn"),
     fileInput: document.getElementById("fileInput"),
     newFolderInput: document.getElementById("newFolderInput"),
     createFolderBtn: document.getElementById("createFolderBtn"),
@@ -224,6 +225,13 @@
     createFolderModalStatus: document.getElementById("createFolderModalStatus"),
     createFolderModalCancelBtn: document.getElementById("createFolderModalCancelBtn"),
     createFolderModalCreateBtn: document.getElementById("createFolderModalCreateBtn"),
+    externalLinkModal: document.getElementById("externalLinkModal"),
+    externalLinkForm: document.getElementById("externalLinkForm"),
+    externalLinkTarget: document.getElementById("externalLinkTarget"),
+    externalLinkInput: document.getElementById("externalLinkInput"),
+    externalLinkStatus: document.getElementById("externalLinkStatus"),
+    externalLinkCancelBtn: document.getElementById("externalLinkCancelBtn"),
+    externalLinkSaveBtn: document.getElementById("externalLinkSaveBtn"),
     uploadStatus: document.getElementById("uploadStatus"),
     uploadOverlay: document.getElementById("uploadOverlay"),
     uploadProgressBar: document.getElementById("uploadProgressBar"),
@@ -258,6 +266,7 @@
     mapperMenuSelect: document.getElementById("mapperMenuSelect"),
     mapperMenuShare: document.getElementById("mapperMenuShare"),
     mapperMenuUpload: document.getElementById("mapperMenuUpload"),
+    mapperMenuAddLink: document.getElementById("mapperMenuAddLink"),
     mapperMenuCreateFolder: document.getElementById("mapperMenuCreateFolder"),
     mapperMenuRenameFolder: document.getElementById("mapperMenuRenameFolder"),
     mapperSelectSummary: document.getElementById("mapperSelectSummary"),
@@ -3344,9 +3353,16 @@
     if (els.mapperMenuUpload) {
       els.mapperMenuUpload.disabled = writeDisabled;
     }
+    if (els.mapperMenuAddLink) {
+      els.mapperMenuAddLink.disabled = writeDisabled;
+    }
     if (els.mapperDesktopUploadBtn) {
       els.mapperDesktopUploadBtn.classList.toggle("hidden", on || !writeAllowed);
       els.mapperDesktopUploadBtn.disabled = writeDisabled;
+    }
+    if (els.mapperAddLinkBtn) {
+      els.mapperAddLinkBtn.classList.toggle("hidden", on || !writeAllowed);
+      els.mapperAddLinkBtn.disabled = writeDisabled;
     }
     if (els.mapperMenuCreateFolder) {
       els.mapperMenuCreateFolder.disabled = writeDisabled;
@@ -10344,6 +10360,80 @@
     resetCreateFolderModal();
   }
 
+  function resetExternalLinkModal() {
+    if (els.externalLinkInput) els.externalLinkInput.value = "";
+    if (els.externalLinkSaveBtn) els.externalLinkSaveBtn.disabled = false;
+    if (els.externalLinkTarget) {
+      const target = currentFolder() || state.homeFolder || "";
+      els.externalLinkTarget.textContent = target ? `Oprettes i: ${target}` : "";
+    }
+    showStatus(els.externalLinkStatus, "");
+  }
+
+  function openExternalLinkModal() {
+    if (state.selectMode) return;
+    if (!currentFolderAllowsUserWrites()) {
+      showStatus(els.uploadStatus, "Link kan kun oprettes inde i en datomappe.", "error");
+      return;
+    }
+    if (!els.externalLinkModal || !els.externalLinkInput) {
+      showStatus(els.uploadStatus, "Link-dialogen kunne ikke åbnes.", "error");
+      return;
+    }
+    resetExternalLinkModal();
+    els.externalLinkModal.classList.remove("hidden");
+    window.setTimeout(() => {
+      if (els.externalLinkInput) els.externalLinkInput.focus();
+    }, 0);
+  }
+
+  function closeExternalLinkModal() {
+    if (els.externalLinkModal) els.externalLinkModal.classList.add("hidden");
+    resetExternalLinkModal();
+  }
+
+  async function submitExternalLinkModal() {
+    const rawUrl = String((els.externalLinkInput && els.externalLinkInput.value) || "").trim();
+    if (!rawUrl) {
+      showStatus(els.externalLinkStatus, "Indsæt et link først.", "error");
+      if (els.externalLinkInput) els.externalLinkInput.focus();
+      return;
+    }
+    if (!/^https?:\/\//i.test(rawUrl)) {
+      showStatus(els.externalLinkStatus, "Linket skal starte med http:// eller https://.", "error");
+      if (els.externalLinkInput) els.externalLinkInput.focus();
+      return;
+    }
+
+    const folder = currentFolder() || state.homeFolder || "";
+    if (!folder || !folderAllowsUserWrites(folder)) {
+      showStatus(els.externalLinkStatus, "Link kan kun oprettes inde i en datomappe.", "error");
+      return;
+    }
+
+    if (els.externalLinkSaveBtn) els.externalLinkSaveBtn.disabled = true;
+    showStatus(els.externalLinkStatus, "Gemmer link som objekt...", "ok");
+    try {
+      const data = await api("/api/files/external-link", {
+        method: "POST",
+        body: {
+          folder_path: folder,
+          url: rawUrl,
+        },
+      });
+      closeExternalLinkModal();
+      await loadFiles();
+      const createdId = Number((data && data.item && data.item.id) || 0);
+      if (createdId) {
+        await openFileInfoDrawer(createdId);
+      }
+      showStatus(els.uploadStatus, "Link gemt som objekt.", "ok");
+    } catch (err) {
+      showStatus(els.externalLinkStatus, err.message || "Kunne ikke gemme linket", "error");
+      if (els.externalLinkSaveBtn) els.externalLinkSaveBtn.disabled = false;
+    }
+  }
+
   async function submitCreateFolderModal() {
     const name = String((els.createFolderModalInput && els.createFolderModalInput.value) || "").trim();
     if (!name) {
@@ -14588,6 +14678,11 @@
       return;
     }
 
+    if (cmd === "add-link") {
+      openExternalLinkModal();
+      return;
+    }
+
     if (cmd === "create-folder") {
       openCreateFolderModal();
       return;
@@ -14944,6 +15039,12 @@
       });
     }
 
+    if (els.mapperAddLinkBtn) {
+      els.mapperAddLinkBtn.addEventListener("click", () => {
+        openExternalLinkModal();
+      });
+    }
+
     if (els.mapperDropZone) {
       const dropZone = els.mapperDropZone;
       dropZone.addEventListener("click", () => {
@@ -15084,6 +15185,28 @@
       els.createFolderModal.addEventListener("click", (event) => {
         if (event.target === els.createFolderModal || event.target.classList.contains("modal-backdrop")) {
           closeCreateFolderModal();
+        }
+      });
+    }
+
+    if (els.externalLinkCancelBtn) {
+      els.externalLinkCancelBtn.addEventListener("click", closeExternalLinkModal);
+    }
+    if (els.externalLinkForm) {
+      els.externalLinkForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        submitExternalLinkModal();
+      });
+    }
+    if (els.externalLinkInput) {
+      els.externalLinkInput.addEventListener("input", () => {
+        showStatus(els.externalLinkStatus, "");
+      });
+    }
+    if (els.externalLinkModal) {
+      els.externalLinkModal.addEventListener("click", (event) => {
+        if (event.target === els.externalLinkModal || event.target.classList.contains("modal-backdrop")) {
+          closeExternalLinkModal();
         }
       });
     }
@@ -15775,6 +15898,11 @@
       const createFolderModalOpen = !!(els.createFolderModal && !els.createFolderModal.classList.contains("hidden"));
       if (createFolderModalOpen) {
         closeCreateFolderModal();
+        return;
+      }
+      const externalLinkModalOpen = !!(els.externalLinkModal && !els.externalLinkModal.classList.contains("hidden"));
+      if (externalLinkModalOpen) {
+        closeExternalLinkModal();
         return;
       }
       const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));

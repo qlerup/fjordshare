@@ -2525,13 +2525,15 @@ input[type="checkbox"] {
 .modal-card.create-user-modal-card form,
 .modal-card.edit-user-modal-card form,
 .modal-card.create-folder-modal-card form,
-.modal-card.non-user-folder-modal-card form {
+.modal-card.non-user-folder-modal-card form,
+.modal-card.external-link-modal-card form {
   display: grid;
   gap: 10px;
 }
 
 .modal-card.create-folder-modal-card,
-.modal-card.non-user-folder-modal-card {
+.modal-card.non-user-folder-modal-card,
+.modal-card.external-link-modal-card {
   width: min(520px, calc(100vw - 24px));
 }
 
