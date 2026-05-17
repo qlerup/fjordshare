@@ -14976,11 +14976,6 @@ def api_files_external_link_create():
         payload_json = json.dumps(preview, ensure_ascii=False)
     except Exception:
         payload_json = ""
-    if len(payload_json) > 400_000:
-        try:
-            payload_json = json.dumps(generic_external_link_preview_from_url(clean_url), ensure_ascii=False)
-        except Exception:
-            payload_json = ""
 
     preferred_name = sanitize_filename(f"{title}.url") or "link.url"
     filename = allocate_unique_record_filename(folder, preferred_name)

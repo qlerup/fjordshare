@@ -14575,8 +14575,13 @@
   }
 
   async function onFileGridClick(event) {
+    const target = event && event.target
+      ? (event.target instanceof Element ? event.target : event.target.parentElement)
+      : null;
+    if (!target) return;
+
     if (state.selectMode) {
-      const card = event.target.closest("[data-file-id]");
+      const card = target.closest("[data-file-id]");
       if (card) {
         const id = Number(card.dataset.fileId || 0);
         if (id) {
@@ -14589,14 +14594,16 @@
       return;
     }
 
-    const infoBtn = event.target.closest("[data-action='open-info']");
+    const infoBtn = target.closest("[data-action='open-info']");
     if (infoBtn) {
+      event.preventDefault();
+      event.stopPropagation();
       const id = Number(infoBtn.dataset.fileId || 0);
-      if (id) openFileInfoDrawer(id);
+      if (id) await openFileInfoDrawer(id);
       return;
     }
 
-    const sliceBtn = event.target.closest("[data-action='open-slice']");
+    const sliceBtn = target.closest("[data-action='open-slice']");
     if (sliceBtn) {
       const id = Number(sliceBtn.dataset.fileId || 0);
       const file = fileById(id);
@@ -14609,7 +14616,7 @@
       return;
     }
 
-    const stopSliceBtn = event.target.closest("[data-action='stop-slice']");
+    const stopSliceBtn = target.closest("[data-action='stop-slice']");
     if (stopSliceBtn) {
       const id = Number(stopSliceBtn.dataset.fileId || 0);
       if (id) {
@@ -14623,7 +14630,7 @@
       return;
     }
 
-    const modelBtn = event.target.closest("[data-action='open-3d']");
+    const modelBtn = target.closest("[data-action='open-3d']");
     if (modelBtn) {
       const id = Number(modelBtn.dataset.fileId || 0);
       const file = fileById(id);
@@ -14634,7 +14641,7 @@
       return;
     }
 
-    const fileCard = event.target.closest("[data-file-id]");
+    const fileCard = target.closest("[data-file-id]");
     if (fileCard) {
       const id = Number(fileCard.dataset.fileId || 0);
       const file = fileById(id);
