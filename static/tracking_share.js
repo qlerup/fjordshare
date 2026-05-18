@@ -3,6 +3,92 @@
 
   const boot = document.getElementById("trackingShareBootstrap");
   const token = String((boot && boot.dataset.token) || "").trim();
+  const LANGUAGE_STORAGE_KEY = "fjordshare.trackingShare.lang.v1";
+  const SUPPORTED_LANGS = ["da", "en", "fr"];
+  const LANG_LOCALES = {
+    da: "da-DK",
+    en: "en-GB",
+    fr: "fr-FR",
+  };
+  const UI_TEXT = {
+    da: {
+      title: "Tracking",
+      meta: "Direkte tracking for en forsendelse",
+      shipment: "Forsendelse",
+      refreshBtn: "Opdater",
+      languageLabel: "Sprog",
+      statusLabel: "Status",
+      latestEventLabel: "Seneste haendelse",
+      updatedAtLabel: "Sidst opdateret",
+      allEventsLabel: "Alle haendelser",
+      noEventsStored: "Ingen haendelser gemt endnu.",
+      eventFallback: "Haendelse",
+      missingToken: "Tracking-link mangler token.",
+      loadingLatest: "Henter seneste tracking...",
+      refreshing: "Opdaterer tracking...",
+      updated: "Tracking opdateret.",
+      updatedWithError: "Opdateret med fejl: {error}",
+      autoRefreshFailed: "Kunne ikke opdatere automatisk.",
+      openFailed: "Tracking-linket kunne ikke aabnes.",
+      refreshFailed: "Kunne ikke opdatere tracking.",
+    },
+    en: {
+      title: "Tracking",
+      meta: "Direct tracking for a shipment",
+      shipment: "Shipment",
+      refreshBtn: "Refresh",
+      languageLabel: "Language",
+      statusLabel: "Status",
+      latestEventLabel: "Latest event",
+      updatedAtLabel: "Last updated",
+      allEventsLabel: "All events",
+      noEventsStored: "No events stored yet.",
+      eventFallback: "Event",
+      missingToken: "Tracking link is missing a token.",
+      loadingLatest: "Loading latest tracking...",
+      refreshing: "Refreshing tracking...",
+      updated: "Tracking updated.",
+      updatedWithError: "Updated with error: {error}",
+      autoRefreshFailed: "Could not refresh automatically.",
+      openFailed: "Could not open tracking link.",
+      refreshFailed: "Could not refresh tracking.",
+    },
+    fr: {
+      title: "Suivi",
+      meta: "Suivi direct d'un envoi",
+      shipment: "Envoi",
+      refreshBtn: "Actualiser",
+      languageLabel: "Langue",
+      statusLabel: "Statut",
+      latestEventLabel: "Dernier evenement",
+      updatedAtLabel: "Derniere mise a jour",
+      allEventsLabel: "Tous les evenements",
+      noEventsStored: "Aucun evenement enregistre.",
+      eventFallback: "Evenement",
+      missingToken: "Le lien de suivi n'a pas de jeton.",
+      loadingLatest: "Chargement du suivi...",
+      refreshing: "Actualisation du suivi...",
+      updated: "Suivi actualise.",
+      updatedWithError: "Actualise avec erreur: {error}",
+      autoRefreshFailed: "Impossible d'actualiser automatiquement.",
+      openFailed: "Impossible d'ouvrir le lien de suivi.",
+      refreshFailed: "Impossible d'actualiser le suivi.",
+    },
+  };
+
+  const translationCache = {
+    da: Object.create(null),
+    en: Object.create(null),
+    fr: Object.create(null),
+  };
+
+  const state = {
+    lang: detectInitialLanguage(),
+    item: null,
+    renderToken: 0,
+    translationMap: Object.create(null),
+  };
+
   const els = {
     title: document.getElementById("trackingShareTitle"),
     meta: document.getElementById("trackingShareMeta"),
@@ -11,63 +97,109 @@
     refreshBtn: document.getElementById("trackingShareRefreshBtn"),
     status: document.getElementById("trackingShareStatus"),
     content: document.getElementById("trackingShareContent"),
+    langLabel: document.getElementById("trackingShareLangLabel"),
+    langSelect: document.getElementById("trackingShareLangSelect"),
   };
 
-  const MONTH_NAMES = [
-    "januar",
-    "februar",
-    "marts",
-    "april",
-    "maj",
-    "juni",
-    "juli",
-    "august",
-    "september",
-    "oktober",
-    "november",
-    "december",
-  ];
   const MONTH_ALIASES = {
     januar: 0,
     jan: 0,
     january: 0,
+    fevrier: 1,
+    fevr: 1,
+    février: 1,
     februar: 1,
     feb: 1,
     february: 1,
+    mars: 2,
     marts: 2,
     mar: 2,
     march: 2,
+    avril: 3,
     april: 3,
     apr: 3,
+    mai: 4,
     maj: 4,
     may: 4,
+    juin: 5,
     juni: 5,
     jun: 5,
     june: 5,
+    juillet: 6,
     juli: 6,
     jul: 6,
     july: 6,
+    aout: 7,
+    aoutt: 7,
+    aoat: 7,
+    août: 7,
     august: 7,
     aug: 7,
+    septembre: 8,
     september: 8,
     sep: 8,
     sept: 8,
+    octobre: 9,
     oktober: 9,
     oct: 9,
     october: 9,
+    novembre: 10,
     november: 10,
     nov: 10,
+    decembre: 11,
+    décembre: 11,
     december: 11,
     dec: 11,
   };
+
+  function normalizeLanguage(value) {
+    const lang = String(value || "").trim().toLowerCase();
+    if (SUPPORTED_LANGS.includes(lang)) return lang;
+    return "da";
+  }
+
+  function detectInitialLanguage() {
+    try {
+      const stored = normalizeLanguage(window.localStorage.getItem(LANGUAGE_STORAGE_KEY));
+      if (stored) return stored;
+    } catch (_err) {
+      // Ignore storage read errors.
+    }
+    const browserLang = String((navigator && navigator.language) || "").trim().toLowerCase();
+    if (browserLang.startsWith("fr")) return "fr";
+    if (browserLang.startsWith("en")) return "en";
+    return "da";
+  }
+
+  function persistLanguage(lang) {
+    try {
+      window.localStorage.setItem(LANGUAGE_STORAGE_KEY, normalizeLanguage(lang));
+    } catch (_err) {
+      // Ignore storage write errors.
+    }
+  }
 
   function esc(value) {
     return String(value == null ? "" : value)
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
+      .replace(/\"/g, "&quot;")
       .replace(/'/g, "&#039;");
+  }
+
+  function textFor(key, vars) {
+    const lang = normalizeLanguage(state.lang);
+    const active = UI_TEXT[lang] || UI_TEXT.da;
+    const fallback = UI_TEXT.da;
+    let template = String(active[key] || fallback[key] || key);
+    if (vars && typeof vars === "object") {
+      template = template.replace(/\{([a-zA-Z0-9_]+)\}/g, (full, varName) => {
+        if (!Object.prototype.hasOwnProperty.call(vars, varName)) return full;
+        return String(vars[varName] == null ? "" : vars[varName]);
+      });
+    }
+    return template;
   }
 
   async function api(path, options = {}) {
@@ -95,10 +227,6 @@
     el.classList.toggle("error", !!text && type === "error");
   }
 
-  function padTime(value) {
-    return String(value || 0).padStart(2, "0");
-  }
-
   function parseTrackingDate(value) {
     const text = String(value || "").trim();
     if (!text) return null;
@@ -115,8 +243,8 @@
         Number(numericMatch[6] || 0),
       );
     }
-    const monthMatch = text.toLocaleLowerCase("da-DK").match(
-      /^(\d{1,2})\.?\s+([a-zæøå]+)\s+(\d{4})(?:\s*(?:kl\.?|at)?\s*(\d{1,2})[.:](\d{2})(?:[.:](\d{2}))?)?/i,
+    const monthMatch = text.toLowerCase().match(
+      /^(\d{1,2})\.?\s+([a-z\u00e6\u00f8\u00e5\u00e9\u00fb\u00f4\u00e0\u00e7]+)\s+(\d{4})(?:\s*(?:kl\.?|at)?\s*(\d{1,2})[.:](\d{2})(?:[.:](\d{2}))?)?/i,
     );
     if (monthMatch && Object.prototype.hasOwnProperty.call(MONTH_ALIASES, monthMatch[2])) {
       return new Date(
@@ -142,9 +270,21 @@
     if (!text) return "-";
     const d = parseTrackingDate(text);
     if (!d) return text;
-    const datePart = `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
-    if (!dateHasTime(text)) return datePart;
-    return `${datePart}, ${padTime(d.getHours())}:${padTime(d.getMinutes())}`;
+    const locale = LANG_LOCALES[normalizeLanguage(state.lang)] || "da-DK";
+    if (!dateHasTime(text)) {
+      return new Intl.DateTimeFormat(locale, {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      }).format(d);
+    }
+    return new Intl.DateTimeFormat(locale, {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
   }
 
   function trackingStatusClass(item) {
@@ -176,16 +316,128 @@
     return formatTrackingDate(value);
   }
 
-  function renderTrackingEvents(events) {
+  function shouldTranslateText(value) {
+    const text = String(value || "").trim();
+    if (!text || text === "-") return false;
+    if (/^[0-9\s:.,/\\\-+()]+$/.test(text)) return false;
+    return text.length > 1;
+  }
+
+  function getLangCache(lang) {
+    const normalized = normalizeLanguage(lang);
+    if (!translationCache[normalized]) {
+      translationCache[normalized] = Object.create(null);
+    }
+    return translationCache[normalized];
+  }
+
+  function translateText(value, map) {
+    const source = String(value || "").trim();
+    if (!source) return "";
+    if (!shouldTranslateText(source)) return source;
+    if (map && Object.prototype.hasOwnProperty.call(map, source)) {
+      return String(map[source] || source);
+    }
+    const langCache = getLangCache(state.lang);
+    return String(langCache[source] || source);
+  }
+
+  async function requestTranslations(uniqueTexts, targetLang) {
+    const lang = normalizeLanguage(targetLang);
+    if (lang === "da" || !Array.isArray(uniqueTexts) || !uniqueTexts.length || !token) {
+      return Object.create(null);
+    }
+
+    const data = await api(`/api/tracking-share/${encodeURIComponent(token)}/translate`, {
+      method: "POST",
+      body: {
+        target_lang: lang,
+        texts: uniqueTexts,
+      },
+    });
+
+    const out = Object.create(null);
+    const items = Array.isArray(data && data.items) ? data.items : [];
+    items.forEach((item) => {
+      const source = String((item && item.source) || "").trim();
+      if (!source) return;
+      const translated = String((item && item.translated) || source).trim() || source;
+      out[source] = translated;
+    });
+    return out;
+  }
+
+  async function buildTranslationMap(item) {
+    const lang = normalizeLanguage(state.lang);
+    const out = Object.create(null);
+    if (lang === "da") return out;
+
+    const candidateTexts = [];
+    const seen = new Set();
+    const langCache = getLangCache(lang);
+
+    function pushText(value) {
+      const text = String(value || "").trim();
+      if (!shouldTranslateText(text)) return;
+      if (seen.has(text)) return;
+      seen.add(text);
+      candidateTexts.push(text);
+      if (Object.prototype.hasOwnProperty.call(langCache, text)) {
+        out[text] = String(langCache[text] || text);
+      }
+    }
+
+    const status = String((item && item.status) || ((item && item.error) ? "Fejl" : "-")).trim();
+    const latestText = String((item && (item.last_event_text || item.summary)) || "-").trim();
+    const latestLocation = String((item && item.last_event_location) || "").trim();
+    const error = String((item && item.error) || "").trim();
+    const events = trackingEventsForItem(item);
+
+    pushText(status);
+    pushText(latestText);
+    pushText(latestLocation);
+    pushText(error);
+
+    events.forEach((event) => {
+      pushText((event && event.description) || (event && event.status) || textFor("eventFallback"));
+      pushText((event && event.location) || "");
+    });
+
+    const missing = candidateTexts.filter((text) => !Object.prototype.hasOwnProperty.call(langCache, text));
+    if (missing.length) {
+      try {
+        const translatedMap = await requestTranslations(missing, lang);
+        Object.keys(translatedMap).forEach((source) => {
+          const translated = String(translatedMap[source] || source).trim() || source;
+          langCache[source] = translated;
+          out[source] = translated;
+        });
+      } catch (_err) {
+        // Translation is best effort only.
+      }
+    }
+
+    candidateTexts.forEach((text) => {
+      if (!Object.prototype.hasOwnProperty.call(out, text)) {
+        out[text] = String(langCache[text] || text);
+      }
+    });
+
+    return out;
+  }
+
+  function renderTrackingEvents(events, translationMap) {
     if (!events.length) {
-      return `<div class="hint">Ingen hændelser gemt endnu.</div>`;
+      return `<div class="hint">${esc(textFor("noEventsStored"))}</div>`;
     }
     return `
       <ol class="tracking-timeline">
         ${events.map((event) => {
-          const description = String((event && event.description) || (event && event.status) || "Hændelse").trim();
+          const descriptionRaw = String((event && event.description) || (event && event.status) || textFor("eventFallback")).trim();
+          const description = translateText(descriptionRaw, translationMap);
           const dateText = trackingEventDate(event);
-          const location = String((event && event.location) || "").trim();
+          const locationRaw = String((event && event.location) || "").trim();
+          const location = translateText(locationRaw, translationMap);
           return `
             <li class="tracking-timeline-item">
               <span class="tracking-timeline-dot" aria-hidden="true"></span>
@@ -201,92 +453,158 @@
     `;
   }
 
-  function renderTracking(item) {
-    const trackingNumber = String((item && item.tracking_number) || "");
-    const status = String((item && item.status) || ((item && item.error) ? "Fejl" : "-"));
-    const statusClass = trackingStatusClass(item);
-    const events = trackingEventsForItem(item);
-    const latestText = String((item && (item.last_event_text || item.summary)) || "-");
-    const latestLocation = String((item && item.last_event_location) || "");
-    const updated = formatTrackingDate((item && (item.last_checked_at || item.updated_at)) || "");
-    const error = String((item && item.error) || "");
+  function applyStaticLanguageTexts() {
+    if (els.langLabel) els.langLabel.textContent = textFor("languageLabel");
+    if (els.refreshBtn) els.refreshBtn.textContent = textFor("refreshBtn");
+    if (els.title && !state.item) els.title.textContent = textFor("title");
+    if (els.meta && !state.item) els.meta.textContent = textFor("meta");
+    if (els.number && !state.item) els.number.textContent = textFor("shipment");
+    if (els.langSelect) {
+      const normalized = normalizeLanguage(state.lang);
+      if (els.langSelect.value !== normalized) {
+        els.langSelect.value = normalized;
+      }
+    }
+  }
 
-    if (els.title) els.title.textContent = "Tracking";
-    if (els.meta) els.meta.textContent = "Direkte tracking for én forsendelse";
-    if (els.number) els.number.textContent = trackingNumber || "Forsendelse";
+  async function renderTracking(item) {
+    state.item = item || {};
+    const runToken = ++state.renderToken;
+    const translationMap = await buildTranslationMap(state.item);
+    if (runToken !== state.renderToken) return;
+
+    state.translationMap = translationMap;
+
+    const trackingNumber = String((state.item && state.item.tracking_number) || "");
+    const statusRaw = String((state.item && state.item.status) || ((state.item && state.item.error) ? "Fejl" : "-"));
+    const status = translateText(statusRaw, translationMap);
+    const statusClass = trackingStatusClass(state.item);
+    const events = trackingEventsForItem(state.item);
+    const latestTextRaw = String((state.item && (state.item.last_event_text || state.item.summary)) || "-");
+    const latestText = translateText(latestTextRaw, translationMap);
+    const latestLocationRaw = String((state.item && state.item.last_event_location) || "");
+    const latestLocation = translateText(latestLocationRaw, translationMap);
+    const updated = formatTrackingDate((state.item && (state.item.last_checked_at || state.item.updated_at)) || "");
+    const errorRaw = String((state.item && state.item.error) || "");
+    const error = translateText(errorRaw, translationMap);
+
+    if (els.title) els.title.textContent = textFor("title");
+    if (els.meta) els.meta.textContent = textFor("meta");
+    if (els.number) els.number.textContent = trackingNumber || textFor("shipment");
     if (els.latest) els.latest.textContent = latestText || "";
+    if (els.langLabel) els.langLabel.textContent = textFor("languageLabel");
+    if (els.refreshBtn) els.refreshBtn.textContent = textFor("refreshBtn");
++    if (els.langSelect) {
++      const normalized = normalizeLanguage(state.lang);
++      if (els.langSelect.value !== normalized) {
++        els.langSelect.value = normalized;
++      }
++    }
+
     if (!els.content) return;
 
     els.content.innerHTML = `
       <div class="tracking-share-summary-grid">
         <div>
-          <div class="tracking-share-label">Status</div>
+          <div class="tracking-share-label">${esc(textFor("statusLabel"))}</div>
           <span class="tracking-status ${statusClass}">${esc(status)}</span>
         </div>
         <div>
-          <div class="tracking-share-label">Seneste hændelse</div>
+          <div class="tracking-share-label">${esc(textFor("latestEventLabel"))}</div>
           <div class="tracking-event">${esc(latestText)}</div>
           ${latestLocation ? `<div class="hint">${esc(latestLocation)}</div>` : ""}
         </div>
         <div>
-          <div class="tracking-share-label">Sidst opdateret</div>
+          <div class="tracking-share-label">${esc(textFor("updatedAtLabel"))}</div>
           <div>${esc(updated)}</div>
         </div>
       </div>
       ${error ? `<div class="tracking-error">${esc(error)}</div>` : ""}
       <div class="tracking-events-wrap tracking-share-events">
-        <div class="tracking-events-head">Alle hændelser</div>
-        ${renderTrackingEvents(events)}
+        <div class="tracking-events-head">${esc(textFor("allEventsLabel"))}</div>
+        ${renderTrackingEvents(events, translationMap)}
       </div>
     `;
   }
 
   async function loadTracking() {
     const data = await api(`/api/tracking-share/${encodeURIComponent(token)}`);
-    renderTracking(data.item || {});
+    await renderTracking(data.item || {});
   }
 
   async function refreshTracking(isInitial = false) {
     if (!token) {
-      showStatus(els.status, "Tracking-link mangler token.", "error");
+      showStatus(els.status, textFor("missingToken"), "error");
       return;
     }
     if (els.refreshBtn) els.refreshBtn.disabled = true;
-    showStatus(els.status, isInitial ? "Henter seneste tracking..." : "Opdaterer tracking...", "ok");
+    showStatus(els.status, isInitial ? textFor("loadingLatest") : textFor("refreshing"), "ok");
     try {
       const data = await api(`/api/tracking-share/${encodeURIComponent(token)}/refresh`, { method: "POST" });
       const item = data.item || {};
-      renderTracking(item);
-      showStatus(
-        els.status,
-        item.error ? `Opdateret med fejl: ${item.error}` : "Tracking opdateret.",
-        item.error ? "error" : "ok",
-      );
+      await renderTracking(item);
+      if (item.error) {
+        const translatedError = translateText(String(item.error || ""), state.translationMap);
+        showStatus(
+          els.status,
+          textFor("updatedWithError", { error: translatedError || String(item.error || "") }),
+          "error",
+        );
+      } else {
+        showStatus(els.status, textFor("updated"), "ok");
+      }
     } catch (err) {
       if (isInitial) {
         try {
           await loadTracking();
-          showStatus(els.status, err.message || "Kunne ikke opdatere automatisk.", "error");
+          const fallbackMessage = String((err && err.message) || "").trim() || textFor("autoRefreshFailed");
+          showStatus(els.status, fallbackMessage, "error");
         } catch (loadErr) {
-          showStatus(els.status, loadErr.message || err.message || "Tracking-linket kunne ikke åbnes.", "error");
+          const loadMessage = String((loadErr && loadErr.message) || "").trim();
+          const errMessage = String((err && err.message) || "").trim();
+          showStatus(els.status, loadMessage || errMessage || textFor("openFailed"), "error");
         }
       } else {
-        showStatus(els.status, err.message || "Kunne ikke opdatere tracking.", "error");
+        const message = String((err && err.message) || "").trim() || textFor("refreshFailed");
+        showStatus(els.status, message, "error");
       }
     } finally {
-      if (els.refreshBtn) els.refreshBtn.disabled = false;
+      if (els.refreshBtn) {
+        els.refreshBtn.disabled = false;
+        els.refreshBtn.textContent = textFor("refreshBtn");
+      }
     }
   }
 
   if (els.refreshBtn) {
     els.refreshBtn.addEventListener("click", () => {
       refreshTracking(false).catch((err) => {
-        showStatus(els.status, err.message || "Kunne ikke opdatere tracking.", "error");
+        const message = String((err && err.message) || "").trim() || textFor("refreshFailed");
+        showStatus(els.status, message, "error");
       });
     });
   }
 
+  if (els.langSelect) {
+    els.langSelect.value = normalizeLanguage(state.lang);
+    els.langSelect.addEventListener("change", () => {
+      const nextLang = normalizeLanguage(els.langSelect.value);
+      if (nextLang === state.lang) return;
+      state.lang = nextLang;
+      persistLanguage(nextLang);
+      applyStaticLanguageTexts();
+      if (state.item) {
+        renderTracking(state.item).catch(() => {
+          // Ignore translation render failures and keep existing content.
+        });
+      }
+    });
+  }
+
+  applyStaticLanguageTexts();
+
   refreshTracking(true).catch((err) => {
-    showStatus(els.status, err.message || "Tracking-linket kunne ikke åbnes.", "error");
+    const message = String((err && err.message) || "").trim() || textFor("openFailed");
+    showStatus(els.status, message, "error");
   });
 })();
