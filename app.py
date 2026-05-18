@@ -18008,6 +18008,43 @@ def api_tracking_share_info(token: str):
     return jsonify({"ok": True, "item": _tracking_share_row_to_dict(row)})
 
 
+@app.route("/api/tracking-share/<token>/translate", methods=["POST"])
+def api_tracking_share_translate(token: str):
+    row = _resolve_tracking_share(token)
+    if row is None:
+        return jsonify({"ok": False, "error": "Tracking-link er ugyldigt eller slettet"}), 404
+
+    body = request.get_json(silent=True) or {}
+    target_lang = _normalize_tracking_share_translate_lang(body.get("target_lang"))
+    raw_texts = body.get("texts")
+
+    if not isinstance(raw_texts, list):
+        return jsonify({"ok": False, "error": "Ugyldigt translate payload"}), 400
+    if len(raw_texts) > TRACKING_SHARE_TRANSLATE_MAX_TEXTS:
+        return jsonify({"ok": False, "error": f"For mange tekster (maks {TRACKING_SHARE_TRANSLATE_MAX_TEXTS})"}), 400
+
+    cleaned_texts: list[str] = []
+    total_chars = 0
+    for raw in raw_texts:
+        text = _normalize_tracking_share_translate_text(raw)
+        cleaned_texts.append(text)
+        total_chars += len(text)
+        if total_chars > TRACKING_SHARE_TRANSLATE_MAX_TOTAL_CHARS:
+            return jsonify({"ok": False, "error": "Translate payload er for stort"}), 400
+
+    translated_texts = _translate_tracking_share_texts(cleaned_texts, target_lang)
+    _touch_tracking_share_used(int(row["share_id"] or 0))
+
+    items = [
+        {
+            "source": cleaned_texts[idx],
+            "translated": str(translated_texts[idx] if idx < len(translated_texts) else cleaned_texts[idx]),
+        }
+        for idx in range(len(cleaned_texts))
+    ]
+    return jsonify({"ok": True, "target_lang": target_lang, "items": items})
+
+
 @app.route("/api/tracking-share/<token>/refresh", methods=["POST"])
 def api_tracking_share_refresh(token: str):
     row = _resolve_tracking_share(token)
