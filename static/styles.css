@@ -4847,6 +4847,34 @@ input[type="checkbox"] {
   max-width: 920px;
 }
 
+.tracking-share-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.tracking-share-header-main {
+  min-width: 0;
+}
+
+.tracking-share-language {
+  display: grid;
+  gap: 6px;
+  min-width: 170px;
+  justify-items: end;
+}
+
+.tracking-share-lang-label {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.tracking-share-lang-select {
+  width: 100%;
+  min-width: 140px;
+}
+
 .tracking-share-header h1 {
   margin: 0;
 }
@@ -4886,6 +4914,18 @@ input[type="checkbox"] {
 .tracking-share-events {
   max-width: none;
   padding-top: 4px;
+}
+
+@media (max-width: 700px) {
+  .tracking-share-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tracking-share-language {
+    justify-items: start;
+    max-width: 220px;
+  }
 }
 
 @media (min-width: 1001px) {

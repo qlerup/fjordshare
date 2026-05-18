@@ -5,10 +5,18 @@
 
 <div class="shared-wrap tracking-share-wrap">
   <header class="shared-header tracking-share-header">
-    <div>
+    <div class="tracking-share-header-main">
       <img class="shared-logo" src="{{ url_for('static', filename='logos/logos/fjord3D-logo-horizontal-transparent.png', v=app_build) }}" alt="Fjord3D">
       <h1 id="trackingShareTitle">Tracking</h1>
       <p id="trackingShareMeta" class="hint"></p>
+    </div>
+    <div class="tracking-share-language">
+      <label id="trackingShareLangLabel" for="trackingShareLangSelect" class="tracking-share-lang-label">Sprog</label>
+      <select id="trackingShareLangSelect" class="select tracking-share-lang-select" aria-label="Vælg sprog">
+        <option value="da">Dansk</option>
+        <option value="en">English</option>
+        <option value="fr">Français</option>
+      </select>
     </div>
   </header>
 
