@@ -160,8 +160,8 @@
 
   function detectInitialLanguage() {
     try {
-      const stored = normalizeLanguage(window.localStorage.getItem(LANGUAGE_STORAGE_KEY));
-      if (stored) return stored;
+      const storedRaw = String(window.localStorage.getItem(LANGUAGE_STORAGE_KEY) || "").trim().toLowerCase();
+      if (SUPPORTED_LANGS.includes(storedRaw)) return storedRaw;
     } catch (_err) {
       // Ignore storage read errors.
     }
@@ -494,12 +494,12 @@
     if (els.latest) els.latest.textContent = latestText || "";
     if (els.langLabel) els.langLabel.textContent = textFor("languageLabel");
     if (els.refreshBtn) els.refreshBtn.textContent = textFor("refreshBtn");
-+    if (els.langSelect) {
-+      const normalized = normalizeLanguage(state.lang);
-+      if (els.langSelect.value !== normalized) {
-+        els.langSelect.value = normalized;
-+      }
-+    }
+    if (els.langSelect) {
+      const normalized = normalizeLanguage(state.lang);
+      if (els.langSelect.value !== normalized) {
+        els.langSelect.value = normalized;
+      }
+    }
 
     if (!els.content) return;
 
