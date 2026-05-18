@@ -184,13 +184,20 @@
             <button id="trackingAddBtn" class="btn primary" type="button">Tilføj</button>
           </div>
         </div>
-        <div class="sms-confirm-block">
+        <div class="sms-confirm-block tracking-label-upload-block">
           <label for="trackingLabelPdfInput">Udtræk fra pakkelabel (PDF)</label>
+          <input id="trackingLabelPdfInput" class="tracking-file-input" type="file" accept=".pdf,application/pdf">
+          <div id="trackingLabelDropZone" class="tracking-label-dropzone" role="button" tabindex="0" aria-describedby="trackingLabelHint">
+            <div class="tracking-label-dropzone-main">
+              <button id="trackingLabelPickBtn" class="btn" type="button">Vælg label-PDF</button>
+              <span id="trackingLabelFileName" class="tracking-label-file-name hint">Ingen fil valgt</span>
+            </div>
+            <div class="tracking-label-dropzone-sub hint">Træk og slip en label-PDF her</div>
+          </div>
           <div class="sms-confirm-row">
-            <input id="trackingLabelPdfInput" class="input" type="file" accept=".pdf,application/pdf">
             <button id="trackingExtractBtn" class="btn" type="button">Udtræk og tilføj</button>
           </div>
-          <p class="hint">Label-filen gemmes ikke permanent.</p>
+          <p id="trackingLabelHint" class="hint">Label-filen gemmes ikke permanent.</p>
         </div>
         <div id="trackingStatus" class="status hidden"></div>
       </div>
