@@ -16680,6 +16680,42 @@
       });
       els.trackingNumberInput.addEventListener("input", () => showStatus(els.trackingStatus, ""));
     }
+    if (els.trackingLabelPickBtn && els.trackingLabelPdfInput) {
+      els.trackingLabelPickBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        els.trackingLabelPdfInput.click();
+      });
+    }
+    if (els.trackingLabelDropZone && els.trackingLabelPdfInput) {
+      els.trackingLabelDropZone.addEventListener("click", (event) => {
+        if (event.target && event.target.closest && event.target.closest("#trackingLabelPickBtn")) return;
+        els.trackingLabelPdfInput.click();
+      });
+      els.trackingLabelDropZone.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        els.trackingLabelPdfInput.click();
+      });
+      els.trackingLabelDropZone.addEventListener("dragenter", (event) => {
+        event.preventDefault();
+        setTrackingLabelDropzoneDragState(true);
+      });
+      els.trackingLabelDropZone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+        setTrackingLabelDropzoneDragState(true);
+      });
+      els.trackingLabelDropZone.addEventListener("dragleave", () => {
+        setTrackingLabelDropzoneDragState(false);
+      });
+      els.trackingLabelDropZone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        setTrackingLabelDropzoneDragState(false);
+        const files = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files : null;
+        const droppedFile = files && files.length ? files[0] : null;
+        applyTrackingLabelUploadFile(droppedFile);
+      });
+    }
     if (els.trackingExtractBtn) {
       els.trackingExtractBtn.addEventListener("click", () => {
         addTrackingFromLabelUpload().catch((err) => {
@@ -16688,7 +16724,12 @@
       });
     }
     if (els.trackingLabelPdfInput) {
-      els.trackingLabelPdfInput.addEventListener("change", () => showStatus(els.trackingStatus, ""));
+      els.trackingLabelPdfInput.addEventListener("change", () => {
+        const inputFile = els.trackingLabelPdfInput.files && els.trackingLabelPdfInput.files.length
+          ? els.trackingLabelPdfInput.files[0]
+          : null;
+        applyTrackingLabelUploadFile(inputFile);
+      });
     }
     if (els.trackingTableBody) {
       els.trackingTableBody.addEventListener("click", (event) => {
