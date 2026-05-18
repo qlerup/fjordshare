@@ -2982,6 +2982,8 @@ input[type="checkbox"] {
 .print-ready-project-card.project-cancelled::before {
   content: "ANNULLERET";
   color: rgba(255, 214, 214, 0.18);
+  font-size: clamp(14px, 2.2vw, 38px);
+  letter-spacing: 0.04em;
 }
 
 .print-ready-project-card.project-completed {
