@@ -12212,7 +12212,6 @@
         const isExpanded = canExpandEvents && state.trackingExpandedIds.has(id);
         const eventText = String(item.last_event_text || item.summary || "-");
         const eventLocation = String(item.last_event_location || "");
-        const source = String(item.source || "");
         const targetUsername = String(item.target_username || "").trim();
         const assigneeHtml = targetUsername ? esc(targetUsername) : `<span class="hint">Ikke tildelt</span>`;
         const error = String(item.error || "");
@@ -12235,7 +12234,6 @@
             <td>
               <div class="tracking-number-cell">
                 ${numberHtml}
-                ${source ? `<span class="hint">${esc(source)}</span>` : ""}
               </div>
             </td>
             <td>${assigneeHtml}</td>
