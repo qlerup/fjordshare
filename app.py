@@ -11718,6 +11718,24 @@ def _safe_zip_arcname(*parts: str) -> str:
     return "/".join(segments) or "fil"
 
 
+def _print_ready_quantity_from_row(file_row: sqlite3.Row) -> int:
+    try:
+        return max(1, int(file_row["quantity"] or 1))
+    except Exception:
+        return 1
+
+
+def _print_ready_download_filename(file_row: sqlite3.Row) -> str:
+    quantity = _print_ready_quantity_from_row(file_row)
+    original_name = sanitize_filename(str(file_row["filename"] or "fil"))
+    if not original_name:
+        original_name = "fil"
+    # Avoid stacking prefixes if the source filename already starts with "Nx " format.
+    base_name = re.sub(r"^\s*\d+\s*[xX]\s+", "", original_name).strip() or original_name
+    prefixed = sanitize_filename(f"{quantity}x {base_name}")
+    return prefixed or f"{quantity}x {base_name}"
+
+
 def _selected_print_ready_rows(
     user: User,
     raw_file_ids: Any,
@@ -12235,6 +12253,7 @@ def serialize_print_ready_project(
             is_printed = project_status == "completed" or bool(int(row["current_printed"] or 0))
             external_url = _print_ready_external_url(row)
             is_external_link = bool(external_url)
+            download_name = _print_ready_download_filename(row)
             total_quantity += quantity
             if is_printed:
                 printed_file_count += 1
@@ -12255,7 +12274,12 @@ def serialize_print_ready_project(
                     "file_size": int(row["file_size"] or 0),
                     "attachments": attachments,
                     "content_url": url_for("api_file_content", file_id=file_id),
-                    "download_url": url_for("api_file_download", file_id=file_id),
+                    "download_url": url_for(
+                        "api_print_ready_project_file_download",
+                        project_id=project_id,
+                        project_file_id=int(row["id"]),
+                    ),
+                    "download_name": download_name,
                     "is_external_link": is_external_link,
                     "external_url": external_url,
                     "external_source": _print_ready_external_source(row) if is_external_link else "",
@@ -12711,11 +12735,12 @@ def build_print_ready_zip(project: sqlite3.Row, files: list[sqlite3.Row], attach
                 display_folder = ""
             link_url = _print_ready_external_url(row)
             display_name = _print_ready_display_name(row)
+            download_name = _print_ready_download_filename(row)
             file_arc = unique_name(
                 _safe_zip_arcname(
                     "filer",
                     display_folder,
-                    str(row["filename"] or "fil"),
+                    download_name,
                 )
             )
             wrote_file = False
@@ -15929,6 +15954,56 @@ def api_print_ready_pdf(project_id: int):
         mimetype="application/pdf",
         as_attachment=True,
         download_name=name,
+    )
+
+
+@app.route("/api/print-ready/<int:project_id>/files/<int:project_file_id>/download", methods=["GET"])
+@login_required
+def api_print_ready_project_file_download(project_id: int, project_file_id: int):
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+    if not _can_access_print_ready_project(project):
+        return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+
+    with closing(get_conn()) as conn:
+        project_file_row = conn.execute(
+            """
+            SELECT id, project_id, file_id, filename, quantity
+            FROM print_ready_project_files
+            WHERE id=? AND project_id=?
+            """,
+            (int(project_file_id), int(project_id)),
+        ).fetchone()
+
+    if project_file_row is None:
+        return jsonify({"ok": False, "error": "Projektfilen findes ikke"}), 404
+
+    file_id = int(project_file_row["file_id"] or 0)
+    with closing(get_conn()) as conn:
+        file_row = conn.execute("SELECT * FROM files WHERE id=?", (file_id,)).fetchone()
+
+    if file_row is None:
+        return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
+    if not user_can_access_file(current_user, file_row, "view"):
+        return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+
+    external_url = _external_link_url_from_row(file_row)
+    if external_url:
+        return redirect(external_url)
+
+    try:
+        path = file_disk_path(file_row)
+    except Exception:
+        return jsonify({"ok": False, "error": "Ugyldig filsti"}), 400
+
+    if not path.exists() or not path.is_file():
+        return jsonify({"ok": False, "error": "Filen findes ikke på disk"}), 404
+
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=_print_ready_download_filename(project_file_row),
     )
 
 

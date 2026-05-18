@@ -11149,9 +11149,10 @@
       const isLink = !!(file && file.is_external_link);
       const displayName = String((file && (file.display_name || file.external_title || file.filename)) || "-");
       const href = String((isLink && file.external_url) || (file && file.download_url) || "#");
+      const downloadName = String((file && (file.download_name || file.filename)) || "");
       const downloadAttrs = isLink
         ? `target="_blank" rel="noopener"`
-        : `download="${esc((file && file.filename) || "")}" data-print-ready-file-download="1"`;
+        : `download="${esc(downloadName)}" data-print-ready-file-download="1"`;
       const typeLabel = isLink ? `<span class="file-ext-badge file-ext-link">LINK</span>` : "";
       return `
         <tr class="print-ready-file-row">
