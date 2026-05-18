@@ -534,6 +534,8 @@
     signupLinksTableBody: document.getElementById("signupLinksTableBody"),
     trackingNumberInput: document.getElementById("trackingNumberInput"),
     trackingAddBtn: document.getElementById("trackingAddBtn"),
+    trackingLabelPdfInput: document.getElementById("trackingLabelPdfInput"),
+    trackingExtractBtn: document.getElementById("trackingExtractBtn"),
     trackingStatus: document.getElementById("trackingStatus"),
     trackingTableBody: document.getElementById("trackingTableBody"),
     trackingAssignModal: document.getElementById("trackingAssignModal"),
@@ -3046,6 +3048,33 @@
     }
   }
 
+  async function extractTrackingNumberFromLabelPdfFile(file) {
+    const selectedFile = file || null;
+    if (!selectedFile) {
+      throw new Error("Vælg en pakkelabel i PDF-format.");
+    }
+
+    const fileName = String(selectedFile.name || "").toLowerCase();
+    const looksPdf = selectedFile.type === "application/pdf" || fileName.endsWith(".pdf");
+    if (!looksPdf) {
+      throw new Error("Kun PDF-filer kan bruges til udtræk.");
+    }
+
+    const formData = new FormData();
+    formData.append("label_pdf", selectedFile, String(selectedFile.name || "label.pdf"));
+    const extractData = await api("/api/admin/tracking/extract-label", {
+      method: "POST",
+      body: formData,
+    });
+
+    const extractedNumber = String((extractData && extractData.tracking_number) || "").trim();
+    if (!extractedNumber) {
+      throw new Error("Kunne ikke finde et gyldigt pakkenummer i PDF-filen.");
+    }
+
+    return extractedNumber;
+  }
+
   async function addTrackingFromSmsConfirmInput() {
     if (state.role !== "admin") return;
     const trackingNumber = String((els.smsConfirmTrackingInput && els.smsConfirmTrackingInput.value) || "").trim();
@@ -3092,28 +3121,10 @@
       return;
     }
 
-    const fileName = String(file.name || "").toLowerCase();
-    const looksPdf = file.type === "application/pdf" || fileName.endsWith(".pdf");
-    if (!looksPdf) {
-      showStatus(els.smsConfirmStatus, "Kun PDF-filer kan bruges til udtræk.", "error");
-      if (els.smsConfirmLabelPdfInput) els.smsConfirmLabelPdfInput.value = "";
-      return;
-    }
-
     if (els.smsConfirmExtractBtn) els.smsConfirmExtractBtn.disabled = true;
     showStatus(els.smsConfirmStatus, "Udtrækker pakkenummer fra PDF...", "ok");
     try {
-      const formData = new FormData();
-      formData.append("label_pdf", file, String(file.name || "label.pdf"));
-      const extractData = await api("/api/admin/tracking/extract-label", {
-        method: "POST",
-        body: formData,
-      });
-
-      const extractedNumber = String((extractData && extractData.tracking_number) || "").trim();
-      if (!extractedNumber) {
-        throw new Error("Kunne ikke finde et gyldigt pakkenummer i PDF-filen.");
-      }
+      const extractedNumber = await extractTrackingNumberFromLabelPdfFile(file);
 
       const result = await createTrackingEntry(extractedNumber, {
         targetUsername: state.smsConfirmTargetUsername,
@@ -12219,6 +12230,50 @@
     }
   }
 
+  async function addTrackingFromLabelUpload() {
+    if (state.role !== "admin") return;
+
+    const input = els.trackingLabelPdfInput;
+    const file = input && input.files && input.files.length ? input.files[0] : null;
+    if (!file) {
+      showStatus(els.trackingStatus, "Vælg en pakkelabel i PDF-format.", "error");
+      return;
+    }
+
+    if (els.trackingExtractBtn) els.trackingExtractBtn.disabled = true;
+    showStatus(els.trackingStatus, "Udtrækker pakkenummer fra PDF...", "ok");
+
+    try {
+      const extractedNumber = await extractTrackingNumberFromLabelPdfFile(file);
+      if (els.trackingNumberInput) els.trackingNumberInput.value = extractedNumber;
+
+      const result = await createTrackingEntry(extractedNumber);
+      if (result.duplicate) {
+        showStatus(
+          els.trackingStatus,
+          `Pakkenummer udtrukket (${extractedNumber}). Nummeret findes allerede i tracking.`,
+          "ok",
+        );
+        return;
+      }
+
+      const item = result.item;
+      const addedNumber = String((item && item.tracking_number) || extractedNumber).trim();
+      showStatus(
+        els.trackingStatus,
+        item && item.error
+          ? `Pakkenummer udtrukket (${addedNumber}) og tilføjet, men Bring svarede: ${item.error}`
+          : `Pakkenummer udtrukket (${addedNumber}) og tilføjet til tracking.`,
+        item && item.error ? "error" : "ok",
+      );
+    } catch (err) {
+      showStatus(els.trackingStatus, err.message || "Kunne ikke udtrække pakkenummer fra PDF", "error");
+    } finally {
+      if (els.trackingLabelPdfInput) els.trackingLabelPdfInput.value = "";
+      if (els.trackingExtractBtn) els.trackingExtractBtn.disabled = false;
+    }
+  }
+
   async function refreshTracking(id) {
     if (state.role !== "admin" || !id) return;
     showStatus(els.trackingStatus, "Opdaterer tracking hos Bring...", "ok");
@@ -16555,6 +16610,16 @@
         });
       });
       els.trackingNumberInput.addEventListener("input", () => showStatus(els.trackingStatus, ""));
+    }
+    if (els.trackingExtractBtn) {
+      els.trackingExtractBtn.addEventListener("click", () => {
+        addTrackingFromLabelUpload().catch((err) => {
+          showStatus(els.trackingStatus, err.message || "Kunne ikke udtrække pakkenummer", "error");
+        });
+      });
+    }
+    if (els.trackingLabelPdfInput) {
+      els.trackingLabelPdfInput.addEventListener("change", () => showStatus(els.trackingStatus, ""));
     }
     if (els.trackingTableBody) {
       els.trackingTableBody.addEventListener("click", (event) => {
