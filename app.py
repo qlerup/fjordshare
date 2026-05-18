@@ -153,6 +153,19 @@ except Exception:
 TRACKING_LABEL_PDF_MAX_PAGES = max(1, min(40, TRACKING_LABEL_PDF_MAX_PAGES))
 TRACKING_LABEL_GS1_RE = re.compile(r"\(\s*00\s*\)\s*([0-9\s\-]{16,48})", re.IGNORECASE)
 TRACKING_LABEL_DIGIT_BLOCK_RE = re.compile(r"\d(?:[\s\-]*\d){15,23}")
+TRACKING_SHARE_TRANSLATE_LANGS = {"da", "en", "fr"}
+TRACKING_SHARE_TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
+try:
+    TRACKING_SHARE_TRANSLATE_TIMEOUT_SEC = int(str(os.getenv("TRACKING_SHARE_TRANSLATE_TIMEOUT_SEC", "10")) or "10")
+except Exception:
+    TRACKING_SHARE_TRANSLATE_TIMEOUT_SEC = 10
+TRACKING_SHARE_TRANSLATE_TIMEOUT_SEC = max(3, min(30, TRACKING_SHARE_TRANSLATE_TIMEOUT_SEC))
+TRACKING_SHARE_TRANSLATE_MAX_TEXTS = 80
+TRACKING_SHARE_TRANSLATE_MAX_TEXT_LEN = 280
+TRACKING_SHARE_TRANSLATE_MAX_TOTAL_CHARS = 8000
+TRACKING_SHARE_TRANSLATE_CACHE_MAX_ITEMS = 5000
+TRACKING_SHARE_TRANSLATE_CACHE: dict[tuple[str, str], str] = {}
+TRACKING_SHARE_TRANSLATE_CACHE_LOCK = threading.Lock()
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp", ".lys", ".pwscene"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
@@ -9134,6 +9147,110 @@ def _cleanup_upload_temp_file(upload: Any) -> None:
             temp_path.unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def _normalize_tracking_share_translate_lang(value: Any) -> str:
+    lang = str(value or "").strip().lower()
+    if lang in TRACKING_SHARE_TRANSLATE_LANGS:
+        return lang
+    return "da"
+
+
+def _normalize_tracking_share_translate_text(value: Any) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return ""
+    if len(text) > TRACKING_SHARE_TRANSLATE_MAX_TEXT_LEN:
+        return text[:TRACKING_SHARE_TRANSLATE_MAX_TEXT_LEN].strip()
+    return text
+
+
+def _should_translate_tracking_share_text(text: str) -> bool:
+    value = str(text or "").strip()
+    if not value or value == "-":
+        return False
+    if re.fullmatch(r"[0-9\s:.,/\\\-+()]+", value):
+        return False
+    return True
+
+
+def _translate_tracking_share_text_via_google(text: str, target_lang: str) -> str:
+    source_text = str(text or "").strip()
+    if not source_text:
+        return ""
+    if target_lang == "da":
+        return source_text
+
+    query = urllib_parse.urlencode(
+        {
+            "client": "gtx",
+            "sl": "auto",
+            "tl": target_lang,
+            "dt": "t",
+            "q": source_text,
+        }
+    )
+    req = urllib_request.Request(
+        f"{TRACKING_SHARE_TRANSLATE_URL}?{query}",
+        method="GET",
+        headers={
+            "Accept": "application/json,text/plain,*/*",
+            "User-Agent": "fjordshare-tracking/1.0",
+        },
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=TRACKING_SHARE_TRANSLATE_TIMEOUT_SEC) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except Exception:
+        return source_text
+
+    try:
+        payload = json.loads(raw or "[]")
+    except Exception:
+        return source_text
+
+    if not isinstance(payload, list) or not payload or not isinstance(payload[0], list):
+        return source_text
+
+    translated_parts: list[str] = []
+    for chunk in payload[0]:
+        if not isinstance(chunk, list) or not chunk:
+            continue
+        translated_parts.append(str(chunk[0] or ""))
+
+    translated = "".join(translated_parts).strip()
+    return translated or source_text
+
+
+def _translate_tracking_share_text(text: str, target_lang: str) -> str:
+    source_text = str(text or "").strip()
+    if not source_text or target_lang == "da" or not _should_translate_tracking_share_text(source_text):
+        return source_text
+
+    key = (target_lang, source_text)
+    with TRACKING_SHARE_TRANSLATE_CACHE_LOCK:
+        cached = TRACKING_SHARE_TRANSLATE_CACHE.get(key)
+    if isinstance(cached, str) and cached.strip():
+        return cached
+
+    translated = _translate_tracking_share_text_via_google(source_text, target_lang)
+    translated_clean = str(translated or source_text).strip() or source_text
+
+    with TRACKING_SHARE_TRANSLATE_CACHE_LOCK:
+        if len(TRACKING_SHARE_TRANSLATE_CACHE) >= TRACKING_SHARE_TRANSLATE_CACHE_MAX_ITEMS:
+            try:
+                TRACKING_SHARE_TRANSLATE_CACHE.clear()
+            except Exception:
+                pass
+        TRACKING_SHARE_TRANSLATE_CACHE[key] = translated_clean
+
+    return translated_clean
+
+
+def _translate_tracking_share_texts(texts: list[str], target_lang: str) -> list[str]:
+    if target_lang == "da":
+        return [str(text or "").strip() for text in texts]
+    return [_translate_tracking_share_text(text, target_lang) for text in texts]
 
 
 def _tracking_candidates_from_text(raw_text: Any) -> list[str]:
