@@ -164,6 +164,7 @@
     fileInfoSelectedImageUrl: "",
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
+    trackingLabelUploadFile: null,
   };
 
   const els = {
@@ -535,6 +536,9 @@
     trackingNumberInput: document.getElementById("trackingNumberInput"),
     trackingAddBtn: document.getElementById("trackingAddBtn"),
     trackingLabelPdfInput: document.getElementById("trackingLabelPdfInput"),
+    trackingLabelDropZone: document.getElementById("trackingLabelDropZone"),
+    trackingLabelPickBtn: document.getElementById("trackingLabelPickBtn"),
+    trackingLabelFileName: document.getElementById("trackingLabelFileName"),
     trackingExtractBtn: document.getElementById("trackingExtractBtn"),
     trackingStatus: document.getElementById("trackingStatus"),
     trackingTableBody: document.getElementById("trackingTableBody"),
@@ -3073,6 +3077,71 @@
     }
 
     return extractedNumber;
+  }
+
+  function setTrackingLabelDropzoneDragState(active) {
+    if (!els.trackingLabelDropZone) return;
+    els.trackingLabelDropZone.classList.toggle("is-dragover", !!active);
+  }
+
+  function setTrackingLabelUploadFile(file) {
+    const selected = file || null;
+    state.trackingLabelUploadFile = selected;
+
+    if (!selected && els.trackingLabelPdfInput) {
+      els.trackingLabelPdfInput.value = "";
+    }
+
+    if (selected && els.trackingLabelPdfInput && typeof DataTransfer !== "undefined") {
+      try {
+        const transfer = new DataTransfer();
+        transfer.items.add(selected);
+        els.trackingLabelPdfInput.files = transfer.files;
+      } catch (_err) {
+        // Ignore browser limitations for programmatic file assignment.
+      }
+    }
+
+    if (els.trackingLabelFileName) {
+      els.trackingLabelFileName.textContent = selected
+        ? String(selected.name || "Valgt label-PDF")
+        : "Ingen fil valgt";
+    }
+  }
+
+  function selectedTrackingLabelUploadFile() {
+    if (state.trackingLabelUploadFile) {
+      return state.trackingLabelUploadFile;
+    }
+    const input = els.trackingLabelPdfInput;
+    if (!input || !input.files || !input.files.length) {
+      return null;
+    }
+    const selected = input.files[0] || null;
+    state.trackingLabelUploadFile = selected;
+    return selected;
+  }
+
+  function isPdfUploadFile(file) {
+    const selected = file || null;
+    if (!selected) return false;
+    const fileName = String(selected.name || "").toLowerCase();
+    return selected.type === "application/pdf" || fileName.endsWith(".pdf");
+  }
+
+  function applyTrackingLabelUploadFile(file) {
+    const selected = file || null;
+    if (!selected) {
+      setTrackingLabelUploadFile(null);
+      return;
+    }
+    if (!isPdfUploadFile(selected)) {
+      setTrackingLabelUploadFile(null);
+      showStatus(els.trackingStatus, "Kun PDF-filer kan bruges til udtræk.", "error");
+      return;
+    }
+    setTrackingLabelUploadFile(selected);
+    showStatus(els.trackingStatus, "");
   }
 
   async function addTrackingFromSmsConfirmInput() {
@@ -12233,8 +12302,7 @@
   async function addTrackingFromLabelUpload() {
     if (state.role !== "admin") return;
 
-    const input = els.trackingLabelPdfInput;
-    const file = input && input.files && input.files.length ? input.files[0] : null;
+    const file = selectedTrackingLabelUploadFile();
     if (!file) {
       showStatus(els.trackingStatus, "Vælg en pakkelabel i PDF-format.", "error");
       return;
@@ -12269,7 +12337,8 @@
     } catch (err) {
       showStatus(els.trackingStatus, err.message || "Kunne ikke udtrække pakkenummer fra PDF", "error");
     } finally {
-      if (els.trackingLabelPdfInput) els.trackingLabelPdfInput.value = "";
+      setTrackingLabelUploadFile(null);
+      setTrackingLabelDropzoneDragState(false);
       if (els.trackingExtractBtn) els.trackingExtractBtn.disabled = false;
     }
   }
