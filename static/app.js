@@ -11136,6 +11136,7 @@
     const expanded = !!(state.printReadyExpandedProjectIds && state.printReadyExpandedProjectIds.has(projectId));
     const fileCount = metrics.fileCount;
     const printedCount = metrics.printedCount;
+    const totalToPrintCount = metrics.quantity > 0 ? metrics.quantity : fileCount;
     const projectFileCount = metrics.projectFileCount;
     const createdText = String(project.created_at_display || formatDate(project.created_at) || "").trim();
     const title = String(project.title || "Projekt klar til print").trim() || "Projekt klar til print";
@@ -11193,6 +11194,7 @@
               ${summary ? `<span class="print-ready-project-summary">${esc(summary)}</span>` : ""}
               <span class="print-ready-project-badges">
                 <span class="print-ready-summary-badge">${fileCount} fil(er)</span>
+                <span class="print-ready-summary-badge">Totalt antal filer: ${totalToPrintCount}</span>
                 <span class="print-ready-summary-badge ${progressClass}">${printedCount}/${fileCount} printet</span>
                 ${isAdmin ? `<span class="print-ready-summary-badge ${projectFileCount ? "" : "needs-attention"}">${projectFileCount} projektfil(er)</span>` : ""}
                 ${isCancelledProject ? `<span class="print-ready-summary-badge danger">Annulleret</span>` : ""}

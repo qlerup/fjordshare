@@ -52,7 +52,7 @@ from flask_login import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from tracking_providers import TrackingLookupResult, fetch_bring_tracking, normalize_tracking_number
+from tracking_providers import TrackingLookupResult, fetch_tracking, normalize_tracking_number
 
 try:
     from cryptography.fernet import Fernet, InvalidToken as FernetInvalidToken
@@ -9080,10 +9080,10 @@ def _tracking_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 def _tracking_error_result(tracking_number: str, exc: Exception) -> TrackingLookupResult:
     return TrackingLookupResult(
-        carrier="bring",
+        carrier="tracking",
         tracking_number=str(tracking_number or ""),
         status="Fejl ved opdatering",
-        tracking_url=f"https://tracking.bring.com/tracking/{str(tracking_number or '').strip()}?lang=da",
+        tracking_url="",
         source="fjordshare",
         error=str(exc)[:260] or "Kunne ikke opdatere tracking",
     )
@@ -9322,7 +9322,7 @@ def refresh_tracking_shipment(tracking_id: int) -> dict[str, Any]:
 
     number = str(row["tracking_number"] or "")
     try:
-        result = fetch_bring_tracking(number, client_url=get_setting("external_base_url", ""))
+        result = fetch_tracking(number, client_url=get_setting("external_base_url", ""))
     except Exception as exc:
         result = _tracking_error_result(number, exc)
 
