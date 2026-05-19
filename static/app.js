@@ -3336,9 +3336,15 @@
     state.currentPrintReadyProject = project;
     const files = Array.isArray(project.files) ? project.files : [];
     const fileCount = Number(project.file_count || files.length || 0);
-    const printedCount = Number(project.printed_file_count || files.filter((f) => !!(f && f.printed)).length || 0);
+    const totalQuantity = Number(project.total_quantity || 0)
+      || files.reduce((sum, file) => sum + printReadyFileQuantity(file), 0)
+      || fileCount;
+    const printedQuantity = files.reduce((sum, file) => {
+      const total = printReadyFileQuantity(file);
+      return sum + printReadyFilePrintedQuantity(file, total);
+    }, 0);
     if (els.printReadyModalSummary) {
-      els.printReadyModalSummary.textContent = `${project.title || "Klar til print"} · Filer i alt: ${fileCount} · Printet: ${printedCount}`;
+      els.printReadyModalSummary.textContent = `${project.title || "Klar til print"} · Filer i alt: ${fileCount} · Printet: ${printedQuantity}/${totalQuantity}`;
     }
     if (els.printReadyZipLink) {
       els.printReadyZipLink.href = String(project.zip_url || "#");
@@ -10985,17 +10991,29 @@
   function printReadyProjectMetrics(project) {
     const files = Array.isArray(project && project.files) ? project.files : [];
     const fileCount = Number(project && project.file_count ? project.file_count : files.length) || 0;
+    const quantity = Number(project && project.total_quantity ? project.total_quantity : 0)
+      || files.reduce((sum, file) => sum + printReadyFileQuantity(file), 0)
+      || fileCount;
+    const printedQuantity = Number(project && project.printed_quantity ? project.printed_quantity : 0)
+      || files.reduce((sum, file) => {
+        const total = printReadyFileQuantity(file);
+        return sum + printReadyFilePrintedQuantity(file, total);
+      }, 0);
     const printedCount = Number(
       project && project.printed_file_count
         ? project.printed_file_count
-        : files.filter((f) => !!(f && f.printed)).length
+        : files.filter((f) => {
+          const total = printReadyFileQuantity(f);
+          return printReadyFilePrintedQuantity(f, total) >= total;
+        }).length
     ) || 0;
     const projectFileCount = Array.isArray(project && project.project_files) ? project.project_files.length : 0;
-    const quantity = Number(project && project.total_quantity ? project.total_quantity : 0) || 0;
+    const safePrintedQuantity = Math.max(0, Math.min(quantity, printedQuantity));
     const status = normalizePrintReadyProjectStatus(project && project.status);
     return {
       fileCount,
       printedCount,
+      printedQuantity: safePrintedQuantity,
       projectFileCount,
       quantity,
       status,
@@ -11008,9 +11026,10 @@
   function printReadyProjectMatchesFilter(project, filterKey) {
     const key = String(filterKey || "all");
     const metrics = printReadyProjectMetrics(project);
-    if (key === "unprinted") return !metrics.isFinal && metrics.printedCount <= 0;
-    if (key === "partial") return !metrics.isFinal && metrics.printedCount > 0 && metrics.printedCount < metrics.fileCount;
-    if (key === "all_printed") return !metrics.isFinal && metrics.fileCount > 0 && metrics.printedCount >= metrics.fileCount;
+    const totalToPrint = metrics.quantity > 0 ? metrics.quantity : metrics.fileCount;
+    if (key === "unprinted") return !metrics.isFinal && metrics.printedQuantity <= 0;
+    if (key === "partial") return !metrics.isFinal && metrics.printedQuantity > 0 && metrics.printedQuantity < totalToPrint;
+    if (key === "all_printed") return !metrics.isFinal && totalToPrint > 0 && metrics.printedQuantity >= totalToPrint;
     if (key === "missing_project_files") return !metrics.isFinal && metrics.projectFileCount <= 0;
     if (key === "cancelled") return metrics.isCancelled;
     return true;
@@ -11054,10 +11073,20 @@
       stats.projects += 1;
       stats.files += metrics.fileCount;
       stats.printed += metrics.printedCount;
+      stats.totalQuantity += metrics.quantity > 0 ? metrics.quantity : metrics.fileCount;
+      stats.printedQuantity += metrics.printedQuantity;
       stats.projectFiles += metrics.projectFileCount;
       if (metrics.projectFileCount <= 0 && !metrics.isFinal) stats.missingProjectFiles += 1;
       return stats;
-    }, { projects: 0, files: 0, printed: 0, projectFiles: 0, missingProjectFiles: 0 });
+    }, {
+      projects: 0,
+      files: 0,
+      printed: 0,
+      totalQuantity: 0,
+      printedQuantity: 0,
+      projectFiles: 0,
+      missingProjectFiles: 0,
+    });
   }
 
   function printReadyUserGroupHtml(username, items, options = {}) {
@@ -11069,7 +11098,7 @@
           <div>
             <h4>${esc(username)}</h4>
             <div class="print-ready-user-sub">
-              ${stats.projects} projekt(er) · ${stats.files} fil(er) · ${stats.printed}/${stats.files} printet${state.role === "admin" ? ` · ${stats.projectFiles} projektfil(er)` : ""}
+              ${stats.projects} projekt(er) · ${stats.files} fil(er) · ${stats.printedQuantity}/${stats.totalQuantity || stats.files} printet${state.role === "admin" ? ` · ${stats.projectFiles} projektfil(er)` : ""}
             </div>
           </div>
           ${state.role === "admin" && stats.missingProjectFiles ? `<span class="print-ready-user-warning">${stats.missingProjectFiles} mangler projektfil(er)</span>` : ""}
@@ -11257,16 +11286,16 @@
     const projectId = Number(project.id || 0);
     const expanded = !!(state.printReadyExpandedProjectIds && state.printReadyExpandedProjectIds.has(projectId));
     const fileCount = metrics.fileCount;
-    const printedCount = metrics.printedCount;
     const totalToPrintCount = metrics.quantity > 0 ? metrics.quantity : fileCount;
+    const printedToPrintCount = Math.max(0, Math.min(totalToPrintCount, Number(metrics.printedQuantity || 0)));
     const projectFileCount = metrics.projectFileCount;
     const createdText = String(project.created_at_display || formatDate(project.created_at) || "").trim();
     const title = String(project.title || "Projekt klar til print").trim() || "Projekt klar til print";
     const summary = String(project.selected_summary || "").trim();
     const bodyId = `print-ready-project-body-${projectId}`;
-    const progressClass = printedCount <= 0
+    const progressClass = printedToPrintCount <= 0
       ? "is-empty"
-      : (fileCount > 0 && printedCount >= fileCount ? "is-done" : "is-partial");
+      : (totalToPrintCount > 0 && printedToPrintCount >= totalToPrintCount ? "is-done" : "is-partial");
     const rows = files.map((file) => {
       const isLink = !!(file && file.is_external_link);
       const quantity = printReadyFileQuantity(file);
@@ -11352,8 +11381,8 @@
               ${summary ? `<span class="print-ready-project-summary">${esc(summary)}</span>` : ""}
               <span class="print-ready-project-badges">
                 <span class="print-ready-summary-badge">${fileCount} fil(er)</span>
-                <span class="print-ready-summary-badge">Totalt antal filer: ${totalToPrintCount}</span>
-                <span class="print-ready-summary-badge ${progressClass}">${printedCount}/${fileCount} printet</span>
+                <span class="print-ready-summary-badge">Totalt antal print: ${totalToPrintCount}</span>
+                <span class="print-ready-summary-badge ${progressClass}">${printedToPrintCount}/${totalToPrintCount} printet</span>
                 ${isAdmin ? `<span class="print-ready-summary-badge ${projectFileCount ? "" : "needs-attention"}">${projectFileCount} projektfil(er)</span>` : ""}
                 ${isCancelledProject ? `<span class="print-ready-summary-badge danger">Annulleret</span>` : ""}
                 ${isCompletedProject ? `<span class="print-ready-summary-badge success">Færdig</span>` : ""}
