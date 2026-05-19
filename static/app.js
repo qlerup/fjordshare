@@ -139,6 +139,8 @@
     currentPrintReadyProjectId: 0,
     currentPrintReadyProject: null,
     printReadyNameResolver: null,
+    printReadyFileCountResolver: null,
+    printReadyFileCountContext: null,
     smsConfirmResolver: null,
     smsConfirmContext: "",
     smsConfirmTargetUsername: "",
@@ -438,6 +440,14 @@
     printReadyNameStatus: document.getElementById("printReadyNameStatus"),
     printReadyNameCancelBtn: document.getElementById("printReadyNameCancelBtn"),
     printReadyNameSendBtn: document.getElementById("printReadyNameSendBtn"),
+    printReadyFileCountModal: document.getElementById("printReadyFileCountModal"),
+    printReadyFileCountSummary: document.getElementById("printReadyFileCountSummary"),
+    printReadyFileCountCurrent: document.getElementById("printReadyFileCountCurrent"),
+    printReadyFileCountInput: document.getElementById("printReadyFileCountInput"),
+    printReadyFileCountMaxHint: document.getElementById("printReadyFileCountMaxHint"),
+    printReadyFileCountStatus: document.getElementById("printReadyFileCountStatus"),
+    printReadyFileCountCancelBtn: document.getElementById("printReadyFileCountCancelBtn"),
+    printReadyFileCountConfirmBtn: document.getElementById("printReadyFileCountConfirmBtn"),
     smsConfirmModal: document.getElementById("smsConfirmModal"),
     smsConfirmCloseBtn: document.getElementById("smsConfirmCloseBtn"),
     smsConfirmNoBtn: document.getElementById("smsConfirmNoBtn"),
@@ -2917,6 +2927,98 @@
       window.setTimeout(() => {
         els.printReadyNameInput.focus();
         els.printReadyNameInput.select();
+      }, 0);
+    });
+  }
+
+  function printReadyFileQuantity(file) {
+    return Math.max(1, Number(file && file.quantity ? file.quantity : 1) || 1);
+  }
+
+  function printReadyFilePrintedQuantity(file, quantity = null) {
+    const total = Math.max(1, Number(quantity || printReadyFileQuantity(file)) || 1);
+    const raw = Number(
+      file && file.printed_quantity != null
+        ? file.printed_quantity
+        : (file && file.printed ? total : 0)
+    );
+    const safe = Number.isFinite(raw) ? Math.trunc(raw) : 0;
+    return Math.max(0, Math.min(total, safe));
+  }
+
+  function settlePrintReadyFileCountModal(value) {
+    const resolver = state.printReadyFileCountResolver;
+    state.printReadyFileCountResolver = null;
+    state.printReadyFileCountContext = null;
+    if (els.printReadyFileCountModal) els.printReadyFileCountModal.classList.add("hidden");
+    showStatus(els.printReadyFileCountStatus, "");
+    if (els.printReadyFileCountConfirmBtn) els.printReadyFileCountConfirmBtn.disabled = false;
+    const parsed = Number(value || 0);
+    if (typeof resolver === "function") resolver(Number.isFinite(parsed) ? Math.trunc(parsed) : 0);
+  }
+
+  function confirmPrintReadyFileCountSelection() {
+    const context = state.printReadyFileCountContext || {};
+    const remaining = Math.max(1, Number(context.remaining || 1) || 1);
+    const rawValue = Number((els.printReadyFileCountInput && els.printReadyFileCountInput.value) || 0);
+    if (!Number.isFinite(rawValue)) {
+      showStatus(els.printReadyFileCountStatus, "Indtast et gyldigt antal.", "error");
+      if (els.printReadyFileCountInput) els.printReadyFileCountInput.focus();
+      return;
+    }
+    const selected = Math.trunc(rawValue);
+    if (selected < 1 || selected > remaining) {
+      showStatus(els.printReadyFileCountStatus, `Vælg et antal mellem 1 og ${remaining}.`, "error");
+      if (els.printReadyFileCountInput) els.printReadyFileCountInput.focus();
+      return;
+    }
+    settlePrintReadyFileCountModal(selected);
+  }
+
+  function askPrintReadyFileCount(file) {
+    const quantity = printReadyFileQuantity(file);
+    const printedQuantity = printReadyFilePrintedQuantity(file, quantity);
+    const remaining = Math.max(0, quantity - printedQuantity);
+    if (remaining <= 0) return Promise.resolve(0);
+
+    const displayName = String((file && (file.display_name || file.filename)) || "Fil").trim() || "Fil";
+    if (!els.printReadyFileCountModal || !els.printReadyFileCountInput) {
+      const suggested = String(Math.max(1, Math.min(remaining, 1)));
+      const raw = window.prompt(`Antal printet nu (${displayName})`, suggested);
+      if (raw === null) return Promise.resolve(0);
+      const parsed = Number.parseInt(String(raw || "").trim(), 10);
+      if (!Number.isFinite(parsed)) return Promise.resolve(0);
+      return Promise.resolve(Math.max(1, Math.min(remaining, parsed)));
+    }
+
+    return new Promise((resolve) => {
+      state.printReadyFileCountResolver = resolve;
+      state.printReadyFileCountContext = {
+        fileId: Number((file && file.file_id) || 0),
+        quantity,
+        printedQuantity,
+        remaining,
+      };
+      if (els.printReadyFileCountSummary) els.printReadyFileCountSummary.textContent = displayName;
+      if (els.printReadyFileCountCurrent) {
+        els.printReadyFileCountCurrent.textContent = `Status: ${printedQuantity}/${quantity} printet`;
+      }
+      if (els.printReadyFileCountMaxHint) {
+        els.printReadyFileCountMaxHint.textContent = `Maks i denne omgang: ${remaining}`;
+      }
+      if (els.printReadyFileCountInput) {
+        els.printReadyFileCountInput.min = "1";
+        els.printReadyFileCountInput.max = String(remaining);
+        els.printReadyFileCountInput.step = "1";
+        els.printReadyFileCountInput.value = String(Math.max(1, Math.min(remaining, 1)));
+      }
+      showStatus(els.printReadyFileCountStatus, "");
+      if (els.printReadyFileCountConfirmBtn) els.printReadyFileCountConfirmBtn.disabled = false;
+      els.printReadyFileCountModal.classList.remove("hidden");
+      window.setTimeout(() => {
+        if (!els.printReadyFileCountInput) return;
+        els.printReadyFileCountInput.focus();
+        els.printReadyFileCountInput.select();
       }, 0);
     });
   }
@@ -11167,6 +11269,12 @@
       : (fileCount > 0 && printedCount >= fileCount ? "is-done" : "is-partial");
     const rows = files.map((file) => {
       const isLink = !!(file && file.is_external_link);
+      const quantity = printReadyFileQuantity(file);
+      const printedQuantity = printReadyFilePrintedQuantity(file, quantity);
+      const isFullyPrinted = printedQuantity >= quantity;
+      const statusCountClass = printedQuantity <= 0
+        ? "is-empty"
+        : (isFullyPrinted ? "is-done" : "is-partial");
       const displayName = String((file && (file.display_name || file.external_title || file.filename)) || "-");
       const href = String((isLink && file.external_url) || (file && file.download_url) || "#");
       const downloadName = String((file && (file.download_name || file.filename)) || "");
@@ -11186,6 +11294,7 @@
       const thumbHtml = is3dOpenable
         ? `<button class="print-ready-file-thumb-btn" type="button" data-print-ready-action="open-file-3d" data-file-id="${fileId}" aria-label="${esc(`Åbn 3D visning for ${displayName}`)}" title="${esc(`Åbn 3D visning for ${displayName}`)}">${thumbInner}</button>`
         : `<span class="print-ready-file-thumb" aria-hidden="true">${thumbInner}</span>`;
+      const completeFileLabel = printedQuantity > 0 ? "Tilføj printet" : "Printet færdig";
       const typeLabel = isLink ? `<span class="file-ext-badge file-ext-link">LINK</span>` : "";
       const fileNameCell = `
         <div class="print-ready-file-name-cell">
@@ -11200,8 +11309,8 @@
           <td>${esc((file && (file.display_path || file.folder_path)) || "-")}</td>
           <td>${fileNameCell}</td>
           <td>${printReadyInfoHtml(file)}</td>
-          <td>${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : `<span class="print-ready-status-muted">Ikke printet</span>`}</td>
-          <td>${Number(file.quantity || 1)}</td>
+          <td><span class="print-ready-file-status-count ${statusCountClass}">${printedQuantity}/${quantity}</span></td>
+          <td>${quantity}</td>
           <td>${printReadyAttachmentHtml(file.attachments)}</td>
           <td>
             <div class="print-ready-row-actions">
@@ -11211,9 +11320,16 @@
                     isFinalProject || finishedMode
                       ? `<button class="btn small" type="button" disabled>${isCancelledProject ? "Annulleret" : "Projekt færdigt"}</button>`
                       : (
-                        file.printed
+                        isFullyPrinted
                           ? `<button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Fjern printet</button>`
-                          : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Printet færdig</button>`
+                          : (
+                            printedQuantity > 0
+                              ? `
+                                <button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">${completeFileLabel}</button>
+                                <button class="btn small" type="button" data-print-ready-action="uncomplete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">Nulstil</button>
+                              `
+                              : `<button class="btn small primary" type="button" data-print-ready-action="complete-file" data-id="${Number(project.id || 0)}" data-file-id="${Number(file.file_id || 0)}">${completeFileLabel}</button>`
+                          )
                       )
                   )
                   : `<span class="hint">-</span>`
@@ -11498,17 +11614,42 @@
       return;
     }
 
-    const project = (Array.isArray(state.printReadyProjects) ? state.printReadyProjects : [])
-      .find((item) => Number(item && item.id ? item.id : 0) === id) || null;
+    const project = (
+      Array.isArray(state.printReadyProjects) ? state.printReadyProjects : []
+    ).concat(
+      Array.isArray(state.finishedProjects) ? state.finishedProjects : []
+    ).find((item) => Number(item && item.id ? item.id : 0) === id) || null;
 
     if (action === "complete-file") {
       const fileId = Number(btn.dataset.fileId || 0);
       if (!fileId) return;
+
+      const projectFile = (Array.isArray(project && project.files) ? project.files : [])
+        .find((entry) => Number(entry && entry.file_id ? entry.file_id : 0) === fileId) || null;
+      const quantity = printReadyFileQuantity(projectFile);
+      const printedQuantity = printReadyFilePrintedQuantity(projectFile, quantity);
+      if (printedQuantity >= quantity) {
+        showStatus(statusEl, "Filen er allerede markeret som helt printet.", "ok");
+        return;
+      }
+
+      let printedIncrement = 1;
+      if (quantity > 1) {
+        printedIncrement = await askPrintReadyFileCount(projectFile || { quantity, printed_quantity: printedQuantity });
+        if (!printedIncrement) return;
+      }
+
       await api(`/api/admin/print-ready/${id}/file/${fileId}/complete`, {
         method: "POST",
-        body: { send_sms: false },
+        body: { send_sms: false, printed_increment: printedIncrement },
       });
-      showStatus(statusEl, "Fil markeret som printet.", "ok");
+      showStatus(
+        statusEl,
+        quantity > 1
+          ? `Fil opdateret: +${printedIncrement} printet.`
+          : "Fil markeret som printet.",
+        "ok",
+      );
       await loadPrintReadyProjects();
       await loadFiles();
       return;
@@ -11518,7 +11659,7 @@
       const fileId = Number(btn.dataset.fileId || 0);
       if (!fileId) return;
       await api(`/api/admin/print-ready/${id}/file/${fileId}/uncomplete`, { method: "POST" });
-      showStatus(statusEl, "Printet-status fjernet for filen.", "ok");
+      showStatus(statusEl, "Print-status nulstillet for filen.", "ok");
       await loadPrintReadyProjects();
       await loadFiles();
       return;
@@ -15240,7 +15381,14 @@
       if (event.key !== "Escape") return;
       const shareModalOpen = !!(els.shareModal && !els.shareModal.classList.contains("hidden"));
       const printReadyModalOpen = !!(els.printReadyModal && !els.printReadyModal.classList.contains("hidden"));
+      const printReadyFileCountModalOpen = !!(
+        els.printReadyFileCountModal && !els.printReadyFileCountModal.classList.contains("hidden")
+      );
       const printReadyNameModalOpen = !!(els.printReadyNameModal && !els.printReadyNameModal.classList.contains("hidden"));
+      if (printReadyFileCountModalOpen) {
+        settlePrintReadyFileCountModal(0);
+        return;
+      }
       if (printReadyNameModalOpen) {
         settlePrintReadyNameModal("");
         return;
@@ -16097,6 +16245,13 @@
         settleSmsConfirmModal(false);
         return;
       }
+      const printReadyFileCountModalOpen = !!(
+        els.printReadyFileCountModal && !els.printReadyFileCountModal.classList.contains("hidden")
+      );
+      if (printReadyFileCountModalOpen) {
+        settlePrintReadyFileCountModal(0);
+        return;
+      }
       const smsOnboardingModalOpen = !!(els.smsOnboardingModal && !els.smsOnboardingModal.classList.contains("hidden"));
       if (smsOnboardingModalOpen) {
         closeSmsOnboardingModal();
@@ -16391,6 +16546,34 @@
       els.printReadyNameModal.addEventListener("click", (event) => {
         if (event.target === els.printReadyNameModal || event.target.classList.contains("modal-backdrop")) {
           settlePrintReadyNameModal("");
+        }
+      });
+    }
+    if (els.printReadyFileCountCancelBtn) {
+      els.printReadyFileCountCancelBtn.addEventListener("click", () => settlePrintReadyFileCountModal(0));
+    }
+    if (els.printReadyFileCountConfirmBtn) {
+      els.printReadyFileCountConfirmBtn.addEventListener("click", confirmPrintReadyFileCountSelection);
+    }
+    if (els.printReadyFileCountInput) {
+      els.printReadyFileCountInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          confirmPrintReadyFileCountSelection();
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          settlePrintReadyFileCountModal(0);
+        }
+      });
+      els.printReadyFileCountInput.addEventListener("input", () => {
+        showStatus(els.printReadyFileCountStatus, "");
+      });
+    }
+    if (els.printReadyFileCountModal) {
+      els.printReadyFileCountModal.addEventListener("click", (event) => {
+        if (event.target === els.printReadyFileCountModal || event.target.classList.contains("modal-backdrop")) {
+          settlePrintReadyFileCountModal(0);
         }
       });
     }

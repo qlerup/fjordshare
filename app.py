@@ -8764,6 +8764,7 @@ def init_db() -> None:
                 filename TEXT NOT NULL,
                 note TEXT,
                 quantity INTEGER NOT NULL DEFAULT 1,
+                printed_quantity INTEGER NOT NULL DEFAULT 0,
                 scale_up_enabled INTEGER NOT NULL DEFAULT 0,
                 scale_up_value TEXT NOT NULL DEFAULT '',
                 scale_up_unit TEXT NOT NULL DEFAULT '%',
@@ -8974,6 +8975,18 @@ def init_db() -> None:
             conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN display_path TEXT NOT NULL DEFAULT ''")
         if "sort_order" not in project_file_cols:
             conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        if "printed_quantity" not in project_file_cols:
+            conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN printed_quantity INTEGER NOT NULL DEFAULT 0")
+            conn.execute(
+                """
+                UPDATE print_ready_project_files
+                SET printed_quantity = CASE
+                    WHEN COALESCE((SELECT printed FROM files WHERE files.id = print_ready_project_files.file_id), 0) = 1
+                        THEN MAX(1, COALESCE(quantity, 1))
+                    ELSE 0
+                END
+                """
+            )
         if "scale_up_enabled" not in project_file_cols:
             conn.execute("ALTER TABLE print_ready_project_files ADD COLUMN scale_up_enabled INTEGER NOT NULL DEFAULT 0")
         if "scale_up_value" not in project_file_cols:
@@ -8988,6 +9001,15 @@ def init_db() -> None:
         )
         conn.execute(
             "UPDATE print_ready_project_files SET scale_up_unit='%' WHERE scale_up_unit IS NULL OR TRIM(scale_up_unit)=''"
+        )
+        conn.execute(
+            """
+            UPDATE print_ready_project_files
+            SET printed_quantity = MAX(
+                0,
+                MIN(COALESCE(printed_quantity, 0), MAX(1, COALESCE(quantity, 1)))
+            )
+            """
         )
 
         project_asset_cols = [r[1] for r in conn.execute("PRAGMA table_info(print_ready_project_assets)").fetchall()]
@@ -12255,7 +12277,18 @@ def serialize_print_ready_project(
             if not ext:
                 ext = str(Path(str(row["filename"] or "")).suffix or "").strip().lower()
             quantity = max(1, int(row["quantity"] or 1))
-            is_printed = project_status == "completed" or bool(int(row["current_printed"] or 0))
+            try:
+                raw_printed_quantity = int(_row_value(row, "printed_quantity", 0) or 0)
+            except Exception:
+                raw_printed_quantity = 0
+            is_fully_printed_from_file = bool(int(_row_value(row, "current_printed", 0) or 0))
+            if project_status == "completed":
+                printed_quantity = quantity
+            else:
+                printed_quantity = max(0, min(quantity, raw_printed_quantity))
+                if printed_quantity <= 0 and is_fully_printed_from_file:
+                    printed_quantity = quantity
+            is_printed = printed_quantity >= quantity
             external_url = _print_ready_external_url(row)
             is_external_link = bool(external_url)
             is_3d = ext in THREE_D_EXTENSIONS
@@ -12280,6 +12313,7 @@ def serialize_print_ready_project(
                     "mime_type": str(_row_value(row, "current_mime_type", "") or "application/octet-stream"),
                     "note": str(row["note"] or ""),
                     "quantity": quantity,
+                    "printed_quantity": printed_quantity,
                     "scale_up_enabled": bool(int(row["scale_up_enabled"] or 0)),
                     "scale_up_value": str(row["scale_up_value"] or ""),
                     "scale_up_unit": normalize_scale_up_unit(row["scale_up_unit"]),
@@ -16187,6 +16221,10 @@ def api_admin_print_ready_cancel(project_id: int):
         ]
         _set_files_printed_state(conn, file_ids, False, str(current_user.username or ""))
         conn.execute(
+            "UPDATE print_ready_project_files SET printed_quantity=0 WHERE project_id=?",
+            (int(project_id),),
+        )
+        conn.execute(
             "UPDATE print_ready_projects SET status=? WHERE id=?",
             ("cancelled", int(project_id)),
         )
@@ -16546,22 +16584,44 @@ def api_admin_print_ready_complete_file(project_id: int, file_id: int):
 
     body = request.get_json(silent=True) or {}
     send_sms = bool(parse_bool(body.get("send_sms")))
+    try:
+        printed_increment = int(body.get("printed_increment") or 1)
+    except Exception:
+        printed_increment = 1
 
     with closing(get_conn()) as conn:
         row = conn.execute(
             """
-            SELECT pf.file_id, f.*
+            SELECT
+                pf.id AS project_file_id,
+                pf.file_id,
+                pf.quantity,
+                pf.printed_quantity,
+                f.id AS file_row_id,
+                f.printed AS file_printed
             FROM print_ready_project_files pf
             LEFT JOIN files f ON f.id = pf.file_id
             WHERE pf.project_id=? AND pf.file_id=?
+            ORDER BY pf.sort_order, pf.id
             LIMIT 1
             """,
             (int(project_id), int(file_id)),
         ).fetchone()
         if row is None:
             return jsonify({"ok": False, "error": "Filen findes ikke i projektet"}), 404
-        if row["id"] is None:
+        if row["file_row_id"] is None:
             return jsonify({"ok": False, "error": "Filen findes ikke længere"}), 404
+
+        quantity = max(1, int(_row_value(row, "quantity", 1) or 1))
+        try:
+            current_printed_quantity = int(_row_value(row, "printed_quantity", 0) or 0)
+        except Exception:
+            current_printed_quantity = 0
+        current_printed_quantity = max(0, min(quantity, current_printed_quantity))
+        if current_printed_quantity <= 0 and bool(int(_row_value(row, "file_printed", 0) or 0)):
+            current_printed_quantity = quantity
+        increment = max(1, min(quantity, int(printed_increment or 1)))
+        new_printed_quantity = min(quantity, current_printed_quantity + increment)
 
         file_ids_for_project = [
             int(r["file_id"])
@@ -16571,7 +16631,20 @@ def api_admin_print_ready_complete_file(project_id: int, file_id: int):
             ).fetchall()
         ]
 
-        _set_files_printed_state(conn, [int(file_id)], True, str(current_user.username or ""))
+        conn.execute(
+            """
+            UPDATE print_ready_project_files
+            SET printed_quantity=?
+            WHERE project_id=? AND file_id=?
+            """,
+            (new_printed_quantity, int(project_id), int(file_id)),
+        )
+        _set_files_printed_state(
+            conn,
+            [int(file_id)],
+            bool(new_printed_quantity >= quantity),
+            str(current_user.username or ""),
+        )
         files = _print_ready_file_rows(conn, int(project_id))
         attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
         project_asset_rows = _print_ready_project_asset_rows(conn, int(project_id))
@@ -16582,7 +16655,10 @@ def api_admin_print_ready_complete_file(project_id: int, file_id: int):
     log_activity(
         kind="print-ready",
         action="complete-file",
-        message=f"Fil markeret printet i projekt {int(project_id)}: file_id={int(file_id)}",
+        message=(
+            f"Fil opdateret printet i projekt {int(project_id)}: "
+            f"file_id={int(file_id)} ({new_printed_quantity}/{quantity})"
+        ),
         level="info",
         folder_path=str(project["owner_home_folder"] or ""),
         target=str(project["title"] or f"Projekt #{int(project_id)}"),
@@ -16612,6 +16688,9 @@ def api_admin_print_ready_complete_file(project_id: int, file_id: int):
             "ok": True,
             "project": payload,
             "updated_file_id": int(file_id),
+            "updated_printed_quantity": int(new_printed_quantity),
+            "quantity": int(quantity),
+            "printed": bool(new_printed_quantity >= quantity),
             "sms_sent": bool(sms_sent),
             "sms_error": str(sms_error or ""),
         }
@@ -16631,19 +16710,34 @@ def api_admin_print_ready_uncomplete_file(project_id: int, file_id: int):
     with closing(get_conn()) as conn:
         row = conn.execute(
             """
-            SELECT pf.file_id, f.id
+            SELECT
+                pf.id AS project_file_id,
+                pf.file_id,
+                pf.quantity,
+                f.id AS file_row_id
             FROM print_ready_project_files pf
             LEFT JOIN files f ON f.id = pf.file_id
             WHERE pf.project_id=? AND pf.file_id=?
+            ORDER BY pf.sort_order, pf.id
             LIMIT 1
             """,
             (int(project_id), int(file_id)),
         ).fetchone()
         if row is None:
             return jsonify({"ok": False, "error": "Filen findes ikke i projektet"}), 404
-        if row["id"] is None:
+        if row["file_row_id"] is None:
             return jsonify({"ok": False, "error": "Filen findes ikke længere"}), 404
 
+        quantity = max(1, int(_row_value(row, "quantity", 1) or 1))
+
+        conn.execute(
+            """
+            UPDATE print_ready_project_files
+            SET printed_quantity=0
+            WHERE project_id=? AND file_id=?
+            """,
+            (int(project_id), int(file_id)),
+        )
         _set_files_printed_state(conn, [int(file_id)], False, str(current_user.username or ""))
         files = _print_ready_file_rows(conn, int(project_id))
         attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
@@ -16655,7 +16749,7 @@ def api_admin_print_ready_uncomplete_file(project_id: int, file_id: int):
     log_activity(
         kind="print-ready",
         action="uncomplete-file",
-        message=f"Printet-status fjernet i projekt {int(project_id)}: file_id={int(file_id)}",
+        message=f"Printet-status nulstillet i projekt {int(project_id)}: file_id={int(file_id)}",
         level="info",
         folder_path=str(project["owner_home_folder"] or ""),
         target=str(project["title"] or f"Projekt #{int(project_id)}"),
@@ -16668,6 +16762,8 @@ def api_admin_print_ready_uncomplete_file(project_id: int, file_id: int):
             "ok": True,
             "project": payload,
             "updated_file_id": int(file_id),
+            "updated_printed_quantity": 0,
+            "quantity": int(quantity),
             "printed": False,
         }
     )
@@ -16698,6 +16794,14 @@ def api_admin_print_ready_complete_project(project_id: int):
             return jsonify({"ok": False, "error": "Projektet indeholder ingen filer"}), 400
 
         _set_files_printed_state(conn, file_ids, True, str(current_user.username or ""))
+        conn.execute(
+            """
+            UPDATE print_ready_project_files
+            SET printed_quantity=MAX(1, COALESCE(quantity, 1))
+            WHERE project_id=?
+            """,
+            (int(project_id),),
+        )
         conn.execute(
             "UPDATE print_ready_projects SET status=? WHERE id=?",
             ("completed", int(project_id)),

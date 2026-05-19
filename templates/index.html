@@ -661,6 +661,27 @@
   </div>
 </div>
 
+<div id="printReadyFileCountModal" class="modal hidden">
+  <div class="modal-backdrop"></div>
+  <div class="modal-card print-ready-file-count-modal-card">
+    <div class="toolbar">
+      <h3>Print status</h3>
+      <button id="printReadyFileCountCancelBtn" class="btn" type="button">Annuller</button>
+    </div>
+    <div id="printReadyFileCountSummary" class="metadata-current-file">-</div>
+    <div id="printReadyFileCountCurrent" class="hint">Status: 0/0 printet</div>
+    <label class="modal-field" for="printReadyFileCountInput">
+      <span>Antal printet nu</span>
+      <input id="printReadyFileCountInput" class="input" type="number" min="1" step="1" inputmode="numeric">
+    </label>
+    <div id="printReadyFileCountMaxHint" class="hint">Maks: 1</div>
+    <div id="printReadyFileCountStatus" class="status hidden"></div>
+    <div class="toolbar end">
+      <button id="printReadyFileCountConfirmBtn" class="btn primary" type="button">Gem</button>
+    </div>
+  </div>
+</div>
+
 <div id="smsConfirmModal" class="modal hidden">
   <div class="modal-backdrop"></div>
   <div class="modal-card sms-confirm-card">

@@ -3271,6 +3271,37 @@ input[type="checkbox"] {
   color: #ffecec;
 }
 
+.print-ready-file-status-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: #e5edff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.print-ready-file-status-count.is-empty {
+  color: var(--muted);
+}
+
+.print-ready-file-status-count.is-partial {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(30, 64, 175, 0.35);
+  color: #deebff;
+}
+
+.print-ready-file-status-count.is-done {
+  border-color: rgba(52, 211, 153, 0.58);
+  background: rgba(18, 103, 71, 0.8);
+  color: #ebfff7;
+}
+
 .print-ready-file-name-cell {
   display: flex;
   align-items: center;
@@ -3530,6 +3561,12 @@ input[type="checkbox"] {
   width: min(460px, calc(100vw - 24px));
   display: grid;
   gap: 12px;
+}
+
+.print-ready-file-count-modal-card {
+  width: min(430px, calc(100vw - 24px));
+  display: grid;
+  gap: 10px;
 }
 
 .print-ready-modal-card .toolbar {
