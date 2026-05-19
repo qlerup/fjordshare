@@ -447,6 +447,7 @@
     printReadyFileCountMaxHint: document.getElementById("printReadyFileCountMaxHint"),
     printReadyFileCountStatus: document.getElementById("printReadyFileCountStatus"),
     printReadyFileCountCancelBtn: document.getElementById("printReadyFileCountCancelBtn"),
+    printReadyFileCountAllBtn: document.getElementById("printReadyFileCountAllBtn"),
     printReadyFileCountConfirmBtn: document.getElementById("printReadyFileCountConfirmBtn"),
     smsConfirmModal: document.getElementById("smsConfirmModal"),
     smsConfirmCloseBtn: document.getElementById("smsConfirmCloseBtn"),
@@ -2952,9 +2953,19 @@
     state.printReadyFileCountContext = null;
     if (els.printReadyFileCountModal) els.printReadyFileCountModal.classList.add("hidden");
     showStatus(els.printReadyFileCountStatus, "");
+    if (els.printReadyFileCountAllBtn) els.printReadyFileCountAllBtn.disabled = false;
     if (els.printReadyFileCountConfirmBtn) els.printReadyFileCountConfirmBtn.disabled = false;
     const parsed = Number(value || 0);
     if (typeof resolver === "function") resolver(Number.isFinite(parsed) ? Math.trunc(parsed) : 0);
+  }
+
+  function confirmPrintReadyFileCountAll() {
+    const context = state.printReadyFileCountContext || {};
+    const remaining = Math.max(1, Number(context.remaining || 1) || 1);
+    if (els.printReadyFileCountInput) {
+      els.printReadyFileCountInput.value = String(remaining);
+    }
+    settlePrintReadyFileCountModal(remaining);
   }
 
   function confirmPrintReadyFileCountSelection() {
@@ -3013,6 +3024,7 @@
         els.printReadyFileCountInput.value = String(Math.max(1, Math.min(remaining, 1)));
       }
       showStatus(els.printReadyFileCountStatus, "");
+      if (els.printReadyFileCountAllBtn) els.printReadyFileCountAllBtn.disabled = false;
       if (els.printReadyFileCountConfirmBtn) els.printReadyFileCountConfirmBtn.disabled = false;
       els.printReadyFileCountModal.classList.remove("hidden");
       window.setTimeout(() => {
@@ -16589,6 +16601,9 @@
     }
     if (els.printReadyFileCountCancelBtn) {
       els.printReadyFileCountCancelBtn.addEventListener("click", () => settlePrintReadyFileCountModal(0));
+    }
+    if (els.printReadyFileCountAllBtn) {
+      els.printReadyFileCountAllBtn.addEventListener("click", confirmPrintReadyFileCountAll);
     }
     if (els.printReadyFileCountConfirmBtn) {
       els.printReadyFileCountConfirmBtn.addEventListener("click", confirmPrintReadyFileCountSelection);
