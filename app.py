@@ -12169,6 +12169,8 @@ def _print_ready_file_rows(conn: sqlite3.Connection, project_id: int) -> list[sq
             f.printed AS current_printed,
             f.printed_at AS current_printed_at,
             f.printed_by AS current_printed_by,
+            f.thumb_status AS current_thumb_status,
+            f.thumb_rel AS current_thumb_rel,
             f.external_url AS current_external_url,
             f.external_source AS current_external_source,
             f.external_title AS current_external_title,
@@ -12249,10 +12251,18 @@ def serialize_print_ready_project(
         project_status = str(project_row["status"] or "ready").strip().lower()
         for row in file_rows:
             file_id = int(row["file_id"])
+            ext = str(_row_value(row, "current_ext", "") or "").strip().lower()
+            if not ext:
+                ext = str(Path(str(row["filename"] or "")).suffix or "").strip().lower()
             quantity = max(1, int(row["quantity"] or 1))
             is_printed = project_status == "completed" or bool(int(row["current_printed"] or 0))
             external_url = _print_ready_external_url(row)
             is_external_link = bool(external_url)
+            is_3d = ext in THREE_D_EXTENSIONS
+            is_3d_openable = ext in THREE_D_VIEWER_EXTENSIONS
+            thumb_status = str(_row_value(row, "current_thumb_status", "none") or "none").strip().lower() or "none"
+            thumb_rel = str(_row_value(row, "current_thumb_rel", "") or "").strip()
+            has_thumb = bool(thumb_rel)
             download_name = _print_ready_download_filename(row)
             total_quantity += quantity
             if is_printed:
@@ -12266,6 +12276,8 @@ def serialize_print_ready_project(
                     "display_path": _print_ready_display_path(project_row, row),
                     "filename": str(row["filename"] or ""),
                     "display_name": _print_ready_display_name(row),
+                    "ext": ext,
+                    "mime_type": str(_row_value(row, "current_mime_type", "") or "application/octet-stream"),
                     "note": str(row["note"] or ""),
                     "quantity": quantity,
                     "scale_up_enabled": bool(int(row["scale_up_enabled"] or 0)),
@@ -12273,6 +12285,10 @@ def serialize_print_ready_project(
                     "scale_up_unit": normalize_scale_up_unit(row["scale_up_unit"]),
                     "file_size": int(row["file_size"] or 0),
                     "attachments": attachments,
+                    "thumb_status": thumb_status,
+                    "thumb_url": url_for("api_file_thumb", file_id=file_id) if has_thumb else "",
+                    "is_3d": is_3d,
+                    "is_3d_openable": is_3d_openable,
                     "content_url": url_for("api_file_content", file_id=file_id),
                     "download_url": url_for(
                         "api_print_ready_project_file_download",

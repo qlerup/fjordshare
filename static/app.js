@@ -11038,6 +11038,26 @@
     `;
   }
 
+  function findPrintReadyFileById(fileId) {
+    const id = Number(fileId || 0);
+    if (!id) return null;
+    const projectCollections = [
+      Array.isArray(state.printReadyProjects) ? state.printReadyProjects : [],
+      Array.isArray(state.finishedProjects) ? state.finishedProjects : [],
+    ];
+    for (const projects of projectCollections) {
+      for (const project of projects) {
+        const files = Array.isArray(project && project.files) ? project.files : [];
+        for (const file of files) {
+          if (Number(file && file.file_id ? file.file_id : 0) === id) {
+            return file;
+          }
+        }
+      }
+    }
+    return null;
+  }
+
   function printReadyInfoHtml(file) {
     const note = String((file && file.note) || "").trim();
     const scale = scaleUpLabel(file);
@@ -11150,14 +11170,35 @@
       const displayName = String((file && (file.display_name || file.external_title || file.filename)) || "-");
       const href = String((isLink && file.external_url) || (file && file.download_url) || "#");
       const downloadName = String((file && (file.download_name || file.filename)) || "");
+      const fileId = Number((file && file.file_id) || 0);
+      const is3dOpenable = !isLink && !!(file && file.is_3d_openable) && fileId > 0;
+      const thumbUrl = String((file && file.thumb_url) || "").trim();
+      const coverUrl = String((file && file.external_cover_url) || "").trim();
+      const thumbPreviewUrl = thumbUrl || coverUrl;
+      const extLabel = String((file && file.ext) || "").replace(/^\./, "").trim().toUpperCase();
+      const thumbFallback = (extLabel || (isLink ? "LINK" : "3D")).slice(0, 4);
       const downloadAttrs = isLink
         ? `target="_blank" rel="noopener"`
         : `download="${esc(downloadName)}" data-print-ready-file-download="1"`;
+      const thumbInner = thumbPreviewUrl
+        ? `<img src="${esc(thumbPreviewUrl)}" alt="${esc(displayName)}" loading="lazy" decoding="async">`
+        : `<span class="print-ready-file-thumb-fallback">${esc(thumbFallback)}</span>`;
+      const thumbHtml = is3dOpenable
+        ? `<button class="print-ready-file-thumb-btn" type="button" data-print-ready-action="open-file-3d" data-file-id="${fileId}" aria-label="${esc(`Åbn 3D visning for ${displayName}`)}" title="${esc(`Åbn 3D visning for ${displayName}`)}">${thumbInner}</button>`
+        : `<span class="print-ready-file-thumb" aria-hidden="true">${thumbInner}</span>`;
       const typeLabel = isLink ? `<span class="file-ext-badge file-ext-link">LINK</span>` : "";
+      const fileNameCell = `
+        <div class="print-ready-file-name-cell">
+          ${thumbHtml}
+          <span class="print-ready-file-name-wrap">
+            <a class="print-ready-file-download-link" href="${esc(href)}" ${downloadAttrs}>${esc(displayName)}</a>${typeLabel ? ` ${typeLabel}` : ""}
+          </span>
+        </div>
+      `;
       return `
         <tr class="print-ready-file-row">
           <td>${esc((file && (file.display_path || file.folder_path)) || "-")}</td>
-          <td><a class="print-ready-file-download-link" href="${esc(href)}" ${downloadAttrs}>${esc(displayName)}</a>${typeLabel ? ` ${typeLabel}` : ""}</td>
+          <td>${fileNameCell}</td>
           <td>${printReadyInfoHtml(file)}</td>
           <td>${file.printed ? `<div class="print-ready-status-pill">Printet</div>` : `<span class="print-ready-status-muted">Ikke printet</span>`}</td>
           <td>${Number(file.quantity || 1)}</td>
@@ -11390,6 +11431,20 @@
     const btn = target ? target.closest("[data-print-ready-action]") : null;
     if (!btn) return;
     const action = String(btn.dataset.printReadyAction || "");
+
+    if (action === "open-file-3d") {
+      const fileId = Number(btn.dataset.fileId || 0);
+      if (!fileId) return;
+      const file = findPrintReadyFileById(fileId) || fileById(fileId);
+      if (!file || !file.is_3d_openable) {
+        showStatus(statusEl, "3D visning er ikke tilgængelig for filen.", "error");
+        return;
+      }
+      showStatus(statusEl, "");
+      await open3DModal(file);
+      return;
+    }
+
     const id = Number(btn.dataset.id || 0);
     if (!id) return;
 
