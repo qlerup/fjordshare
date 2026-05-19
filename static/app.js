@@ -11414,7 +11414,7 @@
                   ${
                     (isCancelledProject || isCompletedProject)
                       ? ""
-                      : `<button class="btn small primary" type="button" data-print-ready-action="${isAllPrintedProject ? "uncomplete-project" : "complete-project"}" data-id="${projectId}">${isAllPrintedProject ? "Fjern printet" : "Projekt færdig"}</button>`
+                      : `<button class="btn small primary" type="button" data-print-ready-action="complete-project" data-id="${projectId}" ${isAllPrintedProject ? "" : "disabled title=\"Aktiveres når alle antal er printet\""}>Projekt færdig</button>`
                   }
                   <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${projectId}">${isCancelledProject ? "Slet" : "Annuller"}</button>
                 `
@@ -11708,21 +11708,19 @@
     }
 
     if (action === "complete-project") {
-      await api(`/api/admin/print-ready/${id}/mark-all-printed`, {
-        method: "POST",
-      });
-      showStatus(statusEl, "Alle filer i projektet er markeret som printet.", "ok");
-      await loadPrintReadyProjects();
-      await loadFinishedProjects();
-      await loadFiles();
-      return;
-    }
+      const metrics = printReadyProjectMetrics(project);
+      const totalToPrintCount = metrics.quantity > 0 ? metrics.quantity : metrics.fileCount;
+      const isAllPrinted = totalToPrintCount > 0 && metrics.printedQuantity >= totalToPrintCount;
+      if (!isAllPrinted) {
+        showStatus(statusEl, "Knappen aktiveres når alle antal er markeret som printet.", "info");
+        return;
+      }
 
-    if (action === "uncomplete-project") {
-      await api(`/api/admin/print-ready/${id}/clear-printed`, {
+      await api(`/api/admin/print-ready/${id}/complete`, {
         method: "POST",
+        body: { send_sms: false },
       });
-      showStatus(statusEl, "Print-status er nulstillet for hele projektet.", "ok");
+      showStatus(statusEl, "Projekt markeret som færdigprintet.", "ok");
       await loadPrintReadyProjects();
       await loadFinishedProjects();
       await loadFiles();
