@@ -16893,27 +16893,49 @@ def api_admin_print_ready_complete_project(project_id: int):
 
     body = request.get_json(silent=True) or {}
     send_sms = bool(parse_bool(body.get("send_sms")))
+    preserve_printed_state = bool(parse_bool(body.get("preserve_printed_state")))
 
     with closing(get_conn()) as conn:
-        file_ids = [
-            int(r["file_id"])
-            for r in conn.execute(
-                "SELECT file_id FROM print_ready_project_files WHERE project_id=? ORDER BY sort_order, id",
-                (int(project_id),),
-            ).fetchall()
-        ]
+        project_file_rows = conn.execute(
+            """
+            SELECT
+                pf.file_id,
+                pf.quantity,
+                pf.printed_quantity,
+                f.printed AS file_printed
+            FROM print_ready_project_files pf
+            LEFT JOIN files f ON f.id = pf.file_id
+            WHERE pf.project_id=?
+            ORDER BY pf.sort_order, pf.id
+            """,
+            (int(project_id),),
+        ).fetchall()
+        file_ids = [int(r["file_id"]) for r in project_file_rows]
         if not file_ids:
             return jsonify({"ok": False, "error": "Projektet indeholder ingen filer"}), 400
 
-        _set_files_printed_state(conn, file_ids, True, str(current_user.username or ""))
-        conn.execute(
-            """
-            UPDATE print_ready_project_files
-            SET printed_quantity=MAX(1, COALESCE(quantity, 1))
-            WHERE project_id=?
-            """,
-            (int(project_id),),
-        )
+        if preserve_printed_state:
+            for row in project_file_rows:
+                quantity = max(1, int(_row_value(row, "quantity", 1) or 1))
+                try:
+                    printed_quantity = int(_row_value(row, "printed_quantity", 0) or 0)
+                except Exception:
+                    printed_quantity = 0
+                printed_quantity = max(0, min(quantity, printed_quantity))
+                if printed_quantity <= 0 and bool(int(_row_value(row, "file_printed", 0) or 0)):
+                    printed_quantity = quantity
+                if printed_quantity < quantity:
+                    return jsonify({"ok": False, "error": "Alle antal skal være markeret som printet før projektet kan færdigmeldes"}), 400
+        else:
+            _set_files_printed_state(conn, file_ids, True, str(current_user.username or ""))
+            conn.execute(
+                """
+                UPDATE print_ready_project_files
+                SET printed_quantity=MAX(1, COALESCE(quantity, 1))
+                WHERE project_id=?
+                """,
+                (int(project_id),),
+            )
         conn.execute(
             "UPDATE print_ready_projects SET status=? WHERE id=?",
             ("completed", int(project_id)),

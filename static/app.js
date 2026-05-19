@@ -11716,9 +11716,12 @@
         return;
       }
 
+      const shouldComplete = await askSmsConfirmation(`Projekt: ${project && project.title ? project.title : id}`, project);
+      if (!shouldComplete) return;
+
       await api(`/api/admin/print-ready/${id}/complete`, {
         method: "POST",
-        body: { send_sms: false },
+        body: { send_sms: false, preserve_printed_state: true },
       });
       showStatus(statusEl, "Projekt markeret som færdigprintet.", "ok");
       await loadPrintReadyProjects();
