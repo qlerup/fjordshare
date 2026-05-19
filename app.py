@@ -16769,6 +16769,118 @@ def api_admin_print_ready_uncomplete_file(project_id: int, file_id: int):
     )
 
 
+@app.route("/api/admin/print-ready/<int:project_id>/mark-all-printed", methods=["POST"])
+@login_required
+def api_admin_print_ready_mark_all_printed(project_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+
+    with closing(get_conn()) as conn:
+        file_ids = [
+            int(r["file_id"])
+            for r in conn.execute(
+                "SELECT file_id FROM print_ready_project_files WHERE project_id=? ORDER BY sort_order, id",
+                (int(project_id),),
+            ).fetchall()
+        ]
+        if not file_ids:
+            return jsonify({"ok": False, "error": "Projektet indeholder ingen filer"}), 400
+
+        _set_files_printed_state(conn, file_ids, True, str(current_user.username or ""))
+        conn.execute(
+            """
+            UPDATE print_ready_project_files
+            SET printed_quantity=MAX(1, COALESCE(quantity, 1))
+            WHERE project_id=?
+            """,
+            (int(project_id),),
+        )
+
+        files = _print_ready_file_rows(conn, int(project_id))
+        attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+        project_asset_rows = _print_ready_project_asset_rows(conn, int(project_id))
+        conn.commit()
+
+    payload = serialize_print_ready_project(project, files, attachment_map, project_asset_rows)
+
+    log_activity(
+        kind="print-ready",
+        action="mark-all-printed",
+        message=f"Alle filer markeret som printet i projekt {int(project_id)} ({len(file_ids)} filer)",
+        level="info",
+        folder_path=str(project["owner_home_folder"] or ""),
+        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        actor=str(current_user.username or ""),
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "project": payload,
+            "updated_file_count": len(file_ids),
+            "printed_all": True,
+        }
+    )
+
+
+@app.route("/api/admin/print-ready/<int:project_id>/clear-printed", methods=["POST"])
+@login_required
+def api_admin_print_ready_clear_printed(project_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    project = _fetch_print_ready_project(int(project_id))
+    if project is None:
+        return jsonify({"ok": False, "error": "Projektet findes ikke"}), 404
+
+    with closing(get_conn()) as conn:
+        file_ids = [
+            int(r["file_id"])
+            for r in conn.execute(
+                "SELECT file_id FROM print_ready_project_files WHERE project_id=? ORDER BY sort_order, id",
+                (int(project_id),),
+            ).fetchall()
+        ]
+        if not file_ids:
+            return jsonify({"ok": False, "error": "Projektet indeholder ingen filer"}), 400
+
+        _set_files_printed_state(conn, file_ids, False, str(current_user.username or ""))
+        conn.execute(
+            "UPDATE print_ready_project_files SET printed_quantity=0 WHERE project_id=?",
+            (int(project_id),),
+        )
+
+        files = _print_ready_file_rows(conn, int(project_id))
+        attachment_map = _attachment_rows_for_files(conn, [int(r["file_id"]) for r in files])
+        project_asset_rows = _print_ready_project_asset_rows(conn, int(project_id))
+        conn.commit()
+
+    payload = serialize_print_ready_project(project, files, attachment_map, project_asset_rows)
+
+    log_activity(
+        kind="print-ready",
+        action="clear-printed",
+        message=f"Print-status nulstillet for hele projektet {int(project_id)} ({len(file_ids)} filer)",
+        level="info",
+        folder_path=str(project["owner_home_folder"] or ""),
+        target=str(project["title"] or f"Projekt #{int(project_id)}"),
+        actor=str(current_user.username or ""),
+    )
+
+    return jsonify(
+        {
+            "ok": True,
+            "project": payload,
+            "updated_file_count": len(file_ids),
+            "printed_all": False,
+        }
+    )
+
+
 @app.route("/api/admin/print-ready/<int:project_id>/complete", methods=["POST"])
 @login_required
 def api_admin_print_ready_complete_project(project_id: int):

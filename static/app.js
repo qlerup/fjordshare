@@ -11288,6 +11288,7 @@
     const fileCount = metrics.fileCount;
     const totalToPrintCount = metrics.quantity > 0 ? metrics.quantity : fileCount;
     const printedToPrintCount = Math.max(0, Math.min(totalToPrintCount, Number(metrics.printedQuantity || 0)));
+    const isAllPrintedProject = totalToPrintCount > 0 && printedToPrintCount >= totalToPrintCount;
     const projectFileCount = metrics.projectFileCount;
     const createdText = String(project.created_at_display || formatDate(project.created_at) || "").trim();
     const title = String(project.title || "Projekt klar til print").trim() || "Projekt klar til print";
@@ -11401,7 +11402,7 @@
                   ${
                     (isCancelledProject || isCompletedProject)
                       ? ""
-                      : `<button class="btn small primary" type="button" data-print-ready-action="complete-project" data-id="${projectId}">Projekt færdig</button>`
+                      : `<button class="btn small primary" type="button" data-print-ready-action="${isAllPrintedProject ? "uncomplete-project" : "complete-project"}" data-id="${projectId}">${isAllPrintedProject ? "Fjern printet" : "Projekt færdig"}</button>`
                   }
                   <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${projectId}">${isCancelledProject ? "Slet" : "Annuller"}</button>
                 `
@@ -11695,17 +11696,25 @@
     }
 
     if (action === "complete-project") {
-      const shouldComplete = await askSmsConfirmation(`Projekt: ${project && project.title ? project.title : id}`, project);
-      if (!shouldComplete) return;
-
-      await api(`/api/admin/print-ready/${id}/complete`, {
+      await api(`/api/admin/print-ready/${id}/mark-all-printed`, {
         method: "POST",
-        body: { send_sms: false },
       });
-      showStatus(statusEl, "Projekt markeret som færdigprintet.", "ok");
+      showStatus(statusEl, "Alle filer i projektet er markeret som printet.", "ok");
       await loadPrintReadyProjects();
       await loadFinishedProjects();
       await loadFiles();
+      return;
+    }
+
+    if (action === "uncomplete-project") {
+      await api(`/api/admin/print-ready/${id}/clear-printed`, {
+        method: "POST",
+      });
+      showStatus(statusEl, "Print-status er nulstillet for hele projektet.", "ok");
+      await loadPrintReadyProjects();
+      await loadFinishedProjects();
+      await loadFiles();
+      return;
     }
   }
 
