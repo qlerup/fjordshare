@@ -627,6 +627,16 @@ input[type="checkbox"] {
   background: var(--panel-2);
 }
 
+.mapper-search-clear:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.mapper-search-clear:disabled:hover {
+  color: var(--muted);
+  background: transparent;
+}
+
 @media (max-width: 720px) {
   .mapper-search.open .mapper-search-field,
   .mapper-search.has-query .mapper-search-field {
