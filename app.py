@@ -91,11 +91,12 @@ except Exception:
 ROOT_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT_DIR / "data")).resolve()
 _UPLOAD_ROOT_ENV = str(os.getenv("UPLOAD_ROOT", os.getenv("UPLOAD_DIR", "")) or "").strip()
+_TUS_TMP_DIR_ENV = str(os.getenv("TUS_TMP_DIR", "") or "").strip()
 _THUMBS_DIR_ENV = str(os.getenv("THUMBS_DIR", os.getenv("THUMB_DIR", "")) or "").strip()
 BAMBU_DIR = DATA_DIR / "bambu"
 BAMBU_SLICE_DEBUG_DIR = BAMBU_DIR / "slice-debug"
 UPLOAD_ROOT = Path(_UPLOAD_ROOT_ENV or str(DATA_DIR / "uploads")).resolve()
-TUS_TMP_DIR = DATA_DIR / "tus_uploads"
+TUS_TMP_DIR = Path(_TUS_TMP_DIR_ENV or str(UPLOAD_ROOT / ".tus_uploads")).resolve()
 THUMBS_DIR = Path(_THUMBS_DIR_ENV or str(DATA_DIR / "thumbs")).resolve()
 FILE_ATTACHMENTS_DIR = DATA_DIR / "file_attachments"
 PRINT_READY_PROJECT_UPLOADS_DIR = DATA_DIR / "print_ready_project_uploads"
@@ -190,6 +191,11 @@ try:
 except Exception:
     THUMB_WORKER_COUNT = 2
 THUMB_WORKER_COUNT = max(1, min(4, THUMB_WORKER_COUNT))
+try:
+    THUMB_MESH_RENDER_MAX_BYTES = int(str(os.getenv("THUMB_MESH_RENDER_MAX_BYTES", str(512 * 1024 * 1024))) or str(512 * 1024 * 1024))
+except Exception:
+    THUMB_MESH_RENDER_MAX_BYTES = 512 * 1024 * 1024
+THUMB_MESH_RENDER_MAX_BYTES = max(0, min(50 * 1024 * 1024 * 1024, THUMB_MESH_RENDER_MAX_BYTES))
 THUMB_RENDER_STYLE_VERSION = "9"
 FOLDER_PREVIEW_THUMB_LIMIT = 4
 THREEMF_THUMBNAIL_MAX_IMAGE_BYTES = 32 * 1024 * 1024
@@ -7836,6 +7842,33 @@ def _write_lys_embedded_thumbnail(scene_path: Path, output_png: Path, *, size_px
     return False
 
 
+def _format_bytes_compact(num_bytes: int) -> str:
+    value = float(max(0, int(num_bytes or 0)))
+    units = ("bytes", "KB", "MB", "GB", "TB")
+    idx = 0
+    while value >= 1024.0 and idx < len(units) - 1:
+        value /= 1024.0
+        idx += 1
+    if idx == 0:
+        return f"{int(value)} {units[idx]}"
+    return f"{value:.1f} {units[idx]}"
+
+
+def _ensure_mesh_render_source_within_limit(mesh_path: Path, *, context: str = "Thumbnail") -> None:
+    if THUMB_MESH_RENDER_MAX_BYTES <= 0:
+        return
+    try:
+        size = int(mesh_path.stat().st_size)
+    except Exception:
+        return
+    if size <= THUMB_MESH_RENDER_MAX_BYTES:
+        return
+    raise RuntimeError(
+        f"{context} sprunget over: filen er {_format_bytes_compact(size)}, "
+        f"over graensen paa {_format_bytes_compact(THUMB_MESH_RENDER_MAX_BYTES)}."
+    )
+
+
 def _load_mesh_for_thumbnail(mesh_path: Path):
     import trimesh
 
@@ -7924,12 +7957,14 @@ def _ensure_preview_glb_for_row(file_row: sqlite3.Row) -> Optional[Path]:
         render_source = source_path
         with tempfile.TemporaryDirectory(prefix="preview-", dir=str(DATA_DIR)) as tmp:
             tmp_dir = Path(tmp)
+            _ensure_mesh_render_source_within_limit(source_path, context="3D preview")
             if ext in {".step", ".stp"}:
                 converted_obj, convert_error = _convert_step_to_obj(source_path, tmp_dir)
                 if not converted_obj:
                     raise RuntimeError(f"STEP conversion failed: {convert_error}")
                 render_source = converted_obj
 
+            _ensure_mesh_render_source_within_limit(render_source, context="3D preview")
             loaded = _load_mesh_for_thumbnail(render_source)
             if loaded is None:
                 raise RuntimeError("Preview: unable to load mesh")
@@ -7957,6 +7992,8 @@ def _ensure_preview_glb_for_row(file_row: sqlite3.Row) -> Optional[Path]:
 
 
 def _render_mesh_thumbnail(mesh_path: Path, output_png: Path, *, size_px: int, face_limit: int) -> None:
+    _ensure_mesh_render_source_within_limit(mesh_path, context="Thumbnail")
+
     import numpy as np
     import matplotlib
 
@@ -8068,6 +8105,7 @@ def _generate_thumbnail_file(file_row: sqlite3.Row, *, detailed: bool = False) -
                 return rel_name
             raise RuntimeError("PWSCENE preview image not found")
 
+        _ensure_mesh_render_source_within_limit(source_path, context="Thumbnail")
         if ext in {".step", ".stp"}:
             converted_obj, convert_error = _convert_step_to_obj(source_path, tmp_dir)
             if not converted_obj:

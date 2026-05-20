@@ -22,8 +22,11 @@
     environment:
       DATA_DIR: /data
       UPLOAD_ROOT: /uploads
+      TUS_TMP_DIR: ${TUS_TMP_DIR:-/uploads/.tus_uploads}
       THUMBS_DIR: /thumbs
       TZ: ${TZ:-Europe/Copenhagen}
+      THUMB_WORKER_COUNT: ${THUMB_WORKER_COUNT:-1}
+      THUMB_MESH_RENDER_MAX_BYTES: ${THUMB_MESH_RENDER_MAX_BYTES:-536870912}
       BAMBUSTUDIO_BIN: ${BAMBUSTUDIO_BIN:-bambu-studio}
       BAMBUSTUDIO_CONFIG_PATH: ${BAMBUSTUDIO_CONFIG_PATH:-}
       BAMBUSTUDIO_PROFILE_ROOT: ${BAMBUSTUDIO_PROFILE_ROOT:-}
