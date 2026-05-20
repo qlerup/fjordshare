@@ -4094,6 +4094,11 @@
 
   function renderFolderBrowser() {
     if (!els.folderList) return;
+    if (isMapperSearchFiltering()) {
+      els.folderList.innerHTML = "";
+      els.folderList.classList.add("hidden");
+      return;
+    }
     const folder = currentFolder() || state.homeFolder || "";
     const children = listDirectChildren(folder);
     if (!children.length) {
@@ -9439,9 +9444,13 @@
     if (!state.files.length) {
       const folder = currentFolder() || state.homeFolder || "";
       const hasChildFolders = listDirectChildren(folder).length > 0;
-      els.fileGrid.innerHTML = hasChildFolders
-        ? ""
-        : `<div class="panel"><p class="hint">Ingen filer eller mapper i denne mappe endnu.</p></div>`;
+      if (isMapperSearchFiltering()) {
+        els.fileGrid.innerHTML = `<div class="panel"><p class="hint">Ingen filnavne matcher søgningen.</p></div>`;
+      } else {
+        els.fileGrid.innerHTML = hasChildFolders
+          ? ""
+          : `<div class="panel"><p class="hint">Ingen filer eller mapper i denne mappe endnu.</p></div>`;
+      }
       if (state.currentInfoFileId) {
         closeFileInfoDrawer();
       }
@@ -9816,55 +9825,109 @@
     }
   }
 
-  async function searchFilesAndFolders() {
-    if (state.selectMode) return;
+  function mapperSearchInputValue() {
+    return String((els.mapperSearchInput && els.mapperSearchInput.value) || "").trim();
+  }
+
+  function isMapperSearchFiltering() {
+    return !!mapperSearchInputValue();
+  }
+
+  function setMapperSearchOpen(open) {
+    state.mapperSearchOpen = !!open;
+    if (els.mapperSearchWrap) {
+      els.mapperSearchWrap.classList.toggle("open", state.mapperSearchOpen);
+      els.mapperSearchWrap.classList.toggle("has-query", isMapperSearchFiltering());
+    }
+    if (els.mapperSearchBtn) {
+      els.mapperSearchBtn.setAttribute("aria-expanded", state.mapperSearchOpen ? "true" : "false");
+    }
+    if (state.mapperSearchOpen && els.mapperSearchInput) {
+      window.setTimeout(() => {
+        els.mapperSearchInput.focus();
+        els.mapperSearchInput.select();
+      }, 0);
+    }
+  }
+
+  function syncMapperSearchUi() {
+    if (els.mapperSearchWrap) {
+      els.mapperSearchWrap.classList.toggle("open", state.mapperSearchOpen);
+      els.mapperSearchWrap.classList.toggle("has-query", isMapperSearchFiltering());
+    }
+    if (els.mapperSearchClearBtn) {
+      els.mapperSearchClearBtn.disabled = !isMapperSearchFiltering();
+    }
+  }
+
+  function clearMapperSearchTimer() {
+    if (state.mapperSearchTimer) {
+      window.clearTimeout(state.mapperSearchTimer);
+      state.mapperSearchTimer = null;
+    }
+  }
+
+  async function clearMapperSearchResults({ close = false } = {}) {
+    clearMapperSearchTimer();
+    state.mapperSearchQuery = "";
+    state.mapperSearchRequestToken += 1;
+    if (els.mapperSearchInput) els.mapperSearchInput.value = "";
+    if (close) setMapperSearchOpen(false);
+    else syncMapperSearchUi();
+    await loadFiles();
+  }
+
+  async function runMapperSearchNow(options = {}) {
+    const query = mapperSearchInputValue();
+    state.mapperSearchQuery = query;
+    syncMapperSearchUi();
+    if (!query) {
+      await clearMapperSearchResults({ close: false });
+      return;
+    }
+
+    const requestToken = ++state.mapperSearchRequestToken;
     const baseFolder = currentFolder() || state.homeFolder || "";
-    const rawQuery = window.prompt("Søg efter fil eller mappe i denne mappe og undermapper:");
-    const query = String(rawQuery || "").trim();
-    if (!query) return;
+    if (!(options && options.silent)) {
+      showStatus(els.uploadStatus, "Søger...", "ok");
+    }
 
-    const queryLower = query.toLowerCase();
-    const matchingFolders = state.folders.filter((folder) => {
-      const path = String(folder && folder.path ? folder.path : "");
-      if (baseFolder && !pathMatchesPrefix(path, baseFolder)) return false;
-      return path.toLowerCase().includes(queryLower);
-    });
-
-    let data = null;
-    try {
-      data = await api(`/api/files/search?folder=${encodeURIComponent(baseFolder)}&q=${encodeURIComponent(query)}&limit=500`);
-    } catch (err) {
-      showStatus(els.uploadStatus, err.message || "Søgning fejlede", "error");
+    const data = await api(
+      `/api/files/search?folder=${encodeURIComponent(baseFolder)}&q=${encodeURIComponent(query)}&filename_only=1&limit=500`
+    );
+    if (requestToken !== state.mapperSearchRequestToken || query !== mapperSearchInputValue()) {
       return;
     }
 
     const items = Array.isArray(data && data.items) ? data.items : [];
-    if (items.length) {
-      state.files = items;
-      state.zipJobs = [];
-      renderFiles();
-      renderFolderBrowser();
-      updateFolderUiState();
-      const folderPart = matchingFolders.length ? ` · mapper: ${matchingFolders.length}` : "";
-      showStatus(els.uploadStatus, `Søgning: ${items.length} filer fundet${folderPart}.`, "ok");
-      return;
-    }
-
-    if (matchingFolders.length) {
-      const target = String(matchingFolders[0].path || "");
-      state.currentFolder = target;
-      if (els.folderSelect) els.folderSelect.value = target;
-      await loadFiles();
-      showStatus(els.uploadStatus, `Søgning: åbnede mappe "${target}".`, "ok");
-      return;
-    }
-
-    state.files = [];
+    state.files = items;
     state.zipJobs = [];
-    renderFiles();
     renderFolderBrowser();
+    renderFiles();
     updateFolderUiState();
-    showStatus(els.uploadStatus, "Ingen filer eller mapper matcher søgningen.", "error");
+    showStatus(
+      els.uploadStatus,
+      items.length ? `Søgning: ${items.length} filer fundet.` : "Ingen filnavne matcher søgningen.",
+      items.length ? "ok" : "error"
+    );
+  }
+
+  function scheduleMapperSearch() {
+    clearMapperSearchTimer();
+    state.mapperSearchQuery = mapperSearchInputValue();
+    syncMapperSearchUi();
+    if (!state.mapperSearchQuery) {
+      clearMapperSearchResults({ close: false }).catch((err) => {
+        showStatus(els.uploadStatus, err.message || "Kunne ikke rydde søgning", "error");
+      });
+      return;
+    }
+    state.mapperSearchTimer = window.setTimeout(() => {
+      state.mapperSearchTimer = null;
+      runMapperSearchNow().catch((err) => {
+        showStatus(els.uploadStatus, err.message || "Søgning fejlede", "error");
+      });
+    }, MAPPER_SEARCH_DEBOUNCE_MS);
   }
 
   function makeClientUploadId() {
@@ -15513,9 +15576,45 @@
 
     if (els.mapperSearchBtn) {
       els.mapperSearchBtn.addEventListener("click", () => {
-        searchFilesAndFolders().catch((err) => {
+        if (!state.mapperSearchOpen) {
+          setMapperSearchOpen(true);
+          return;
+        }
+        if (!isMapperSearchFiltering()) {
+          setMapperSearchOpen(false);
+          return;
+        }
+        if (els.mapperSearchInput) els.mapperSearchInput.focus();
+        runMapperSearchNow().catch((err) => {
           showStatus(els.uploadStatus, err.message || "Søgning fejlede", "error");
         });
+      });
+    }
+    if (els.mapperSearchInput) {
+      els.mapperSearchInput.addEventListener("input", scheduleMapperSearch);
+      els.mapperSearchInput.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          clearMapperSearchResults({ close: true }).catch((err) => {
+            showStatus(els.uploadStatus, err.message || "Kunne ikke rydde søgning", "error");
+          });
+          return;
+        }
+        if (event.key === "Enter") {
+          event.preventDefault();
+          clearMapperSearchTimer();
+          runMapperSearchNow().catch((err) => {
+            showStatus(els.uploadStatus, err.message || "Søgning fejlede", "error");
+          });
+        }
+      });
+    }
+    if (els.mapperSearchClearBtn) {
+      els.mapperSearchClearBtn.addEventListener("click", () => {
+        clearMapperSearchResults({ close: false }).catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke rydde søgning", "error");
+        });
+        if (els.mapperSearchInput) els.mapperSearchInput.focus();
       });
     }
 
