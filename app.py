@@ -15116,6 +15116,88 @@ def api_files_list():
     return jsonify({"ok": True, "folder": folder, "items": items, "zip_jobs": zip_jobs})
 
 
+def _sql_like_escape(value: str) -> str:
+    return str(value or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+@app.route("/api/files/search", methods=["GET"])
+@login_required
+def api_files_search():
+    folder = normalize_folder_path(str(request.args.get("folder") or ""))
+    query = str(request.args.get("q") or "").strip()
+    if len(query) < 1:
+        return jsonify({"ok": True, "folder": folder, "query": query, "items": []})
+
+    if folder and not permission_allows(permission_for_user_folder(current_user, folder), "view"):
+        return jsonify({"ok": False, "error": "Ingen adgang til mappe"}), 403
+
+    try:
+        requested_limit = int(str(request.args.get("limit") or "250"))
+    except Exception:
+        requested_limit = 250
+    limit = max(1, min(1000, requested_limit))
+    pattern = f"%{_sql_like_escape(query.lower())}%"
+
+    where = [
+        """
+        (
+          lower(COALESCE(filename,'')) LIKE ? ESCAPE '\\'
+          OR lower(COALESCE(rel_path,'')) LIKE ? ESCAPE '\\'
+          OR lower(COALESCE(folder_path,'')) LIKE ? ESCAPE '\\'
+          OR lower(COALESCE(external_title,'')) LIKE ? ESCAPE '\\'
+          OR lower(COALESCE(external_source,'')) LIKE ? ESCAPE '\\'
+          OR lower(COALESCE(model_link_title,'')) LIKE ? ESCAPE '\\'
+          OR lower(COALESCE(model_link_source,'')) LIKE ? ESCAPE '\\'
+          OR lower(COALESCE(model_link_url,'')) LIKE ? ESCAPE '\\'
+        )
+        """
+    ]
+    params: list[Any] = [pattern] * 8
+    if folder:
+        where.append("(folder_path=? OR folder_path LIKE ? ESCAPE '\\')")
+        params.extend([folder, f"{_sql_like_escape(folder)}/%"])
+
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM files
+            WHERE {" AND ".join(where)}
+            ORDER BY uploaded_at DESC, id DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        ).fetchall()
+
+        accessible_rows: list[sqlite3.Row] = []
+        for row in rows:
+            if user_can_access_file(current_user, row, "view"):
+                accessible_rows.append(row)
+
+        unseen_file_ids = _unseen_file_ids_for_rows(conn, current_user, accessible_rows)
+
+    items: list[dict] = []
+    for row, slice_output_row in _pair_visible_file_rows_with_slice_output(accessible_rows):
+        file_id = int(row["id"] or 0)
+        ext = str(row["ext"] or "").lower()
+        thumb_status = str(row["thumb_status"] or "none").strip().lower()
+        thumb_rel = str(row["thumb_rel"] or "").strip()
+        if _supports_thumbnail_for_ext(ext) and thumb_status != "cancelled" and (not thumb_rel or thumb_status in {"queued", "error"}):
+            try:
+                enqueue_thumbnail(file_id)
+            except Exception:
+                pass
+        items.append(
+            serialize_file_row(
+                row,
+                slice_output_row=slice_output_row,
+                is_new=file_id in unseen_file_ids,
+            )
+        )
+
+    return jsonify({"ok": True, "folder": folder, "query": query, "items": items, "limit": limit})
+
+
 @app.route("/api/files/seen-batch", methods=["POST"])
 @login_required
 def api_files_seen_batch():
