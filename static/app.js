@@ -13,6 +13,7 @@
   const APP_ONBOARDING_STEP_BUFFER_MS = 450;
   const UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY = "fjordshare.unseenUploadsOverlayExpanded.v1";
   const UNSEEN_UPLOADS_PAGE_SIZE = 24;
+  const MAPPER_SEARCH_DEBOUNCE_MS = 1000;
 
   function readPersistedUnseenUploadsOverlayExpanded() {
     try {
@@ -167,6 +168,10 @@
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
     trackingLabelUploadFile: null,
+    mapperSearchOpen: false,
+    mapperSearchQuery: "",
+    mapperSearchTimer: null,
+    mapperSearchRequestToken: 0,
   };
 
   const els = {
@@ -262,6 +267,9 @@
     thumbTopStatusLabel: document.getElementById("thumbTopStatusLabel"),
     thumbTopStatusBar: document.getElementById("thumbTopStatusBar"),
     thumbTopStatusCancelBtn: document.getElementById("thumbTopStatusCancelBtn"),
+    mapperSearchWrap: document.getElementById("mapperSearchWrap"),
+    mapperSearchInput: document.getElementById("mapperSearchInput"),
+    mapperSearchClearBtn: document.getElementById("mapperSearchClearBtn"),
     mapperSearchBtn: document.getElementById("mapperSearchBtn"),
     mapperMenuBtn: document.getElementById("mapperMenuBtn"),
     mapperMenu: document.getElementById("mapperMenu"),
@@ -9774,7 +9782,11 @@
     const needPoll = hasPendingThumbs();
     if (needPoll && !state.thumbPollTimer) {
       state.thumbPollTimer = window.setInterval(() => {
-        loadFiles().catch(() => {});
+        if (isMapperSearchFiltering()) {
+          runMapperSearchNow({ silent: true }).catch(() => {});
+        } else {
+          loadFiles().catch(() => {});
+        }
       }, 5000);
       return;
     }

@@ -15136,23 +15136,28 @@ def api_files_search():
     except Exception:
         requested_limit = 250
     limit = max(1, min(1000, requested_limit))
+    filename_only = str(request.args.get("filename_only") or "").strip().lower() in {"1", "true", "yes", "on"}
     pattern = f"%{_sql_like_escape(query.lower())}%"
 
-    where = [
-        """
-        (
-          lower(COALESCE(filename,'')) LIKE ? ESCAPE '\\'
-          OR lower(COALESCE(rel_path,'')) LIKE ? ESCAPE '\\'
-          OR lower(COALESCE(folder_path,'')) LIKE ? ESCAPE '\\'
-          OR lower(COALESCE(external_title,'')) LIKE ? ESCAPE '\\'
-          OR lower(COALESCE(external_source,'')) LIKE ? ESCAPE '\\'
-          OR lower(COALESCE(model_link_title,'')) LIKE ? ESCAPE '\\'
-          OR lower(COALESCE(model_link_source,'')) LIKE ? ESCAPE '\\'
-          OR lower(COALESCE(model_link_url,'')) LIKE ? ESCAPE '\\'
-        )
-        """
-    ]
-    params: list[Any] = [pattern] * 8
+    if filename_only:
+        where = ["lower(COALESCE(filename,'')) LIKE ? ESCAPE '\\'"]
+        params: list[Any] = [pattern]
+    else:
+        where = [
+            """
+            (
+              lower(COALESCE(filename,'')) LIKE ? ESCAPE '\\'
+              OR lower(COALESCE(rel_path,'')) LIKE ? ESCAPE '\\'
+              OR lower(COALESCE(folder_path,'')) LIKE ? ESCAPE '\\'
+              OR lower(COALESCE(external_title,'')) LIKE ? ESCAPE '\\'
+              OR lower(COALESCE(external_source,'')) LIKE ? ESCAPE '\\'
+              OR lower(COALESCE(model_link_title,'')) LIKE ? ESCAPE '\\'
+              OR lower(COALESCE(model_link_source,'')) LIKE ? ESCAPE '\\'
+              OR lower(COALESCE(model_link_url,'')) LIKE ? ESCAPE '\\'
+            )
+            """
+        ]
+        params = [pattern] * 8
     if folder:
         where.append("(folder_path=? OR folder_path LIKE ? ESCAPE '\\')")
         params.extend([folder, f"{_sql_like_escape(folder)}/%"])

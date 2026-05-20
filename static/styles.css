@@ -563,6 +563,77 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+.mapper-search {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 38px;
+}
+
+.mapper-search-field {
+  position: relative;
+  width: 0;
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: width .18s ease, opacity .16s ease;
+}
+
+.mapper-search.open .mapper-search-field,
+.mapper-search.has-query .mapper-search-field {
+  width: min(320px, 30vw);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mapper-search-input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  outline: none;
+  padding: 0 34px 0 12px;
+  font: inherit;
+  font-size: 0.95rem;
+}
+
+.mapper-search-input:focus {
+  border-color: rgba(91, 140, 255, 0.7);
+  box-shadow: 0 0 0 2px rgba(91, 140, 255, 0.14);
+}
+
+.mapper-search-clear {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  font-size: 0.9rem;
+}
+
+.mapper-search-clear:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+@media (max-width: 720px) {
+  .mapper-search.open .mapper-search-field,
+  .mapper-search.has-query .mapper-search-field {
+    width: min(220px, 52vw);
+  }
+}
+
 .upload-top-status {
   min-width: 220px;
   max-width: 320px;

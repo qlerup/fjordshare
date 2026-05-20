@@ -48,7 +48,20 @@
               </div>
               <div class="upload-top-status-progress"><span id="thumbTopStatusBar" class="upload-top-status-bar" style="width:0%"></span></div>
             </div>
-            <button id="mapperSearchBtn" class="icon-btn" type="button" title="Søg mappe" aria-label="Søg mappe">&#128269;</button>
+            <div id="mapperSearchWrap" class="mapper-search" role="search">
+              <div class="mapper-search-field">
+                <input
+                  id="mapperSearchInput"
+                  class="mapper-search-input"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="Søg filnavn..."
+                  aria-label="Søg filnavn i denne mappe og undermapper"
+                >
+                <button id="mapperSearchClearBtn" class="mapper-search-clear" type="button" title="Ryd søgning" aria-label="Ryd søgning">&#10005;</button>
+              </div>
+              <button id="mapperSearchBtn" class="icon-btn mapper-search-toggle" type="button" title="Søg filer" aria-label="Søg filer" aria-expanded="false">&#128269;</button>
+            </div>
             <div class="menu-wrap">
               <button id="mapperMenuBtn" class="icon-btn" type="button" title="Mapper menu" aria-haspopup="true" aria-expanded="false" aria-controls="mapperMenu">&#8942;</button>
               <div id="mapperMenu" class="mapper-menu hidden" role="menu">
