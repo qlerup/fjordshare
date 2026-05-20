@@ -120,7 +120,7 @@ SLICER_PROFILE_LEGACY_CONFIG_PATH = SLICER_PROFILE_DIR / "config.ini"
 SLICER_PROFILE_ALLOWED_CONFIG_EXTS = {".ini", ".cfg", ".conf", ".txt"}
 SLICER_PROFILE_MAX_BYTES = int(str(os.getenv("SLICER_PROFILE_MAX_BYTES", str(5 * 1024 * 1024))) or str(5 * 1024 * 1024))
 SLICER_PLATE_ASSET_DIR = ROOT_DIR / "static" / "slicer-plates"
-SLICER_PLATE_ASSET_ALLOWED_EXTS = {".stl", ".obj", ".glb", ".gltf", ".3mf", ".lys", ".pwscene"}
+SLICER_PLATE_ASSET_ALLOWED_EXTS = {".stl", ".obj", ".glb", ".gltf", ".3mf", ".lys", ".lyt", ".pwscene"}
 PREVIEW_MODELS_DIR = DATA_DIR / "previews"
 
 PERMISSION_RANK = {"view": 1, "upload": 2, "manage": 3}
@@ -169,14 +169,14 @@ TRACKING_SHARE_TRANSLATE_CACHE_MAX_ITEMS = 5000
 TRACKING_SHARE_TRANSLATE_CACHE: dict[tuple[str, str], str] = {}
 TRACKING_SHARE_TRANSLATE_CACHE_LOCK = threading.Lock()
 
-THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp", ".lys", ".pwscene"}
+THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp", ".lys", ".lyt", ".pwscene"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
 THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
-THUMBABLE_3D_EXTENSIONS = {".3mf", ".glb", ".gltf", ".stl", ".obj", ".step", ".stp", ".lys", ".pwscene"}
-PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl", ".obj", ".lys", ".pwscene"}
+THUMBABLE_3D_EXTENSIONS = {".3mf", ".glb", ".gltf", ".stl", ".obj", ".step", ".stp", ".lys", ".lyt", ".pwscene"}
+PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl", ".obj", ".lys", ".lyt", ".pwscene"}
 PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {*PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS, ".zip"}
-PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL = ".stl, .step, .3mf, .obj, .lys og .pwscene"
-PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf, .obj, .lys og .pwscene"
+PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL = ".stl, .step, .3mf, .obj, .lys, .lyt og .pwscene"
+PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf, .obj, .lys, .lyt og .pwscene"
 THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "320")) or "320")
 THUMB_FAST_SIZE_PX = int(str(os.getenv("THUMB_FAST_SIZE_PX", "220")) or "220")
@@ -264,8 +264,8 @@ FILE_ATTACHMENT_HEIC_MIME_TYPES = {
     "application/heic",
     "application/heif",
 }
-PRINT_READY_PROJECT_FILE_ALLOWED_EXTS = {".3mf", ".stl", ".lys", ".pwscene"}
-PRINT_READY_PROJECT_FILE_ALLOWED_LABEL = ".3mf, .stl, .lys og .pwscene"
+PRINT_READY_PROJECT_FILE_ALLOWED_EXTS = {".3mf", ".stl", ".lys", ".lyt", ".pwscene"}
+PRINT_READY_PROJECT_FILE_ALLOWED_LABEL = ".3mf, .stl, .lys, .lyt og .pwscene"
 try:
     PRINT_READY_PROJECT_FILE_MAX_BYTES = int(
         str(os.getenv("PRINT_READY_PROJECT_FILE_MAX_BYTES", str(1024 * 1024 * 1024))) or str(1024 * 1024 * 1024)
@@ -1049,7 +1049,7 @@ def guess_mime(filename: str, ext: str) -> str:
         return "model/stl"
     if ext_l == ".3mf":
         return "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
-    if ext_l in {".lys", ".pwscene"}:
+    if ext_l in {".lys", ".lyt", ".pwscene"}:
         return "application/octet-stream"
     if ext_l == ".obj":
         return "model/obj"
@@ -8206,11 +8206,11 @@ def _generate_thumbnail_file(file_row: sqlite3.Row, *, detailed: bool = False) -
         if ext == ".3mf" and _write_3mf_embedded_thumbnail(source_path, temp_output, size_px=render_size_px):
             temp_output.replace(thumb_path)
             return rel_name
-        if ext == ".lys":
+        if ext in {".lys", ".lyt"}:
             if _write_lys_embedded_thumbnail(source_path, temp_output, size_px=render_size_px):
                 temp_output.replace(thumb_path)
                 return rel_name
-            raise RuntimeError("LYS preview.png not found")
+            raise RuntimeError("LYS/LYT preview.png not found")
         if ext == ".pwscene":
             if _write_pwscene_embedded_thumbnail(source_path, temp_output, size_px=render_size_px):
                 temp_output.replace(thumb_path)
@@ -8900,6 +8900,8 @@ def init_db() -> None:
                 folder_path TEXT UNIQUE NOT NULL,
                 owner_user_id INTEGER,
                 folder_kind TEXT NOT NULL DEFAULT 'user',
+                preview_file_ids_json TEXT NOT NULL DEFAULT '',
+                preview_locked_at TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE SET NULL
             );
@@ -9200,9 +9202,14 @@ def init_db() -> None:
         folder_cols = [r[1] for r in conn.execute("PRAGMA table_info(folders)").fetchall()]
         if "folder_kind" not in folder_cols:
             conn.execute("ALTER TABLE folders ADD COLUMN folder_kind TEXT NOT NULL DEFAULT 'user'")
+        if "preview_file_ids_json" not in folder_cols:
+            conn.execute("ALTER TABLE folders ADD COLUMN preview_file_ids_json TEXT NOT NULL DEFAULT ''")
+        if "preview_locked_at" not in folder_cols:
+            conn.execute("ALTER TABLE folders ADD COLUMN preview_locked_at TEXT")
         conn.execute(
             "UPDATE folders SET folder_kind='user' WHERE folder_kind IS NULL OR TRIM(folder_kind)=''"
         )
+        conn.execute("UPDATE folders SET preview_file_ids_json='' WHERE preview_file_ids_json IS NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_kind ON folders(folder_kind)")
 
         user_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
@@ -11464,6 +11471,43 @@ def file_thumb_path(file_row: sqlite3.Row) -> Optional[Path]:
     return _thumbnail_abs_path_from_rel(rel)
 
 
+def _thumb_cache_token_for_row(row: sqlite3.Row) -> str:
+    thumb_rel = str(
+        _row_value(row, "thumb_rel", "")
+        or _row_value(row, "current_thumb_rel", "")
+        or ""
+    ).strip()
+    thumb_updated_at = str(
+        _row_value(row, "thumb_updated_at", "")
+        or _row_value(row, "current_thumb_updated_at", "")
+        or ""
+    ).strip()
+    if not thumb_rel and not thumb_updated_at:
+        return ""
+    digest = hashlib.sha1(f"{thumb_rel}|{thumb_updated_at}".encode("utf-8")).hexdigest()
+    return digest[:16]
+
+
+def _with_cache_version(url: str, token: str) -> str:
+    base = str(url or "").strip()
+    version = str(token or "").strip()
+    if not base or not version:
+        return base
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}v={version}"
+
+
+def _thumb_url_for_row(row: sqlite3.Row, endpoint: str, **params: Any) -> str:
+    base_url = url_for(endpoint, **params)
+    return _with_cache_version(base_url, _thumb_cache_token_for_row(row))
+
+
+def _send_thumb_response_cached(thumb_path: Path) -> Any:
+    response = send_file(thumb_path, mimetype="image/png", as_attachment=False)
+    response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+    return response
+
+
 def _is_slice_output_ext(ext: str) -> bool:
     return str(ext or "").strip().lower() == ".gcode"
 
@@ -11701,8 +11745,8 @@ def serialize_file_row(
     can_slice = _supports_slicing_for_ext(ext)
     slice_status = str(row["slice_status"] or "none").strip().lower() or "none"
     # Allow 3D preview via model-viewer for GLB/GLTF natively and for STL/OBJ/STEP via GLB preview.
-    # .lys/.pwscene thumbnails are extracted from embedded preview images, not rendered as 3D preview models.
-    preview_3d_thumbnail = ext in THUMBABLE_3D_EXTENSIONS and ext not in {".lys", ".pwscene"}
+    # .lys/.lyt/.pwscene thumbnails are extracted from embedded preview images, not rendered as 3D preview models.
+    preview_3d_thumbnail = ext in THUMBABLE_3D_EXTENSIONS and ext not in {".lys", ".lyt", ".pwscene"}
     thumb_supported = _supports_thumbnail_for_ext(ext)
     thumb_status = str(row["thumb_status"] or "none").strip().lower() or "none"
     thumb_rel = str(row["thumb_rel"] or "").strip()
@@ -11720,7 +11764,12 @@ def serialize_file_row(
     if share_token:
         content_url = url_for("api_share_file_content", token=share_token, file_id=int(row["id"]))
         download_url = url_for("api_share_file_download", token=share_token, file_id=int(row["id"]))
-        thumb_url = url_for("api_share_file_thumb", token=share_token, file_id=int(row["id"])) if has_thumb else ""
+        thumb_url = _thumb_url_for_row(
+            row,
+            "api_share_file_thumb",
+            token=share_token,
+            file_id=int(row["id"]),
+        ) if has_thumb else ""
         if preview_3d_thumbnail:
             if ext in {".glb", ".gltf"}:
                 preview_model_url = content_url
@@ -11729,7 +11778,11 @@ def serialize_file_row(
     else:
         content_url = url_for("api_file_content", file_id=int(row["id"]))
         download_url = url_for("api_file_download", file_id=int(row["id"]))
-        thumb_url = url_for("api_file_thumb", file_id=int(row["id"])) if has_thumb else ""
+        thumb_url = _thumb_url_for_row(
+            row,
+            "api_file_thumb",
+            file_id=int(row["id"]),
+        ) if has_thumb else ""
         if preview_3d_thumbnail:
             if ext in {".glb", ".gltf"}:
                 preview_model_url = content_url
@@ -11929,6 +11982,224 @@ def _folder_preview_seed(folder_path: str, bucket: str) -> int:
     return int.from_bytes(digest[:4], "big") % 2_147_483_647
 
 
+def _parse_preview_file_ids(raw: Any, limit: int) -> list[int]:
+    safe_limit = max(0, min(FOLDER_PREVIEW_THUMB_LIMIT, int(limit or FOLDER_PREVIEW_THUMB_LIMIT)))
+    if safe_limit <= 0:
+        return []
+
+    parsed: Any = raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            return []
+
+    if not isinstance(parsed, list):
+        return []
+
+    out: list[int] = []
+    seen: set[int] = set()
+    for value in parsed:
+        try:
+            file_id = int(value)
+        except Exception:
+            continue
+        if file_id <= 0 or file_id in seen:
+            continue
+        seen.add(file_id)
+        out.append(file_id)
+        if len(out) >= safe_limit:
+            break
+    return out
+
+
+def _folder_preview_cached_file_ids(conn: sqlite3.Connection, folder_path: str, limit: int) -> list[int]:
+    folder = normalize_folder_path(folder_path)
+    if not folder:
+        return []
+    row = conn.execute(
+        "SELECT preview_file_ids_json FROM folders WHERE folder_path=?",
+        (folder,),
+    ).fetchone()
+    if row is None:
+        return []
+    return _parse_preview_file_ids(str(row["preview_file_ids_json"] or ""), limit)
+
+
+def _store_folder_preview_cache(conn: sqlite3.Connection, folder_path: str, file_ids: Iterable[int]) -> None:
+    folder = normalize_folder_path(folder_path)
+    if not folder:
+        return
+
+    clean_ids = _parse_preview_file_ids(list(file_ids), FOLDER_PREVIEW_THUMB_LIMIT)
+    payload = json.dumps(clean_ids, ensure_ascii=False)
+    now = now_iso()
+
+    existing = conn.execute(
+        "SELECT preview_file_ids_json, preview_locked_at FROM folders WHERE folder_path=?",
+        (folder,),
+    ).fetchone()
+
+    if existing is not None:
+        existing_ids = _parse_preview_file_ids(str(existing["preview_file_ids_json"] or ""), FOLDER_PREVIEW_THUMB_LIMIT)
+        existing_locked_at = str(existing["preview_locked_at"] or "").strip()
+        if existing_ids == clean_ids and existing_locked_at:
+            return
+    else:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO folders(
+                folder_path,
+                owner_user_id,
+                folder_kind,
+                preview_file_ids_json,
+                preview_locked_at,
+                created_at
+            )
+            VALUES(?,?,?,?,?,?)
+            """,
+            (folder, None, FOLDER_KIND_USER, payload, now, now),
+        )
+
+    conn.execute(
+        """
+        UPDATE folders
+        SET preview_file_ids_json=?,
+            preview_locked_at=CASE
+                WHEN preview_locked_at IS NULL OR TRIM(preview_locked_at)='' THEN ?
+                ELSE preview_locked_at
+            END
+        WHERE folder_path=?
+        """,
+        (payload, now, folder),
+    )
+    conn.commit()
+
+
+def _row_is_folder_preview_candidate(row: sqlite3.Row) -> bool:
+    mime = str(row["mime_type"] or "").strip().lower()
+    if mime.startswith("image/"):
+        return True
+    ext = str(row["ext"] or "").strip().lower()
+    thumb_rel = str(row["thumb_rel"] or "").strip()
+    return ext in THUMBABLE_3D_EXTENSIONS and bool(thumb_rel)
+
+
+def _row_in_folder_preview_scope(row: sqlite3.Row, folder_path: str) -> bool:
+    folder = normalize_folder_path(folder_path)
+    file_folder = normalize_folder_path(str(row["folder_path"] or ""))
+    if not folder:
+        return True
+    return file_folder == folder or file_folder.startswith(folder + "/")
+
+
+def _folder_preview_rows_from_ids(conn: sqlite3.Connection, folder_path: str, file_ids: Iterable[int]) -> list[sqlite3.Row]:
+    ids = _parse_preview_file_ids(list(file_ids), FOLDER_PREVIEW_THUMB_LIMIT)
+    if not ids:
+        return []
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"SELECT * FROM files WHERE id IN ({placeholders})",
+        tuple(ids),
+    ).fetchall()
+    row_by_id = {int(row["id"]): row for row in rows}
+
+    selected: list[sqlite3.Row] = []
+    for file_id in ids:
+        row = row_by_id.get(int(file_id))
+        if row is None:
+            continue
+        if not _row_in_folder_preview_scope(row, folder_path):
+            continue
+        if not _row_is_folder_preview_candidate(row):
+            continue
+        selected.append(row)
+    return selected
+
+
+def _folder_preview_seeded_rows(
+    conn: sqlite3.Connection,
+    folder_path: str,
+    limit: int,
+    *,
+    exclude_ids: Optional[set[int]] = None,
+) -> list[sqlite3.Row]:
+    safe_limit = max(0, min(FOLDER_PREVIEW_THUMB_LIMIT, int(limit or FOLDER_PREVIEW_THUMB_LIMIT)))
+    if safe_limit <= 0:
+        return []
+
+    folder = normalize_folder_path(folder_path)
+    candidate_clause, candidate_params = _folder_preview_candidate_clause()
+    order_sql = "((id * 1103515245 + ?) % 2147483647), id"
+    excluded = {int(v) for v in (exclude_ids or set()) if int(v) > 0}
+
+    selected: list[sqlite3.Row] = []
+    selected_ids: set[int] = set()
+
+    def add_rows(rows: Iterable[sqlite3.Row]) -> None:
+        for row in rows:
+            if len(selected) >= safe_limit:
+                return
+            file_id = int(row["id"] or 0)
+            if file_id <= 0 or file_id in excluded or file_id in selected_ids:
+                continue
+            selected.append(row)
+            selected_ids.add(file_id)
+
+    query_limit = max(safe_limit * 3, safe_limit + len(excluded) + 12)
+    direct_rows = conn.execute(
+        f"""
+        SELECT *
+        FROM files
+        WHERE folder_path=?
+          AND {candidate_clause}
+        ORDER BY {order_sql}
+        LIMIT ?
+        """,
+        (
+            folder,
+            *candidate_params,
+            _folder_preview_seed(folder, "direct"),
+            query_limit,
+        ),
+    ).fetchall()
+    add_rows(direct_rows)
+
+    if len(selected) >= safe_limit:
+        return selected
+
+    if folder:
+        descendant_where = "folder_path LIKE ?"
+        descendant_params: tuple[Any, ...] = (f"{folder}/%",)
+    else:
+        descendant_where = "folder_path != ''"
+        descendant_params = ()
+
+    remaining = safe_limit - len(selected)
+    descendant_limit = max(remaining * 3, remaining + len(excluded) + len(selected_ids) + 12)
+    descendant_rows = conn.execute(
+        f"""
+        SELECT *
+        FROM files
+        WHERE {descendant_where}
+          AND {candidate_clause}
+        ORDER BY {order_sql}
+        LIMIT ?
+        """,
+        (
+            *descendant_params,
+            *candidate_params,
+            _folder_preview_seed(folder, "descendant"),
+            descendant_limit,
+        ),
+    ).fetchall()
+    add_rows(descendant_rows)
+    return selected
+
+
 def _append_accessible_preview_rows(
     out: list[sqlite3.Row],
     user: User,
@@ -11948,57 +12219,30 @@ def folder_preview_file_rows(conn: sqlite3.Connection, user: User, folder_path: 
     if _is_print_ready_project_files_folder_path(folder):
         return []
     safe_limit = max(1, min(FOLDER_PREVIEW_THUMB_LIMIT, int(limit or FOLDER_PREVIEW_THUMB_LIMIT)))
-    candidate_clause, candidate_params = _folder_preview_candidate_clause()
-    order_sql = "((id * 1103515245 + ?) % 2147483647), id"
 
-    direct_rows = conn.execute(
-        f"""
-        SELECT *
-        FROM files
-        WHERE folder_path=?
-          AND {candidate_clause}
-        ORDER BY {order_sql}
-        LIMIT ?
-        """,
-        (
+    cached_ids = _folder_preview_cached_file_ids(conn, folder, safe_limit)
+    locked_rows = _folder_preview_rows_from_ids(conn, folder, cached_ids)
+    locked_row_ids = [int(row["id"] or 0) for row in locked_rows if int(row["id"] or 0) > 0]
+
+    if len(locked_rows) < safe_limit:
+        refill_rows = _folder_preview_seeded_rows(
+            conn,
             folder,
-            *candidate_params,
-            _folder_preview_seed(folder, "direct"),
-            safe_limit,
-        ),
-    ).fetchall()
-
-    selected: list[sqlite3.Row] = []
-    _append_accessible_preview_rows(selected, user, direct_rows, safe_limit)
-
-    remaining = safe_limit - len(selected)
-    if remaining <= 0:
-        return selected
+            safe_limit - len(locked_rows),
+            exclude_ids=set(locked_row_ids),
+        )
+        if refill_rows:
+            locked_rows.extend(refill_rows)
+            locked_row_ids = [int(row["id"] or 0) for row in locked_rows if int(row["id"] or 0) > 0]
 
     if folder:
-        descendant_where = "folder_path LIKE ?"
-        descendant_params: tuple[Any, ...] = (f"{folder}/%",)
-    else:
-        descendant_where = "folder_path != ''"
-        descendant_params = ()
+        if locked_row_ids and locked_row_ids != cached_ids:
+            _store_folder_preview_cache(conn, folder, locked_row_ids)
+        elif cached_ids and not locked_row_ids:
+            _store_folder_preview_cache(conn, folder, [])
 
-    descendant_rows = conn.execute(
-        f"""
-        SELECT *
-        FROM files
-        WHERE {descendant_where}
-          AND {candidate_clause}
-        ORDER BY {order_sql}
-        LIMIT ?
-        """,
-        (
-            *descendant_params,
-            *candidate_params,
-            _folder_preview_seed(folder, "descendant"),
-            remaining,
-        ),
-    ).fetchall()
-    _append_accessible_preview_rows(selected, user, descendant_rows, safe_limit)
+    selected: list[sqlite3.Row] = []
+    _append_accessible_preview_rows(selected, user, locked_rows, safe_limit)
     return selected
 
 
@@ -12505,6 +12749,7 @@ def _print_ready_file_rows(conn: sqlite3.Connection, project_id: int) -> list[sq
             f.printed_by AS current_printed_by,
             f.thumb_status AS current_thumb_status,
             f.thumb_rel AS current_thumb_rel,
+            f.thumb_updated_at AS current_thumb_updated_at,
             f.external_url AS current_external_url,
             f.external_source AS current_external_source,
             f.external_title AS current_external_title,
@@ -12632,7 +12877,7 @@ def serialize_print_ready_project(
                     "file_size": int(row["file_size"] or 0),
                     "attachments": attachments,
                     "thumb_status": thumb_status,
-                    "thumb_url": url_for("api_file_thumb", file_id=file_id) if has_thumb else "",
+                    "thumb_url": _thumb_url_for_row(row, "api_file_thumb", file_id=file_id) if has_thumb else "",
                     "is_3d": is_3d,
                     "is_3d_openable": is_3d_openable,
                     "content_url": url_for("api_file_content", file_id=file_id),
@@ -15450,7 +15695,7 @@ def api_file_thumb(file_id: int):
     if thumb_path is None or not thumb_path.exists() or not thumb_path.is_file():
         return jsonify({"ok": False, "error": "Thumbnail ikke klar endnu"}), 404
 
-    return send_file(thumb_path, mimetype="image/png", as_attachment=False)
+    return _send_thumb_response_cached(thumb_path)
 
 
 @app.route("/api/files/thumbnails/cancel", methods=["POST"])
@@ -19870,7 +20115,7 @@ def api_share_file_thumb(token: str, file_id: int):
         return jsonify({"ok": False, "error": "Thumbnail ikke klar endnu"}), 404
 
     touch_share_used(int(share_row["id"]))
-    return send_file(thumb_path, mimetype="image/png", as_attachment=False)
+    return _send_thumb_response_cached(thumb_path)
 
 
 @app.route("/api/share/<token>/file/<int:file_id>", methods=["DELETE"])
