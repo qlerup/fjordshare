@@ -1791,6 +1791,7 @@
   let activeTusUpload = null;
   let uploadMonitorHideTimer = null;
   let uploadMonitorDomEventsBound = false;
+  let uploadInterimOverlayActive = false;
   let globalDropDepth = 0;
   let internalImageDrag = false;
 
@@ -1817,6 +1818,7 @@
   }
 
   function showGlobalDropOverlay() {
+    if (uploadInterimOverlayActive) return;
     ensureUploadOverlayRefs();
     if (!els.uploadOverlay) return;
     const canUploadHere = canUploadFromCurrentView();
@@ -1841,13 +1843,44 @@
     els.uploadOverlay.classList.toggle("upload-blocked", !canUploadHere);
     els.uploadOverlay.classList.remove("hidden");
     els.uploadOverlay.classList.add("active");
+    els.uploadOverlay.setAttribute("aria-hidden", "false");
   }
 
   function hideGlobalDropOverlay() {
+    if (uploadInterimOverlayActive) return;
     ensureUploadOverlayRefs();
     if (!els.uploadOverlay) return;
     els.uploadOverlay.classList.remove("active", "upload-ready", "upload-blocked");
     els.uploadOverlay.classList.add("hidden");
+    els.uploadOverlay.setAttribute("aria-hidden", "true");
+  }
+
+  function showUploadInterimOverlay(message = "") {
+    ensureUploadOverlayRefs();
+    if (!els.uploadOverlay) return;
+
+    uploadInterimOverlayActive = true;
+    const titleEl = els.uploadOverlay.querySelector(".upload-title");
+    if (titleEl) titleEl.textContent = "Vent venligst";
+    if (els.uploadProgressText) {
+      const text = String(message || "").trim();
+      els.uploadProgressText.textContent = text || "Indlæser filer...";
+    }
+    if (els.uploadProgressBar) {
+      els.uploadProgressBar.style.width = "92%";
+    }
+    els.uploadOverlay.classList.remove("upload-blocked", "hidden");
+    els.uploadOverlay.classList.add("upload-ready", "active");
+    els.uploadOverlay.setAttribute("aria-hidden", "false");
+  }
+
+  function hideUploadInterimOverlay() {
+    uploadInterimOverlayActive = false;
+    ensureUploadOverlayRefs();
+    if (!els.uploadOverlay) return;
+    els.uploadOverlay.classList.remove("active", "upload-ready", "upload-blocked");
+    els.uploadOverlay.classList.add("hidden");
+    els.uploadOverlay.setAttribute("aria-hidden", "true");
   }
 
   function isUploadRunning() {
@@ -1901,6 +1934,14 @@
     }
   }
 
+  function formatUploadProgressDetail(uploadedBytes, totalBytes) {
+    const loaded = Math.max(0, Number(uploadedBytes || 0));
+    const total = Math.max(0, Number(totalBytes || 0));
+    if (total <= 0) return "Uploader...";
+    const pct = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+    return `Uploader... ${formatSize(loaded)} ud af ${formatSize(total)} uploadet (${pct}%)`;
+  }
+
   function isUploadAbortError(error) {
     const msg = String((error && error.message) || error || "").toLowerCase();
     return msg.includes("abort") || msg.includes("aborted") || msg.includes("cancel");
@@ -1949,7 +1990,11 @@
           ? Math.max(0, Math.min(100, Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100)))
           : 0;
         const phasePrefix = String(uploadUiState.currentPhaseLabel || "").trim() || "Uploader";
-        els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} (${filePct}%)`;
+        if (uploadUiState.currentTotal > 0) {
+          els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} · ${formatSize(uploadUiState.currentLoaded)} ud af ${formatSize(uploadUiState.currentTotal)} (${filePct}%)`;
+        } else {
+          els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} (${filePct}%)`;
+        }
       } else {
         els.uploadMonitorCurrent.textContent = uploadUiState.totalFiles
           ? "Upload fuldført"
@@ -3536,7 +3581,7 @@
       if (printReadyMode) {
         const stats = printReadySelectionCount();
         const excludedText = stats.excluded > 0 ? ` · ${stats.excluded} fravalgt` : "";
-        els.mapperSelectSummary.textContent = `Klar til print: ${stats.directlySelected} valgt${excludedText}`;
+        els.mapperSelectSummary.textContent = `Valgte filer: ${stats.directlySelected}${excludedText}`;
       } else {
         els.mapperSelectSummary.textContent = on ? `${count} valgt` : "";
       }
@@ -3551,7 +3596,7 @@
       els.mapperSelectPrintReadyBtn.classList.toggle("hidden", !showPrintReadyBtn);
       els.mapperSelectPrintReadyBtn.disabled = printReadyMode && count <= 0;
       els.mapperSelectPrintReadyBtn.textContent = printReadyMode
-        ? (count > 0 ? `Fortsæt til printdetaljer (${count})` : "Fortsæt til printdetaljer")
+        ? (count > 0 ? `Send til print (${count})` : "Send til print")
         : "Vælg filer til print";
     }
     if (els.mapperSelectClearBtn) {
@@ -10414,7 +10459,7 @@
         uploadUiState.currentFileName = file.name || "fil";
         uploadUiState.currentLoaded = 0;
         uploadUiState.currentTotal = Number(file.size || 0);
-        addUploadMonitorItem(file.name, null, "Uploader... 0%", itemKey, 0);
+        addUploadMonitorItem(file.name, null, formatUploadProgressDetail(0, Number(file.size || 0)), itemKey, 0);
         renderUploadMonitor();
 
         try {
@@ -10422,11 +10467,11 @@
             const pct = totalBytes > 0 ? Math.round((uploadedBytes / totalBytes) * 100) : 0;
             uploadUiState.currentLoaded = Number(uploadedBytes || 0);
             uploadUiState.currentTotal = Number(totalBytes || file.size || 0);
-            updateUploadMonitorItem(itemKey, null, `Uploader... ${pct}%`, pct);
+            updateUploadMonitorItem(itemKey, null, formatUploadProgressDetail(uploadedBytes, totalBytes), pct);
             renderUploadMonitor();
             showStatus(
               els.uploadStatus,
-              `Uploader ${i + 1}/${list.length}: ${file.name} (${pct}%)`,
+              `Uploader ${i + 1}/${list.length}: ${file.name} - ${formatSize(uploadedBytes)} ud af ${formatSize(totalBytes || file.size || 0)} (${pct}%)`,
               "ok"
             );
           });
@@ -10465,14 +10510,20 @@
       const failedPart = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : "";
       const doneLabel = uploadWasStopped ? "Upload stoppet" : "Upload færdig";
       showStatus(els.uploadStatus, `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}.`, uploadUiState.failedFiles ? "error" : "ok");
-      const resolved = await resolveUploadedItems(uploaded);
-      const firstFolder = resolved.length ? String(resolved[0].folder_path || "").trim() : "";
-      await loadFolders();
-      if (firstFolder && els.folderSelect) {
-        els.folderSelect.value = firstFolder;
-        state.currentFolder = firstFolder;
+      let resolved = [];
+      showUploadInterimOverlay("Indlæser filer...");
+      try {
+        resolved = await resolveUploadedItems(uploaded);
+        const firstFolder = resolved.length ? String(resolved[0].folder_path || "").trim() : "";
+        await loadFolders();
+        if (firstFolder && els.folderSelect) {
+          els.folderSelect.value = firstFolder;
+          state.currentFolder = firstFolder;
+        }
+        await loadFiles();
+      } finally {
+        hideUploadInterimOverlay();
       }
-      await loadFiles();
       if (resolved.length) {
         const uploadedFilesForLinks = resolved
           .map((item) => fileById(Number(item && item.id ? item.id : 0)) || item)
