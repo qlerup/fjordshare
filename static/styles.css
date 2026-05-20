@@ -3743,6 +3743,12 @@ input[type="checkbox"] {
   border-color: rgba(255, 107, 107, 0.4);
 }
 
+.log-status-warning {
+  color: #ffe8b0;
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.42);
+}
+
 .log-entry-target,
 .log-entry-folder,
 .log-entry-message {

@@ -1956,7 +1956,7 @@
     const total = Math.max(0, Number(totalBytes || 0));
     if (total <= 0) return "Uploader...";
     const pct = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
-    return `Uploader... ${formatSize(loaded)} ud af ${formatSize(total)} uploadet (${pct}%)`;
+    return `Uploader... ${formatUploadSizeMb(loaded)} ud af ${formatUploadSizeMb(total)} uploadet (${pct}%)`;
   }
 
   function isUploadAbortError(error) {
@@ -1974,7 +1974,7 @@
       updateUploadMonitorItem(
         uploadUiState.currentItemKey,
         null,
-        `Stopper... ${formatSize(uploadUiState.currentLoaded)} ud af ${formatSize(uploadUiState.currentTotal || 0)}`,
+        `Stopper... ${formatUploadSizeMb(uploadUiState.currentLoaded)} ud af ${formatUploadSizeMb(uploadUiState.currentTotal || 0)}`,
         uploadUiState.currentTotal > 0 ? Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100) : null
       );
     }
@@ -2011,7 +2011,7 @@
     if (els.uploadMonitorSummary) {
       const failedTxt = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : "";
       const stoppedTxt = uploadWasStopped && !isUploadRunning() ? " · stoppet" : "";
-      els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${formatSize(processedVisualBytes)}/${formatSize(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}${stoppedTxt}`;
+      els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${formatUploadSizeMb(processedVisualBytes)}/${formatUploadSizeMb(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}${stoppedTxt}`;
     }
 
     if (els.uploadMonitorCurrent) {
@@ -2021,7 +2021,7 @@
           : 0;
         const phasePrefix = String(uploadUiState.currentPhaseLabel || "").trim() || "Uploader";
         if (uploadUiState.currentTotal > 0) {
-          els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} · ${formatSize(uploadUiState.currentLoaded)} ud af ${formatSize(uploadUiState.currentTotal)} (${filePct}%)`;
+          els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} · ${formatUploadSizeMb(uploadUiState.currentLoaded)} ud af ${formatUploadSizeMb(uploadUiState.currentTotal)} (${filePct}%)`;
         } else {
           els.uploadMonitorCurrent.textContent = `${phasePrefix}: ${uploadUiState.currentFileName} (${filePct}%)`;
         }
@@ -2181,6 +2181,17 @@
     const idx = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
     const val = n / Math.pow(1024, idx);
     return `${val.toFixed(val >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+  }
+
+  function formatUploadSizeMb(bytes) {
+    const n = Number(bytes || 0);
+    if (!Number.isFinite(n) || n <= 0) return "0 MB";
+    const mb = n / (1024 * 1024);
+    const maximumFractionDigits = mb < 10 ? 1 : 0;
+    return `${mb.toLocaleString("da-DK", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits,
+    })} MB`;
   }
 
   function formatDate(iso) {
@@ -4390,8 +4401,14 @@
     }
     if (file.is_3d) {
       const thumbStatus = String(file.thumb_status || "").toLowerCase();
+      const thumbError = String(file.thumb_error || "");
+      const thumbWasSkipped = thumbStatus === "skipped" || (thumbStatus === "error" && /sprunget over/i.test(thumbError));
       if (thumbStatus === "error") {
+        if (thumbWasSkipped) return `<div class="placeholder">Thumbnail sprunget over</div>`;
         return `<div class="placeholder">Thumbnail fejl</div>`;
+      }
+      if (thumbWasSkipped) {
+        return `<div class="placeholder">Thumbnail sprunget over</div>`;
       }
       if (thumbStatus === "cancelled") {
         return `<div class="placeholder">Thumbnail annulleret</div>`;
@@ -9536,17 +9553,21 @@
     let processing = 0;
     let error = 0;
     let cancelled = 0;
+    let skipped = 0;
 
     for (const f of state.files) {
       if (!f || !f.thumb_supported) continue;
       total += 1;
       const status = String(f.thumb_status || "").toLowerCase();
+      const skippedByGuard = status === "skipped" || (status === "error" && /sprunget over/i.test(String(f.thumb_error || "")));
       if (f.thumb_url || status === "ready") {
         ready += 1;
       } else if (status === "processing") {
         processing += 1;
       } else if (status === "queued") {
         queued += 1;
+      } else if (skippedByGuard) {
+        skipped += 1;
       } else if (status === "error") {
         error += 1;
       } else if (status === "cancelled") {
@@ -9557,9 +9578,9 @@
     }
 
     const pending = queued + processing;
-    const done = ready + error + cancelled;
+    const done = ready + error + cancelled + skipped;
     const progress = total > 0 ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
-    return { total, ready, queued, processing, error, cancelled, pending, done, progress };
+    return { total, ready, queued, processing, error, cancelled, skipped, pending, done, progress };
   }
 
   function zipQueueStats() {
@@ -9733,10 +9754,13 @@
         let thumbLabel = `Thumbnails: ${stats.ready}/${stats.total} klar`;
         if (stats.processing > 0) thumbLabel += ` · ${stats.processing} behandler`;
         if (stats.queued > 0) thumbLabel += ` · ${stats.queued} i kø`;
+        if (stats.skipped > 0) thumbLabel += ` · sprunget over: ${stats.skipped}`;
         if (stats.error > 0) thumbLabel += ` · fejl: ${stats.error}`;
         labels.push(thumbLabel);
       } else if (stats.error > 0) {
         labels.push(`Thumbnails færdig · fejl: ${stats.error}`);
+      } else if (stats.skipped > 0) {
+        labels.push(`Thumbnails færdig · sprunget over: ${stats.skipped}`);
       }
     }
 
@@ -10641,13 +10665,13 @@
             renderUploadMonitor();
             showStatus(
               els.uploadStatus,
-              `Uploader ${i + 1}/${list.length}: ${file.name} - ${formatSize(uploadedBytes)} ud af ${formatSize(totalBytes || file.size || 0)} (${pct}%)`,
+              `Uploader ${i + 1}/${list.length}: ${file.name} - ${formatUploadSizeMb(uploadedBytes)} ud af ${formatUploadSizeMb(totalBytes || file.size || 0)} (${pct}%)`,
               "ok"
             );
           });
           uploaded.push({ clientUploadId: cid, filename: file.name });
           itemCompleted = true;
-          updateUploadMonitorItem(itemKey, true, `Uploadet · ${formatSize(file.size || 0)}`, 100);
+          updateUploadMonitorItem(itemKey, true, `Uploadet · ${formatUploadSizeMb(file.size || 0)}`, 100);
         } catch (err) {
           const aborted = uploadStopRequested || isUploadAbortError(err);
           if (aborted) {
@@ -10658,7 +10682,7 @@
             updateUploadMonitorItem(
               itemKey,
               false,
-              `Stoppet · ${formatSize(stoppedLoaded)} ud af ${formatSize(stoppedTotal)} (${stoppedPct}%)`,
+              `Stoppet · ${formatUploadSizeMb(stoppedLoaded)} ud af ${formatUploadSizeMb(stoppedTotal)} (${stoppedPct}%)`,
               stoppedPct
             );
           } else {
@@ -13908,11 +13932,13 @@
         const action = String(entry.action_label || entry.action || "").trim();
         const actor = String(entry.actor || "").trim();
         const levelRaw = String(entry.level || "").toLowerCase();
-        const isError = levelRaw === "error"
+        const skippedByGuard = String(entry.kind || "").toLowerCase() === "thumbnail" && /sprunget over/i.test(message);
+        const isError = !skippedByGuard && (levelRaw === "error"
           || String(entry.action || "").toLowerCase() === "error"
-          || /\b(error|fejl|failed|failure)\b/i.test(message);
-        const statusText = isError ? "Error" : "Success";
-        const statusClass = isError ? "error" : "success";
+          || /\b(error|fejl|failed|failure)\b/i.test(message));
+        const isWarning = !isError && (levelRaw === "warn" || skippedByGuard);
+        const statusText = isError ? "Error" : (isWarning ? "Warning" : "Success");
+        const statusClass = isError ? "error" : (isWarning ? "warning" : "success");
 
         let description = message;
         if (actor && actor.toLowerCase() !== "system") {

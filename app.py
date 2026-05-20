@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import sqlite3
+import struct
 import subprocess
 import tempfile
 import time
@@ -1762,15 +1763,17 @@ def _set_file_thumbnail_state(
                 "processing": "Thumbnail generering startet",
                 "ready": "Thumbnail klar",
                 "cancelled": "Thumbnail annulleret",
+                "skipped": safe_error or "Thumbnail sprunget over",
                 "none": "Thumbnail ikke relevant for filtypen",
                 "error": safe_error or "Thumbnail fejl",
             }.get(safe_status, f"Thumbnail status: {safe_status}")
+            level = "error" if safe_status == "error" else ("warn" if safe_status == "skipped" else "info")
             _insert_activity_log_conn(
                 conn,
                 kind="thumbnail",
                 action=safe_status,
                 message=message,
-                level="error" if safe_status == "error" else "info",
+                level=level,
                 folder_path=str(row["folder_path"] or ""),
                 target=str(row["filename"] or ""),
                 actor=actor,
@@ -7861,6 +7864,19 @@ def _format_bytes_compact(num_bytes: int) -> str:
     return f"{value:.1f} {units[idx]}"
 
 
+class ThumbnailSkipped(RuntimeError):
+    """Raised when a thumbnail is intentionally skipped for safety."""
+
+
+def _mesh_render_source_exceeds_limit(mesh_path: Path) -> bool:
+    if THUMB_MESH_RENDER_MAX_BYTES <= 0:
+        return False
+    try:
+        return int(mesh_path.stat().st_size) > int(THUMB_MESH_RENDER_MAX_BYTES)
+    except Exception:
+        return False
+
+
 def _ensure_mesh_render_source_within_limit(mesh_path: Path, *, context: str = "Thumbnail") -> None:
     if THUMB_MESH_RENDER_MAX_BYTES <= 0:
         return
@@ -7870,7 +7886,7 @@ def _ensure_mesh_render_source_within_limit(mesh_path: Path, *, context: str = "
         return
     if size <= THUMB_MESH_RENDER_MAX_BYTES:
         return
-    raise RuntimeError(
+    raise ThumbnailSkipped(
         f"{context} sprunget over: filen er {_format_bytes_compact(size)}, "
         f"over graensen paa {_format_bytes_compact(THUMB_MESH_RENDER_MAX_BYTES)}."
     )
@@ -7998,9 +8014,7 @@ def _ensure_preview_glb_for_row(file_row: sqlite3.Row) -> Optional[Path]:
     return preview_path if preview_path.exists() else None
 
 
-def _render_mesh_thumbnail(mesh_path: Path, output_png: Path, *, size_px: int, face_limit: int) -> None:
-    _ensure_mesh_render_source_within_limit(mesh_path, context="Thumbnail")
-
+def _render_triangles_thumbnail(triangles: Any, output_png: Path, *, size_px: int) -> None:
     import numpy as np
     import matplotlib
 
@@ -8008,22 +8022,24 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path, *, size_px: int, f
     from matplotlib import pyplot as plt
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-    mesh = _load_mesh_for_thumbnail(mesh_path)
-    try:
-        mesh.remove_degenerate_faces()
-    except Exception:
-        pass
+    triangles = np.asarray(triangles, dtype=float)
+    if triangles.ndim != 3 or triangles.shape[1:] != (3, 3) or len(triangles) == 0:
+        raise RuntimeError("Mesh is empty")
+    finite_mask = np.isfinite(triangles).all(axis=(1, 2))
+    triangles = triangles[finite_mask]
+    if len(triangles) == 0:
+        raise RuntimeError("Mesh is empty")
 
-    verts = mesh.vertices
-    faces = mesh.faces
-
-    safe_face_limit = max(1000, int(face_limit or THUMB_RENDER_FACE_LIMIT))
-    if len(faces) > safe_face_limit:
-        # Keep contiguous surface appearance instead of random sparse sampling.
-        step = max(1, int(np.ceil(len(faces) / float(safe_face_limit))))
-        faces = faces[::step]
-
-    triangles = verts[faces]
+    edge_a = triangles[:, 1] - triangles[:, 0]
+    edge_b = triangles[:, 2] - triangles[:, 0]
+    face_normals = np.cross(edge_a, edge_b)
+    norm_len = np.linalg.norm(face_normals, axis=1, keepdims=True)
+    valid_mask = norm_len[:, 0] > 1e-9
+    triangles = triangles[valid_mask]
+    face_normals = face_normals[valid_mask]
+    norm_len = norm_len[valid_mask]
+    if len(triangles) == 0:
+        raise RuntimeError("Mesh is empty")
 
     safe_size_px = max(96, int(size_px or THUMB_SIZE_PX))
     fig = plt.figure(figsize=(safe_size_px / 100.0, safe_size_px / 100.0), dpi=100)
@@ -8036,11 +8052,6 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path, *, size_px: int, f
     light = np.array([0.25, 0.45, 0.85], dtype=float)
     light = light / np.linalg.norm(light)
 
-    # Fast per-face normal calculation (much cheaper than global mesh normal fixing).
-    edge_a = triangles[:, 1] - triangles[:, 0]
-    edge_b = triangles[:, 2] - triangles[:, 0]
-    face_normals = np.cross(edge_a, edge_b)
-    norm_len = np.linalg.norm(face_normals, axis=1, keepdims=True)
     safe_normals = face_normals / np.maximum(norm_len, 1e-9)
 
     # Use abs(dot) to avoid random black patches from inconsistent winding,
@@ -8061,8 +8072,9 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path, *, size_px: int, f
     poly.set_edgecolor((0.0, 0.0, 0.0, 0.0))
     ax.add_collection3d(poly)
 
-    mins = verts.min(axis=0)
-    maxs = verts.max(axis=0)
+    all_verts = triangles.reshape(-1, 3)
+    mins = all_verts.min(axis=0)
+    maxs = all_verts.max(axis=0)
     center = (mins + maxs) / 2.0
     span = float(max((maxs - mins).max(), 1.0))
     half = span * 0.58
@@ -8076,6 +8088,99 @@ def _render_mesh_thumbnail(mesh_path: Path, output_png: Path, *, size_px: int, f
     fig.tight_layout(pad=0.0)
     fig.savefig(str(output_png), dpi=100)
     plt.close(fig)
+
+
+def _binary_stl_triangle_count(stl_path: Path) -> Optional[int]:
+    try:
+        size = int(stl_path.stat().st_size)
+        if size < 84:
+            return None
+        with stl_path.open("rb") as fh:
+            header = fh.read(84)
+        if len(header) < 84:
+            return None
+        count = int(struct.unpack("<I", header[80:84])[0])
+        expected = 84 + (count * 50)
+        if expected == size:
+            return count
+        if expected < size and (size - expected) <= 1024:
+            return count
+    except Exception:
+        return None
+    return None
+
+
+def _sample_binary_stl_triangles(stl_path: Path, *, face_limit: int):
+    import numpy as np
+
+    total = _binary_stl_triangle_count(stl_path)
+    if not total or total <= 0:
+        raise ThumbnailSkipped("Thumbnail sprunget over: stor ASCII/ukendt STL kan ikke samples sikkert.")
+
+    safe_limit = max(1000, int(face_limit or THUMB_FAST_RENDER_FACE_LIMIT))
+    sample_count = min(int(total), safe_limit)
+    if sample_count <= 0:
+        raise RuntimeError("Mesh is empty")
+
+    if sample_count == 1:
+        indices = [0]
+    else:
+        max_index = int(total) - 1
+        indices = [
+            min(max_index, int(round((i * max_index) / float(sample_count - 1))))
+            for i in range(sample_count)
+        ]
+
+    triangles = np.empty((len(indices), 3, 3), dtype=np.float32)
+    written = 0
+    with stl_path.open("rb") as fh:
+        for tri_index in indices:
+            try:
+                fh.seek(84 + (int(tri_index) * 50) + 12)
+                raw = fh.read(36)
+            except Exception:
+                continue
+            if len(raw) != 36:
+                continue
+            triangles[written] = np.frombuffer(raw, dtype="<f4", count=9).reshape(3, 3)
+            written += 1
+
+    if written <= 0:
+        raise RuntimeError("Mesh is empty")
+    return triangles[:written]
+
+
+def _render_large_stl_thumbnail(stl_path: Path, output_png: Path, *, size_px: int, face_limit: int) -> bool:
+    if _binary_stl_triangle_count(stl_path) is None:
+        return False
+    sample_limit = max(1000, min(int(face_limit or THUMB_FAST_RENDER_FACE_LIMIT), THUMB_FAST_RENDER_FACE_LIMIT))
+    triangles = _sample_binary_stl_triangles(stl_path, face_limit=sample_limit)
+    _render_triangles_thumbnail(triangles, output_png, size_px=size_px)
+    return True
+
+
+def _render_mesh_thumbnail(mesh_path: Path, output_png: Path, *, size_px: int, face_limit: int) -> None:
+    _ensure_mesh_render_source_within_limit(mesh_path, context="Thumbnail")
+
+    import numpy as np
+
+    mesh = _load_mesh_for_thumbnail(mesh_path)
+    try:
+        mesh.remove_degenerate_faces()
+    except Exception:
+        pass
+
+    verts = mesh.vertices
+    faces = mesh.faces
+
+    safe_face_limit = max(1000, int(face_limit or THUMB_RENDER_FACE_LIMIT))
+    if len(faces) > safe_face_limit:
+        # Keep contiguous surface appearance instead of random sparse sampling.
+        step = max(1, int(np.ceil(len(faces) / float(safe_face_limit))))
+        faces = faces[::step]
+
+    triangles = verts[faces]
+    _render_triangles_thumbnail(triangles, output_png, size_px=size_px)
 
 
 def _generate_thumbnail_file(file_row: sqlite3.Row, *, detailed: bool = False) -> str:
@@ -8111,6 +8216,16 @@ def _generate_thumbnail_file(file_row: sqlite3.Row, *, detailed: bool = False) -
                 temp_output.replace(thumb_path)
                 return rel_name
             raise RuntimeError("PWSCENE preview image not found")
+
+        if ext == ".stl" and _mesh_render_source_exceeds_limit(source_path):
+            if _render_large_stl_thumbnail(
+                source_path,
+                temp_output,
+                size_px=render_size_px,
+                face_limit=render_face_limit,
+            ):
+                temp_output.replace(thumb_path)
+                return rel_name
 
         _ensure_mesh_render_source_within_limit(source_path, context="Thumbnail")
         if ext in {".step", ".stp"}:
@@ -8182,7 +8297,17 @@ def _process_thumbnail_for_file_id(file_id: int) -> None:
         if existing_rel and existing_rel != rel_name:
             _safe_remove_thumbnail(existing_rel)
         _set_file_thumbnail_state(int(file_id), "ready", thumb_rel=rel_name, error="")
-        enqueue_thumbnail_detail(int(file_id))
+        try:
+            is_large_stl = ext == ".stl" and _mesh_render_source_exceeds_limit(file_disk_path(row))
+        except Exception:
+            is_large_stl = False
+        if not is_large_stl:
+            enqueue_thumbnail_detail(int(file_id))
+    except ThumbnailSkipped as exc:
+        if _thumbnail_cancel_requested(int(file_id)):
+            _set_file_thumbnail_state(int(file_id), "cancelled", thumb_rel=existing_rel, error="")
+        else:
+            _set_file_thumbnail_state(int(file_id), "skipped", thumb_rel=existing_rel, error=str(exc))
     except Exception as exc:
         if _thumbnail_cancel_requested(int(file_id)):
             _set_file_thumbnail_state(int(file_id), "cancelled", thumb_rel=existing_rel, error="")
@@ -8285,7 +8410,7 @@ def enqueue_pending_thumbnails_if_ready(limit: int = 1000) -> int:
             SELECT id
             FROM files
             WHERE lower(COALESCE(ext,'')) IN ({placeholders})
-              AND lower(COALESCE(thumb_status,'')) != 'cancelled'
+              AND lower(COALESCE(thumb_status,'')) NOT IN ('cancelled','skipped')
               AND (
                 thumb_rel IS NULL
                 OR TRIM(COALESCE(thumb_rel,'')) = ''
@@ -8609,7 +8734,7 @@ def _bootstrap_thumbnail_queue() -> None:
         SELECT id
         FROM files
         WHERE lower(COALESCE(ext,'')) IN ({placeholders})
-                    AND lower(COALESCE(thumb_status,'')) != 'cancelled'
+          AND lower(COALESCE(thumb_status,'')) NOT IN ('cancelled','skipped')
           AND (thumb_rel IS NULL OR TRIM(thumb_rel)='' OR lower(COALESCE(thumb_status,'')) IN ('queued','processing','error'))
         ORDER BY id DESC
         LIMIT 2000
@@ -15098,7 +15223,7 @@ def api_files_list():
         ext = str(row["ext"] or "").lower()
         thumb_status = str(row["thumb_status"] or "none").strip().lower()
         thumb_rel = str(row["thumb_rel"] or "").strip()
-        if _supports_thumbnail_for_ext(ext) and thumb_status != "cancelled" and (not thumb_rel or thumb_status in {"queued", "error"}):
+        if _supports_thumbnail_for_ext(ext) and thumb_status not in {"cancelled", "skipped"} and (not thumb_rel or thumb_status in {"queued", "error"}):
             try:
                 enqueue_thumbnail(file_id)
             except Exception:
@@ -15187,7 +15312,7 @@ def api_files_search():
         ext = str(row["ext"] or "").lower()
         thumb_status = str(row["thumb_status"] or "none").strip().lower()
         thumb_rel = str(row["thumb_rel"] or "").strip()
-        if _supports_thumbnail_for_ext(ext) and thumb_status != "cancelled" and (not thumb_rel or thumb_status in {"queued", "error"}):
+        if _supports_thumbnail_for_ext(ext) and thumb_status not in {"cancelled", "skipped"} and (not thumb_rel or thumb_status in {"queued", "error"}):
             try:
                 enqueue_thumbnail(file_id)
             except Exception:
