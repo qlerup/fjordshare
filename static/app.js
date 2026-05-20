@@ -1787,6 +1787,7 @@
     failedFiles: 0,
     currentFileName: "",
     currentPhaseLabel: "",
+    currentItemKey: "",
     currentLoaded: 0,
     currentTotal: 0,
     collapsed: false,
@@ -1797,6 +1798,7 @@
   let uploadStopRequested = false;
   let uploadWasStopped = false;
   let activeTusUpload = null;
+  let activeTusReject = null;
   let uploadMonitorHideTimer = null;
   let uploadMonitorDomEventsBound = false;
   let uploadInterimOverlayActive = false;
@@ -1903,6 +1905,7 @@
     uploadUiState.failedFiles = 0;
     uploadUiState.currentFileName = "";
     uploadUiState.currentPhaseLabel = "";
+    uploadUiState.currentItemKey = "";
     uploadUiState.currentLoaded = 0;
     uploadUiState.currentTotal = 0;
     uploadMonitorItemsByKey.clear();
@@ -1914,7 +1917,13 @@
     if (!els.uploadMonitorStop) return;
     const running = isUploadRunning();
     els.uploadMonitorStop.disabled = !running || uploadStopRequested;
-    els.uploadMonitorStop.textContent = uploadStopRequested ? "Stopper..." : "Stop upload";
+    if (!running && uploadWasStopped) {
+      els.uploadMonitorStop.textContent = "Stoppet";
+    } else if (!running && uploadUiState.totalFiles > 0) {
+      els.uploadMonitorStop.textContent = "Færdig";
+    } else {
+      els.uploadMonitorStop.textContent = uploadStopRequested ? "Stopper..." : "Stop upload";
+    }
   }
 
   function _uploadItemKey(name, index = null) {
@@ -1959,13 +1968,25 @@
     if (!isUploadRunning() || uploadStopRequested) return;
     uploadStopRequested = true;
     uploadWasStopped = true;
+    uploadUiState.currentPhaseLabel = "Stopper";
     uploadUiState.currentFileName = "Stopper upload...";
+    if (uploadUiState.currentItemKey) {
+      updateUploadMonitorItem(
+        uploadUiState.currentItemKey,
+        null,
+        `Stopper... ${formatSize(uploadUiState.currentLoaded)} ud af ${formatSize(uploadUiState.currentTotal || 0)}`,
+        uploadUiState.currentTotal > 0 ? Math.round((uploadUiState.currentLoaded / uploadUiState.currentTotal) * 100) : null
+      );
+    }
     try {
       if (activeTusUpload && typeof activeTusUpload.abort === "function") {
         activeTusUpload.abort();
       }
     } catch (_err) {
       // ignore
+    }
+    if (typeof activeTusReject === "function") {
+      activeTusReject(new Error("Upload stoppet af bruger"));
     }
     setUploadStopButtonState();
     renderUploadMonitor();
@@ -1989,7 +2010,8 @@
 
     if (els.uploadMonitorSummary) {
       const failedTxt = uploadUiState.failedFiles ? ` · fejl: ${uploadUiState.failedFiles}` : "";
-      els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${formatSize(processedVisualBytes)}/${formatSize(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}`;
+      const stoppedTxt = uploadWasStopped && !isUploadRunning() ? " · stoppet" : "";
+      els.uploadMonitorSummary.textContent = `${uploadUiState.processedFiles}/${uploadUiState.totalFiles} filer · ${formatSize(processedVisualBytes)}/${formatSize(uploadUiState.totalBytes)} · ${overallPct}%${failedTxt}${stoppedTxt}`;
     }
 
     if (els.uploadMonitorCurrent) {
@@ -2005,7 +2027,7 @@
         }
       } else {
         els.uploadMonitorCurrent.textContent = uploadUiState.totalFiles
-          ? "Upload fuldført"
+          ? (uploadWasStopped ? "Upload stoppet" : "Upload fuldført")
           : "Ingen aktiv upload";
       }
     }
@@ -9956,12 +9978,14 @@
         if (settled) return;
         settled = true;
         activeTusUpload = null;
+        activeTusReject = null;
         resolve(value);
       };
       const finishReject = (error) => {
         if (settled) return;
         settled = true;
         activeTusUpload = null;
+        activeTusReject = null;
         reject(error);
       };
       const upload = new window.tus.Upload(file, {
@@ -9983,6 +10007,7 @@
         onSuccess: () => finishResolve({ file, clientUploadId }),
       });
       activeTusUpload = upload;
+      activeTusReject = finishReject;
       upload.findPreviousUploads().then((previousUploads) => {
         if (previousUploads && previousUploads.length) {
           upload.resumeFromPreviousUpload(previousUploads[0]);
@@ -10597,7 +10622,10 @@
         const baseFolder = String(item.baseFolder || fallbackFolder || "").trim();
         const cid = makeClientUploadId();
         const itemKey = _uploadItemKey(file.name, i);
+        let itemCompleted = false;
+        let itemAborted = false;
         uploadUiState.currentPhaseLabel = "Uploader";
+        uploadUiState.currentItemKey = itemKey;
         uploadUiState.currentFileName = file.name || "fil";
         uploadUiState.currentLoaded = 0;
         uploadUiState.currentTotal = Number(file.size || 0);
@@ -10618,11 +10646,21 @@
             );
           });
           uploaded.push({ clientUploadId: cid, filename: file.name });
+          itemCompleted = true;
           updateUploadMonitorItem(itemKey, true, `Uploadet · ${formatSize(file.size || 0)}`, 100);
         } catch (err) {
           const aborted = uploadStopRequested || isUploadAbortError(err);
           if (aborted) {
-            updateUploadMonitorItem(itemKey, false, "Stoppet", 0);
+            itemAborted = true;
+            const stoppedLoaded = Number(uploadUiState.currentLoaded || 0);
+            const stoppedTotal = Number(uploadUiState.currentTotal || file.size || 0);
+            const stoppedPct = stoppedTotal > 0 ? Math.round((stoppedLoaded / stoppedTotal) * 100) : 0;
+            updateUploadMonitorItem(
+              itemKey,
+              false,
+              `Stoppet · ${formatSize(stoppedLoaded)} ud af ${formatSize(stoppedTotal)} (${stoppedPct}%)`,
+              stoppedPct
+            );
           } else {
             uploadUiState.failedFiles += 1;
             const message = (err && err.message) ? err.message : String(err || "Ukendt fejl");
@@ -10631,8 +10669,12 @@
           }
           if (aborted) break;
         } finally {
+          const countedBytes = itemCompleted
+            ? Number(file.size || uploadUiState.currentTotal || 0)
+            : (itemAborted ? Number(uploadUiState.currentLoaded || 0) : Number(file.size || uploadUiState.currentTotal || 0));
           uploadUiState.processedFiles += 1;
-          uploadUiState.processedBytes += Number(file.size || uploadUiState.currentTotal || 0);
+          uploadUiState.processedBytes += countedBytes;
+          uploadUiState.currentItemKey = "";
           uploadUiState.currentLoaded = 0;
           uploadUiState.currentTotal = 0;
           renderUploadMonitor();
@@ -10641,8 +10683,10 @@
     } finally {
       uploadTransferActive = false;
       activeTusUpload = null;
+      activeTusReject = null;
       uploadUiState.currentFileName = "";
       uploadUiState.currentPhaseLabel = "";
+      uploadUiState.currentItemKey = "";
       uploadUiState.currentLoaded = 0;
       uploadUiState.currentTotal = 0;
       renderUploadMonitor();
