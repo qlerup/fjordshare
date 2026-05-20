@@ -170,7 +170,7 @@ TRACKING_SHARE_TRANSLATE_CACHE_LOCK = threading.Lock()
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp", ".lys", ".pwscene"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
 THREE_D_THUMBNAIL_EXTENSIONS = {".glb", ".gltf"}
-THUMBABLE_3D_EXTENSIONS = {".3mf", ".glb", ".gltf", ".stl", ".obj", ".step", ".stp", ".lys"}
+THUMBABLE_3D_EXTENSIONS = {".3mf", ".glb", ".gltf", ".stl", ".obj", ".step", ".stp", ".lys", ".pwscene"}
 PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl", ".obj", ".lys", ".pwscene"}
 PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {*PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS, ".zip"}
 PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL = ".stl, .step, .3mf, .obj, .lys og .pwscene"
@@ -7597,6 +7597,30 @@ def _score_3mf_thumbnail_candidate(name: str) -> tuple[int, str]:
     return (500 + ext_score, normalized)
 
 
+def _score_pwscene_thumbnail_candidate(name: str) -> tuple[int, str]:
+    normalized = str(name or "").replace("\\", "/").lower()
+    suffix = Path(normalized).suffix
+    ext_score = 0 if suffix == ".png" else 8
+
+    preview_image_match = re.search(r"(?:^|/)preview/image_(\d+)\.(?:png|jpe?g|webp)$", normalized)
+    if preview_image_match:
+        try:
+            image_num = int(preview_image_match.group(1))
+        except Exception:
+            image_num = 999
+        return (10 + min(image_num, 999) + ext_score, normalized)
+
+    if re.search(r"(?:^|/)preview/(?:thumbnail|preview|cover)\.(?:png|jpe?g|webp)$", normalized):
+        return (25 + ext_score, normalized)
+
+    if re.search(r"(?:^|/)(thumbnail|preview|cover)\.(?:png|jpe?g|webp)$", normalized):
+        return (40 + ext_score, normalized)
+
+    # Reuse 3MF-style scoring as a fallback for non-standard naming.
+    fallback_score, _ = _score_3mf_thumbnail_candidate(normalized)
+    return (200 + fallback_score + ext_score, normalized)
+
+
 def _write_embedded_image_thumbnail(image_data: bytes, output_png: Path, *, size_px: int) -> bool:
     if Image is None or ImageOps is None:
         return False
@@ -7642,6 +7666,53 @@ def _write_3mf_embedded_thumbnail(archive_path: Path, output_png: Path, *, size_
                 if info.compress_type not in ZIP_UPLOAD_ALLOWED_COMPRESSION_METHODS:
                     continue
                 candidates.append((_score_3mf_thumbnail_candidate(name), info))
+
+            if not candidates:
+                return False
+
+            safe_size_px = max(96, int(size_px or THUMB_SIZE_PX))
+            for _, info in sorted(candidates, key=lambda item: item[0]):
+                try:
+                    with zf.open(info, "r") as fp:
+                        data = fp.read(THREEMF_THUMBNAIL_MAX_IMAGE_BYTES + 1)
+                    if not data or len(data) > THREEMF_THUMBNAIL_MAX_IMAGE_BYTES:
+                        continue
+                    if _write_embedded_image_thumbnail(data, output_png, size_px=safe_size_px):
+                        return True
+                except Exception:
+                    try:
+                        output_png.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    continue
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError):
+        return False
+    except Exception:
+        return False
+
+    return False
+
+
+def _write_pwscene_embedded_thumbnail(scene_path: Path, output_png: Path, *, size_px: int) -> bool:
+    if Image is None or ImageOps is None:
+        return False
+
+    allowed_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
+    try:
+        with zipfile.ZipFile(scene_path, "r") as zf:
+            candidates = []
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                name = str(info.filename or "").replace("\\", "/")
+                suffix = Path(name.lower()).suffix
+                if suffix not in allowed_suffixes:
+                    continue
+                if info.file_size <= 0 or info.file_size > THREEMF_THUMBNAIL_MAX_IMAGE_BYTES:
+                    continue
+                if info.compress_type not in ZIP_UPLOAD_ALLOWED_COMPRESSION_METHODS:
+                    continue
+                candidates.append((_score_pwscene_thumbnail_candidate(name), info))
 
             if not candidates:
                 return False
@@ -7991,6 +8062,11 @@ def _generate_thumbnail_file(file_row: sqlite3.Row, *, detailed: bool = False) -
                 temp_output.replace(thumb_path)
                 return rel_name
             raise RuntimeError("LYS preview.png not found")
+        if ext == ".pwscene":
+            if _write_pwscene_embedded_thumbnail(source_path, temp_output, size_px=render_size_px):
+                temp_output.replace(thumb_path)
+                return rel_name
+            raise RuntimeError("PWSCENE preview image not found")
 
         if ext in {".step", ".stp"}:
             converted_obj, convert_error = _convert_step_to_obj(source_path, tmp_dir)
@@ -11389,8 +11465,8 @@ def serialize_file_row(
     can_slice = _supports_slicing_for_ext(ext)
     slice_status = str(row["slice_status"] or "none").strip().lower() or "none"
     # Allow 3D preview via model-viewer for GLB/GLTF natively and for STL/OBJ/STEP via GLB preview.
-    # Lychee .lys thumbnails are extracted from embedded preview.png, not rendered as a 3D preview model.
-    preview_3d_thumbnail = ext in THUMBABLE_3D_EXTENSIONS and ext != ".lys"
+    # .lys/.pwscene thumbnails are extracted from embedded preview images, not rendered as 3D preview models.
+    preview_3d_thumbnail = ext in THUMBABLE_3D_EXTENSIONS and ext not in {".lys", ".pwscene"}
     thumb_supported = _supports_thumbnail_for_ext(ext)
     thumb_status = str(row["thumb_status"] or "none").strip().lower() or "none"
     thumb_rel = str(row["thumb_rel"] or "").strip()
