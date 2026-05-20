@@ -170,6 +170,7 @@ Then open:
 - `TUS_TMP_DIR` (container path for resumable-upload temp files; default compose value keeps it on `/uploads`)
 - `THUMBS_HOST_DIR`
 - `THUMB_WORKER_COUNT`
+- `THUMB_DEFER_MAX_SECONDS`
 - `THUMB_MESH_RENDER_MAX_BYTES`
 - `BAMBUSTUDIO_BIN` (default: `bambu-studio`)
 - `BAMBUSTUDIO_TIMEOUT_SEC` (default: `1800`)
@@ -252,6 +253,7 @@ Stored paths:
 ## Notes
 
 - Large uploads should keep `TUS_TMP_DIR` on the same filesystem as `/uploads` (the Docker Compose default does this) so finalizing a file is a rename instead of a full copy.
+- During multi-file TUS uploads, thumbnail workers are deferred until the active upload batch finishes.
 - Very large raw mesh files skip automatic mesh thumbnail rendering when they exceed `THUMB_MESH_RENDER_MAX_BYTES`; embedded 3MF/LYS/PWSCENE preview images are still used when available.
 - If Bambu Studio release auto-detection fails during build, pin an AppImage URL in `.env` and rebuild.
 - `fjordshare-cleanup.sh` is destructive and should be used with care.

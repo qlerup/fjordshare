@@ -263,6 +263,14 @@
     return `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
+  async function setShareUploadThumbnailDefer(deferToken, active) {
+    const action = active ? "start" : "finish";
+    return api(`/api/share/${encodeURIComponent(token)}/upload/thumbnail-defer/${action}`, {
+      method: "POST",
+      body: { token: deferToken },
+    });
+  }
+
   function uploadSingleTus(file, folder, clientUploadId, onProgress) {
     return new Promise((resolve, reject) => {
       if (!(window.tus && typeof window.tus.Upload === "function")) {
@@ -311,18 +319,36 @@
     const folder = (els.shareFolderSelect && els.shareFolderSelect.value) || "";
     let uploadedCount = 0;
     let failedCount = unsupported.length;
-    for (let i = 0; i < list.length; i += 1) {
-      const file = list[i];
-      const clientUploadId = makeClientUploadId();
+    const thumbnailDeferToken = makeClientUploadId();
+    let thumbnailDeferStarted = false;
+    try {
       try {
-        await uploadSingleTus(file, folder, clientUploadId, (uploaded, total) => {
-          const pct = total > 0 ? Math.round((uploaded / total) * 100) : 0;
-          showStatus(els.shareUploadStatus, `Uploader ${i + 1}/${list.length}: ${file.name} (${pct}%)`, "ok");
-        });
-        uploadedCount += 1;
-      } catch (err) {
-        failedCount += 1;
-        showStatus(els.shareUploadStatus, `Upload fejlede for ${file.name}: ${err.message || err}`, "error");
+        await setShareUploadThumbnailDefer(thumbnailDeferToken, true);
+        thumbnailDeferStarted = true;
+      } catch (_err) {
+        thumbnailDeferStarted = false;
+      }
+      for (let i = 0; i < list.length; i += 1) {
+        const file = list[i];
+        const clientUploadId = makeClientUploadId();
+        try {
+          await uploadSingleTus(file, folder, clientUploadId, (uploaded, total) => {
+            const pct = total > 0 ? Math.round((uploaded / total) * 100) : 0;
+            showStatus(els.shareUploadStatus, `Uploader ${i + 1}/${list.length}: ${file.name} (${pct}%)`, "ok");
+          });
+          uploadedCount += 1;
+        } catch (err) {
+          failedCount += 1;
+          showStatus(els.shareUploadStatus, `Upload fejlede for ${file.name}: ${err.message || err}`, "error");
+        }
+      }
+    } finally {
+      if (thumbnailDeferStarted) {
+        try {
+          await setShareUploadThumbnailDefer(thumbnailDeferToken, false);
+        } catch (_err) {
+          // Upload success should not depend on thumbnail scheduling cleanup.
+        }
       }
     }
     const failedPart = failedCount ? ` · fejl: ${failedCount}` : "";

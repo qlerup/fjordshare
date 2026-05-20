@@ -192,6 +192,11 @@ except Exception:
     THUMB_WORKER_COUNT = 2
 THUMB_WORKER_COUNT = max(1, min(4, THUMB_WORKER_COUNT))
 try:
+    THUMB_DEFER_MAX_SECONDS = int(str(os.getenv("THUMB_DEFER_MAX_SECONDS", str(12 * 60 * 60))) or str(12 * 60 * 60))
+except Exception:
+    THUMB_DEFER_MAX_SECONDS = 12 * 60 * 60
+THUMB_DEFER_MAX_SECONDS = max(60, min(7 * 24 * 60 * 60, THUMB_DEFER_MAX_SECONDS))
+try:
     THUMB_MESH_RENDER_MAX_BYTES = int(str(os.getenv("THUMB_MESH_RENDER_MAX_BYTES", str(512 * 1024 * 1024))) or str(512 * 1024 * 1024))
 except Exception:
     THUMB_MESH_RENDER_MAX_BYTES = 512 * 1024 * 1024
@@ -333,6 +338,8 @@ THUMB_WORKER_LOCK = threading.Lock()
 THUMB_WORKER_STARTED = False
 THUMB_DETAIL_WORKER_LOCK = threading.Lock()
 THUMB_DETAIL_WORKER_STARTED = False
+THUMB_DEFER_LOCK = threading.Lock()
+THUMB_DEFER_TOKENS: dict[str, float] = {}
 SLICE_QUEUE: "queue_mod.Queue[Dict[str, Any]]" = queue_mod.Queue()
 SLICE_QUEUE_LOCK = threading.Lock()
 SLICE_QUEUED_IDS: set[int] = set()
@@ -8217,7 +8224,46 @@ def _start_thumbnail_worker_if_needed() -> None:
         t.start()
 
 
+def _clean_thumbnail_defer_token(raw: Any) -> str:
+    token = re.sub(r"[^a-zA-Z0-9_.:-]", "", str(raw or "").strip())
+    return token[:120] or secrets.token_urlsafe(18)
+
+
+def _prune_thumbnail_defer_tokens_locked(now_ts: Optional[float] = None) -> None:
+    now_value = float(now_ts if now_ts is not None else time.time())
+    cutoff = now_value - float(THUMB_DEFER_MAX_SECONDS)
+    stale = [token for token, started_at in THUMB_DEFER_TOKENS.items() if float(started_at or 0.0) < cutoff]
+    for token in stale:
+        THUMB_DEFER_TOKENS.pop(token, None)
+
+
+def thumbnails_deferred() -> bool:
+    with THUMB_DEFER_LOCK:
+        _prune_thumbnail_defer_tokens_locked()
+        return bool(THUMB_DEFER_TOKENS)
+
+
+def begin_thumbnail_defer(raw_token: Any = "") -> str:
+    token = _clean_thumbnail_defer_token(raw_token)
+    with THUMB_DEFER_LOCK:
+        _prune_thumbnail_defer_tokens_locked()
+        THUMB_DEFER_TOKENS[token] = time.time()
+    return token
+
+
+def finish_thumbnail_defer(raw_token: Any = "") -> None:
+    token = str(raw_token or "").strip()
+    with THUMB_DEFER_LOCK:
+        if token:
+            THUMB_DEFER_TOKENS.pop(token, None)
+        else:
+            THUMB_DEFER_TOKENS.clear()
+        _prune_thumbnail_defer_tokens_locked()
+
+
 def enqueue_thumbnail(file_id: int) -> None:
+    if thumbnails_deferred():
+        return
     fid = int(file_id)
     _thumbnail_cancel_clear(fid)
     with THUMB_QUEUE_LOCK:
@@ -8226,6 +8272,33 @@ def enqueue_thumbnail(file_id: int) -> None:
         THUMB_QUEUED_IDS.add(fid)
     _start_thumbnail_worker_if_needed()
     THUMB_QUEUE.put(fid)
+
+
+def enqueue_pending_thumbnails_if_ready(limit: int = 1000) -> int:
+    if thumbnails_deferred():
+        return 0
+    safe_limit = max(1, min(5000, int(limit or 1000)))
+    placeholders = ",".join("?" for _ in THUMBABLE_3D_EXTENSIONS)
+    with closing(get_conn()) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id
+            FROM files
+            WHERE lower(COALESCE(ext,'')) IN ({placeholders})
+              AND lower(COALESCE(thumb_status,'')) != 'cancelled'
+              AND (
+                thumb_rel IS NULL
+                OR TRIM(COALESCE(thumb_rel,'')) = ''
+                OR lower(COALESCE(thumb_status,'')) IN ('queued','error')
+              )
+            ORDER BY uploaded_at ASC, id ASC
+            LIMIT ?
+            """,
+            (*tuple(sorted(THUMBABLE_3D_EXTENSIONS)), safe_limit),
+        ).fetchall()
+    for row in rows:
+        enqueue_thumbnail(int(row["id"]))
+    return len(rows)
 
 
 def _thumbnail_quick_queue_is_idle() -> bool:
@@ -19824,6 +19897,23 @@ def api_upload_tus_options(upload_id: Optional[str] = None):
     return _tus_options_response()
 
 
+@app.route("/api/upload/thumbnail-defer/start", methods=["POST"])
+@login_required
+def api_upload_thumbnail_defer_start():
+    body = request.get_json(silent=True) or {}
+    token = begin_thumbnail_defer(body.get("token"))
+    return jsonify({"ok": True, "token": token})
+
+
+@app.route("/api/upload/thumbnail-defer/finish", methods=["POST"])
+@login_required
+def api_upload_thumbnail_defer_finish():
+    body = request.get_json(silent=True) or {}
+    finish_thumbnail_defer(body.get("token"))
+    queued = enqueue_pending_thumbnails_if_ready()
+    return jsonify({"ok": True, "queued": queued})
+
+
 @app.route("/api/upload/tus", methods=["POST"])
 @login_required
 def api_upload_tus_create():
@@ -20046,6 +20136,29 @@ def api_share_upload_tus_options(token: str, upload_id: Optional[str] = None):
     _ = token
     _ = upload_id
     return _tus_options_response()
+
+
+@app.route("/api/share/<token>/upload/thumbnail-defer/start", methods=["POST"])
+def api_share_upload_thumbnail_defer_start(token: str):
+    _share_row, err, _folders = share_access(token, required="upload")
+    if err is not None:
+        status = 401 if err.get("requires_auth") else 403
+        return jsonify(err), status
+    body = request.get_json(silent=True) or {}
+    defer_token = begin_thumbnail_defer(body.get("token"))
+    return jsonify({"ok": True, "token": defer_token})
+
+
+@app.route("/api/share/<token>/upload/thumbnail-defer/finish", methods=["POST"])
+def api_share_upload_thumbnail_defer_finish(token: str):
+    _share_row, err, _folders = share_access(token, required="upload")
+    if err is not None:
+        status = 401 if err.get("requires_auth") else 403
+        return jsonify(err), status
+    body = request.get_json(silent=True) or {}
+    finish_thumbnail_defer(body.get("token"))
+    queued = enqueue_pending_thumbnails_if_ready()
+    return jsonify({"ok": True, "queued": queued})
 
 
 @app.route("/api/share/<token>/upload/tus", methods=["POST"])

@@ -9811,6 +9811,14 @@
     return `upload-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   }
 
+  async function setUploadThumbnailDefer(token, active) {
+    const action = active ? "start" : "finish";
+    return api(`/api/upload/thumbnail-defer/${action}`, {
+      method: "POST",
+      body: { token },
+    });
+  }
+
   function uploadSingleTus(file, folder, baseFolder, clientUploadId, onProgress) {
     return new Promise((resolve, reject) => {
       if (!(window.tus && typeof window.tus.Upload === "function")) {
@@ -10445,7 +10453,15 @@
 
     showStatus(els.uploadStatus, `Starter upload af ${list.length} filer...`, "ok");
     const uploaded = [];
+    const thumbnailDeferToken = makeClientUploadId();
+    let thumbnailDeferStarted = false;
     try {
+      try {
+        await setUploadThumbnailDefer(thumbnailDeferToken, true);
+        thumbnailDeferStarted = true;
+      } catch (_err) {
+        thumbnailDeferStarted = false;
+      }
       for (let i = 0; i < list.length; i += 1) {
         if (uploadStopRequested) break;
 
@@ -10504,6 +10520,13 @@
       uploadUiState.currentLoaded = 0;
       uploadUiState.currentTotal = 0;
       renderUploadMonitor();
+      if (thumbnailDeferStarted) {
+        try {
+          await setUploadThumbnailDefer(thumbnailDeferToken, false);
+        } catch (_err) {
+          // Upload success should not depend on thumbnail scheduling cleanup.
+        }
+      }
     }
 
     if (uploaded.length) {
