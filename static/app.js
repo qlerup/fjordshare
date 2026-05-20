@@ -9804,6 +9804,57 @@
     }
   }
 
+  async function searchFilesAndFolders() {
+    if (state.selectMode) return;
+    const baseFolder = currentFolder() || state.homeFolder || "";
+    const rawQuery = window.prompt("Søg efter fil eller mappe i denne mappe og undermapper:");
+    const query = String(rawQuery || "").trim();
+    if (!query) return;
+
+    const queryLower = query.toLowerCase();
+    const matchingFolders = state.folders.filter((folder) => {
+      const path = String(folder && folder.path ? folder.path : "");
+      if (baseFolder && !pathMatchesPrefix(path, baseFolder)) return false;
+      return path.toLowerCase().includes(queryLower);
+    });
+
+    let data = null;
+    try {
+      data = await api(`/api/files/search?folder=${encodeURIComponent(baseFolder)}&q=${encodeURIComponent(query)}&limit=500`);
+    } catch (err) {
+      showStatus(els.uploadStatus, err.message || "Søgning fejlede", "error");
+      return;
+    }
+
+    const items = Array.isArray(data && data.items) ? data.items : [];
+    if (items.length) {
+      state.files = items;
+      state.zipJobs = [];
+      renderFiles();
+      renderFolderBrowser();
+      updateFolderUiState();
+      const folderPart = matchingFolders.length ? ` · mapper: ${matchingFolders.length}` : "";
+      showStatus(els.uploadStatus, `Søgning: ${items.length} filer fundet${folderPart}.`, "ok");
+      return;
+    }
+
+    if (matchingFolders.length) {
+      const target = String(matchingFolders[0].path || "");
+      state.currentFolder = target;
+      if (els.folderSelect) els.folderSelect.value = target;
+      await loadFiles();
+      showStatus(els.uploadStatus, `Søgning: åbnede mappe "${target}".`, "ok");
+      return;
+    }
+
+    state.files = [];
+    state.zipJobs = [];
+    renderFiles();
+    renderFolderBrowser();
+    updateFolderUiState();
+    showStatus(els.uploadStatus, "Ingen filer eller mapper matcher søgningen.", "error");
+  }
+
   function makeClientUploadId() {
     if (window.crypto && typeof window.crypto.randomUUID === "function") {
       return window.crypto.randomUUID();
@@ -15449,19 +15500,10 @@
     }
 
     if (els.mapperSearchBtn) {
-      els.mapperSearchBtn.addEventListener("click", async () => {
-        if (state.selectMode) return;
-        const query = String(window.prompt("Søg efter mappe (navn eller sti):") || "").trim().toLowerCase();
-        if (!query) return;
-        const hit = state.folders.find((f) => String(f.path || "").toLowerCase().includes(query));
-        if (!hit) {
-          showStatus(els.uploadStatus, "Ingen mappe matcher søgningen.", "error");
-          return;
-        }
-        const target = String(hit.path || "");
-        state.currentFolder = target;
-        if (els.folderSelect) els.folderSelect.value = target;
-        await loadFiles();
+      els.mapperSearchBtn.addEventListener("click", () => {
+        searchFilesAndFolders().catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Søgning fejlede", "error");
+        });
       });
     }
 
