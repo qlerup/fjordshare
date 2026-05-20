@@ -9861,7 +9861,14 @@
     const data = await api(`/api/files?folder=${encodeURIComponent(folder)}`);
     state.files = Array.isArray(data.items) ? data.items : [];
     state.zipJobs = Array.isArray(data.zip_jobs) ? data.zip_jobs : [];
-    state.folderPreviewCache[String(folder || "")] = buildFolderPreviewEntry(state.files);
+    const folderKey = String(folder || "");
+    const currentFolderPreview = buildFolderPreviewEntry(state.files);
+    const previewUrls = Array.isArray(currentFolderPreview.urls)
+      ? currentFolderPreview.urls.filter(Boolean)
+      : [];
+    if (previewUrls.length) {
+      state.folderPreviewCache[folderKey] = currentFolderPreview;
+    }
     renderFiles();
     renderFolderBrowser();
     updateFolderUiState();
