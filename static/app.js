@@ -145,6 +145,7 @@
     smsConfirmResolver: null,
     smsConfirmContext: "",
     smsConfirmTargetUsername: "",
+    smsConfirmLabelPdfFile: null,
     smsOnboardingCountdownTimer: null,
     smsOnboardingExpiresAt: 0,
     smsGatewayTokenConfigured: false,
@@ -466,6 +467,7 @@
     smsConfirmStatus: document.getElementById("smsConfirmStatus"),
     smsConfirmTrackingInput: document.getElementById("smsConfirmTrackingInput"),
     smsConfirmAddTrackingBtn: document.getElementById("smsConfirmAddTrackingBtn"),
+    smsConfirmDropZone: document.getElementById("smsConfirmDropZone"),
     smsConfirmLabelPdfInput: document.getElementById("smsConfirmLabelPdfInput"),
     smsConfirmExtractBtn: document.getElementById("smsConfirmExtractBtn"),
     smsConfirmExtracted: document.getElementById("smsConfirmExtracted"),
@@ -3172,7 +3174,8 @@
 
   function resetSmsConfirmFields() {
     if (els.smsConfirmTrackingInput) els.smsConfirmTrackingInput.value = "";
-    if (els.smsConfirmLabelPdfInput) els.smsConfirmLabelPdfInput.value = "";
+    setSmsConfirmLabelPdfFile(null);
+    setSmsConfirmLabelDragState(false);
     if (els.smsConfirmExtracted) {
       els.smsConfirmExtracted.textContent = "";
       els.smsConfirmExtracted.classList.add("hidden");
@@ -3329,6 +3332,59 @@
     return selected.type === "application/pdf" || fileName.endsWith(".pdf");
   }
 
+  function setSmsConfirmLabelDragState(active) {
+    if (!els.smsConfirmDropZone) return;
+    els.smsConfirmDropZone.classList.toggle("is-label-dragover", !!active);
+  }
+
+  function setSmsConfirmLabelPdfFile(file) {
+    const selected = file || null;
+    const input = els.smsConfirmLabelPdfInput;
+    state.smsConfirmLabelPdfFile = selected;
+
+    if (!selected && input) {
+      input.value = "";
+    }
+
+    if (selected && input && typeof DataTransfer !== "undefined") {
+      try {
+        const transfer = new DataTransfer();
+        transfer.items.add(selected);
+        input.files = transfer.files;
+      } catch (_err) {
+        // Keep the selected file in state if the browser blocks input assignment.
+      }
+    }
+  }
+
+  function selectedSmsConfirmLabelPdfFile() {
+    if (state.smsConfirmLabelPdfFile) {
+      return state.smsConfirmLabelPdfFile;
+    }
+    const input = els.smsConfirmLabelPdfInput;
+    if (!input || !input.files || !input.files.length) {
+      return null;
+    }
+    const selected = input.files[0] || null;
+    state.smsConfirmLabelPdfFile = selected;
+    return selected;
+  }
+
+  function applySmsConfirmLabelPdfFile(file) {
+    const selected = file || null;
+    if (!selected) {
+      setSmsConfirmLabelPdfFile(null);
+      return;
+    }
+    if (!isPdfUploadFile(selected)) {
+      setSmsConfirmLabelPdfFile(null);
+      showStatus(els.smsConfirmStatus, "Kun PDF-filer kan bruges til udtræk.", "error");
+      return;
+    }
+    setSmsConfirmLabelPdfFile(selected);
+    showStatus(els.smsConfirmStatus, "");
+  }
+
   function applyTrackingLabelUploadFile(file) {
     const selected = file || null;
     if (!selected) {
@@ -3383,8 +3439,7 @@
 
   async function extractTrackingFromSmsConfirmLabel() {
     if (state.role !== "admin") return;
-    const input = els.smsConfirmLabelPdfInput;
-    const file = input && input.files && input.files.length ? input.files[0] : null;
+    const file = selectedSmsConfirmLabelPdfFile();
     if (!file) {
       showStatus(els.smsConfirmStatus, "Vælg en pakkelabel i PDF-format.", "error");
       return;
@@ -3423,7 +3478,7 @@
     } catch (err) {
       showStatus(els.smsConfirmStatus, err.message || "Kunne ikke udtrække pakkenummer fra PDF", "error");
     } finally {
-      if (els.smsConfirmLabelPdfInput) els.smsConfirmLabelPdfInput.value = "";
+      setSmsConfirmLabelPdfFile(null);
       if (els.smsConfirmExtractBtn) els.smsConfirmExtractBtn.disabled = false;
     }
   }
@@ -16969,7 +17024,54 @@
     }
     if (els.smsConfirmLabelPdfInput) {
       els.smsConfirmLabelPdfInput.addEventListener("change", () => {
-        showStatus(els.smsConfirmStatus, "");
+        const inputFile = els.smsConfirmLabelPdfInput.files && els.smsConfirmLabelPdfInput.files.length
+          ? els.smsConfirmLabelPdfInput.files[0]
+          : null;
+        applySmsConfirmLabelPdfFile(inputFile);
+      });
+    }
+    if (els.smsConfirmDropZone) {
+      const zone = els.smsConfirmDropZone;
+      const hasFiles = (event) => !!(
+        event &&
+        event.dataTransfer &&
+        event.dataTransfer.types &&
+        Array.from(event.dataTransfer.types).includes("Files")
+      );
+
+      zone.addEventListener("dragenter", (event) => {
+        if (!hasFiles(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        setSmsConfirmLabelDragState(true);
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      });
+      zone.addEventListener("dragover", (event) => {
+        if (!hasFiles(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        setSmsConfirmLabelDragState(true);
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      });
+      zone.addEventListener("dragleave", (event) => {
+        event.stopPropagation();
+        const related = event.relatedTarget;
+        if (related instanceof Node && zone.contains(related)) return;
+        setSmsConfirmLabelDragState(false);
+      });
+      zone.addEventListener("drop", (event) => {
+        const files = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files : null;
+        if (!files || !files.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        globalDropDepth = 0;
+        hideGlobalDropOverlay();
+        setSmsConfirmLabelDragState(false);
+        applySmsConfirmLabelPdfFile(files[0] || null);
       });
     }
     if (els.smsConfirmModal) {
