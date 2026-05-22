@@ -5340,7 +5340,7 @@
   function sliceProcessKeyLooksBoolean(key) {
     const normalized = String(key || "").trim().toLowerCase();
     if (!normalized) return false;
-    if (/^(prime_tower|wipe_tower|prime_tower_skip_points|prime_tower_internal_ribs|prime_tower_rib_wall|prime_tower_fillet_wall|purge_into_objects_infill|purge_into_objects_support|purge_into_infill|purge_into_support|flush_into_infill|flush_into_support|spiral_vase|reduce_infill_retraction|interface_shells)$/.test(normalized)) {
+    if (/^(prime_tower|wipe_tower|prime_tower_skip_points|prime_tower_internal_ribs|prime_tower_rib_wall|prime_tower_fillet_wall|purge_into_objects_infill|purge_into_objects_support|purge_into_infill|purge_into_support|flush_into_infill|flush_into_support|spiral_vase|smooth_spiral|reduce_infill_retraction|interface_shells)$/.test(normalized)) {
       return true;
     }
     return /(^|_)(enable|enabled|is|has|use|only|avoid|detect|combination|embedding|slow_down|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental|detect_overhang_wall|remove|dont|independent|z_overrides)($|_)/.test(normalized);
@@ -5408,9 +5408,59 @@
     return normalized;
   }
 
+  function normalizeSliceProcessFuzzySkin(value) {
+    const normalized = normalizeSliceProcessKey(value);
+    if (!normalized) return "";
+    if (normalized === "none" || normalized === "none_allow_paint" || normalized === "none_allow_painting") {
+      return "none";
+    }
+    if (normalized === "contour") {
+      return "contour";
+    }
+    if (normalized === "contour_and_hole" || normalized === "contour_hole" || normalized === "contour_and_holes") {
+      return "contour_and_hole";
+    }
+    if (normalized === "all" || normalized === "all_wall" || normalized === "all_walls") {
+      return "all";
+    }
+    if (normalized === "disabled" || normalized === "off" || normalized === "false" || normalized === "0") {
+      return "disabled";
+    }
+    return normalized;
+  }
+
+  function normalizeSliceProcessFuzzySkinMode(value) {
+    const normalized = normalizeSliceProcessKey(value);
+    if (!normalized) return "";
+    if (normalized === "displacement" || normalized === "displaced" || normalized === "displaced_edges") {
+      return "displacement";
+    }
+    if (normalized === "extrusion") {
+      return "extrusion";
+    }
+    if (normalized === "combined" || normalized === "traditional") {
+      return "combined";
+    }
+    return normalized;
+  }
+
+  function normalizeSliceProcessFuzzySkinNoiseType(value) {
+    const normalized = normalizeSliceProcessKey(value);
+    if (!normalized) return "";
+    if (normalized === "classic") return "classic";
+    if (normalized === "perlin") return "perlin";
+    if (normalized === "billow") return "billow";
+    if (normalized === "ridged_multifractal" || normalized === "ridgedmultifractal" || normalized === "ridged_multi_fractal") {
+      return "ridged_multifractal";
+    }
+    if (normalized === "voronoi") return "voronoi";
+    return normalized;
+  }
+
   function normalizeSliceProcessSettingScalar(value, key = "") {
     const canonicalKey = canonicalSliceProcessKey(key);
     const normalizedKey = normalizeSliceProcessKey(key);
+    const keyLooksBoolean = sliceProcessKeyLooksBoolean(key) || sliceProcessKeyLooksBoolean(canonicalKey);
 
     if (Array.isArray(value)) {
       if (!value.length) return "";
@@ -5425,7 +5475,10 @@
       if (canonicalKey === "prime_tower_brim_width" && value === -1) {
         return "auto";
       }
-      if (sliceProcessKeyLooksBoolean(key) && (value === 0 || value === 1)) {
+      if (canonicalKey === "apply_fuzzy_skin_to_first_layer" && (value === 0 || value === 1)) {
+        return value === 1;
+      }
+      if (keyLooksBoolean && (value === 0 || value === 1)) {
         return value === 1;
       }
       return value;
@@ -5451,9 +5504,30 @@
         const normalizedBrimType = normalizeSliceProcessBrimType(text);
         if (normalizedBrimType) return normalizedBrimType;
       }
+      if (canonicalKey === "fuzzy_skin") {
+        const normalizedFuzzySkin = normalizeSliceProcessFuzzySkin(text);
+        if (normalizedFuzzySkin) return normalizedFuzzySkin;
+      }
+      if (canonicalKey === "fuzzy_skin_mode") {
+        const normalizedFuzzySkinMode = normalizeSliceProcessFuzzySkinMode(text);
+        if (normalizedFuzzySkinMode) return normalizedFuzzySkinMode;
+      }
+      if (canonicalKey === "fuzzy_skin_noise_type") {
+        const normalizedFuzzySkinNoiseType = normalizeSliceProcessFuzzySkinNoiseType(text);
+        if (normalizedFuzzySkinNoiseType) return normalizedFuzzySkinNoiseType;
+      }
       if (canonicalKey === "prime_tower_brim_width") {
         const normalizedPrimeTowerBrimWidth = normalizeSliceProcessKey(text);
         if (text === "-1" || normalizedPrimeTowerBrimWidth === "auto") return "auto";
+      }
+      if (canonicalKey === "apply_fuzzy_skin_to_first_layer") {
+        const normalizedApply = normalizeSliceProcessKey(text);
+        if (normalizedApply === "1" || normalizedApply === "true" || normalizedApply === "on" || normalizedApply === "yes" || normalizedApply === "enabled") {
+          return true;
+        }
+        if (normalizedApply === "0" || normalizedApply === "false" || normalizedApply === "off" || normalizedApply === "no" || normalizedApply === "disabled") {
+          return false;
+        }
       }
       if (canonicalKey === "order_of_walls") {
         const normalizedOrder = normalizeSliceProcessOrderOfWalls(text);
@@ -5481,7 +5555,7 @@
       if (lower === "on" || lower === "off") return lower === "on";
       if (lower === "yes" || lower === "no") return lower === "yes";
 
-      if (sliceProcessKeyLooksBoolean(key) && (text === "0" || text === "1")) {
+      if (keyLooksBoolean && (text === "0" || text === "1")) {
         return text === "1";
       }
 
@@ -5761,11 +5835,26 @@
     flush_into_support: "purge_into_objects_support",
     print_order: "print_sequence",
     spiral_mode: "spiral_vase",
+    smooth_spiralized_contours: "smooth_spiral",
+    smooth_spiralize_contours: "smooth_spiral",
+    spiral_smooth: "smooth_spiral",
+    smooth_spiral_mode: "smooth_spiral",
     timelapse: "timelapse_type",
-    fuzzy_skin_mode: "fuzzy_skin",
+    fuzzy_skin_generator_mode: "fuzzy_skin_mode",
+    fuzzy_skin_gen_mode: "fuzzy_skin_mode",
+    fuzzy_skin_noise: "fuzzy_skin_noise_type",
+    fuzzy_skin_apply_first_layer: "apply_fuzzy_skin_to_first_layer",
+    fuzzy_skin_first_layer: "apply_fuzzy_skin_to_first_layer",
+    apply_fuzzy_skin_first_layer: "apply_fuzzy_skin_to_first_layer",
     fuzzy_skin_distance: "fuzzy_skin_point_distance",
     fuzzy_skin_point_dist: "fuzzy_skin_point_distance",
     beam_interlocking: "use_beam_interlocking",
+    interlocking_width: "interlocking_beam_width",
+    interlocking_beam_direction: "interlocking_direction",
+    interlocking_beam_angle: "interlocking_direction",
+    interlocking_layer_count: "interlocking_beam_layers",
+    interlocking_layers: "interlocking_beam_layers",
+    interlocking_boundary: "interlocking_boundary_avoidance",
     interlocking_depth: "interlocking_depth_of_a_segmented_region",
     post_process: "post_processing_scripts",
     post_process_script: "post_processing_scripts",
@@ -5955,13 +6044,21 @@
     slicing_mode: "regular",
     print_sequence: "by_layer",
     spiral_vase: false,
+    smooth_spiral: false,
     timelapse_type: "traditional",
     fuzzy_skin: "none",
+    fuzzy_skin_mode: "displacement",
+    fuzzy_skin_noise_type: "classic",
     fuzzy_skin_point_distance: 0.8,
     fuzzy_skin_thickness: 0.3,
+    apply_fuzzy_skin_to_first_layer: false,
     enable_clumping_detection_by_probing: false,
     use_beam_interlocking: false,
-    interlocking_depth_of_a_segmented_region: 0,
+    interlocking_beam_width: 0.8,
+    interlocking_direction: 22.5,
+    interlocking_beam_layers: 2,
+    interlocking_depth_of_a_segmented_region: 2,
+    interlocking_boundary_avoidance: 2,
     reduce_infill_retraction: true,
     post_processing_scripts: "",
     notes: "",
@@ -5998,10 +6095,12 @@
     interface_pattern: ["default", "rectilinear", "grid", "concentric"],
     brim_type: ["auto", "outer_only", "inner_only", "outer_and_inner", "none"],
     prime_tower_brim_width: ["auto", 0, 2, 4, 6, 8, 10],
-    slicing_mode: ["regular"],
+    slicing_mode: ["regular", "even_odd", "close_holes"],
     print_sequence: ["by_layer", "by_object"],
     timelapse_type: ["traditional", "smooth"],
-    fuzzy_skin: ["none", "contour", "all"],
+    fuzzy_skin: ["none", "contour", "contour_and_hole", "all", "disabled"],
+    fuzzy_skin_mode: ["displacement", "extrusion", "combined"],
+    fuzzy_skin_noise_type: ["classic", "perlin", "billow", "ridged_multifractal", "voronoi"],
   };
 
   const SLICE_PROCESS_LABEL_OVERRIDES = {
@@ -6253,24 +6352,32 @@
     purge_into_objects_support: "Purge into objects' support",
     purge_into_support: "Purge into objects' support",
     flush_into_support: "Purge into objects' support",
-    slicing_mode: "Slicing mode",
+    slicing_mode: "Slicing Mode",
     print_sequence: "Print sequence",
     print_order: "Print sequence",
     spiral_vase: "Spiral vase",
     spiral_mode: "Spiral vase",
+    smooth_spiral: "Smooth Spiral",
     timelapse_type: "Timelapse",
     timelapse: "Timelapse",
-    fuzzy_skin: "Fuzzy skin",
-    fuzzy_skin_mode: "Fuzzy skin",
+    fuzzy_skin: "Fuzzy Skin",
+    fuzzy_skin_mode: "Fuzzy skin generator mode",
+    fuzzy_skin_generator_mode: "Fuzzy skin generator mode",
+    fuzzy_skin_noise_type: "Fuzzy skin noise type",
     fuzzy_skin_point_distance: "Fuzzy skin point distance",
     fuzzy_skin_distance: "Fuzzy skin point distance",
     fuzzy_skin_point_dist: "Fuzzy skin point distance",
     fuzzy_skin_thickness: "Fuzzy skin thickness",
+    apply_fuzzy_skin_to_first_layer: "Apply fuzzy skin to first layer",
     enable_clumping_detection_by_probing: "Enable clumping detection by probing",
     use_beam_interlocking: "Use beam interlocking",
     beam_interlocking: "Use beam interlocking",
-    interlocking_depth_of_a_segmented_region: "Interlocking depth of a segmented region",
-    interlocking_depth: "Interlocking depth of a segmented region",
+    interlocking_beam_width: "Interlocking beam width",
+    interlocking_direction: "Interlocking direction",
+    interlocking_beam_layers: "Interlocking beam layers",
+    interlocking_depth_of_a_segmented_region: "Interlocking depth",
+    interlocking_depth: "Interlocking depth",
+    interlocking_boundary_avoidance: "Interlocking boundary avoidance",
     reduce_infill_retraction: "Reduce infill retraction",
     post_processing_scripts: "Post-processing scripts",
     post_process: "Post-processing scripts",
@@ -6554,20 +6661,28 @@
     print_order: 20,
     spiral_vase: 30,
     spiral_mode: 30,
+    smooth_spiral: 35,
     timelapse_type: 40,
     timelapse: 40,
     fuzzy_skin: 50,
-    fuzzy_skin_mode: 50,
+    fuzzy_skin_mode: 55,
+    fuzzy_skin_generator_mode: 55,
+    fuzzy_skin_noise_type: 57,
     fuzzy_skin_point_distance: 60,
     fuzzy_skin_distance: 60,
     fuzzy_skin_point_dist: 60,
     fuzzy_skin_thickness: 70,
+    apply_fuzzy_skin_to_first_layer: 80,
 
     enable_clumping_detection_by_probing: 10,
     use_beam_interlocking: 20,
     beam_interlocking: 20,
-    interlocking_depth_of_a_segmented_region: 30,
-    interlocking_depth: 30,
+    interlocking_beam_width: 30,
+    interlocking_direction: 40,
+    interlocking_beam_layers: 50,
+    interlocking_depth_of_a_segmented_region: 60,
+    interlocking_depth: 60,
+    interlocking_boundary_avoidance: 70,
 
     reduce_infill_retraction: 10,
 
@@ -6671,6 +6786,10 @@
 
     if (canonical === "slicing_mode") {
       if (normalizedValue === "regular") return "Regular";
+      if (normalizedValue === "even_odd" || normalizedValue === "evenodd") return "Even-odd";
+      if (normalizedValue === "close_holes" || normalizedValue === "close_hole" || normalizedValue === "closeholes") {
+        return "Close holes";
+      }
     }
 
     if (canonical === "print_sequence") {
@@ -6684,9 +6803,33 @@
     }
 
     if (canonical === "fuzzy_skin") {
-      if (normalizedValue === "none" || normalizedValue.startsWith("none")) return "None";
+      if (normalizedValue === "none" || normalizedValue === "none_allow_paint" || normalizedValue === "none_allow_painting") {
+        return "None(allow paint)";
+      }
       if (normalizedValue === "contour") return "Contour";
-      if (normalizedValue === "all") return "All";
+      if (normalizedValue === "contour_and_hole" || normalizedValue === "contour_hole" || normalizedValue === "contour_and_holes") {
+        return "Contour and hole";
+      }
+      if (normalizedValue === "all" || normalizedValue === "all_wall" || normalizedValue === "all_walls") return "All walls";
+      if (normalizedValue === "disabled" || normalizedValue === "off" || normalizedValue === "false" || normalizedValue === "0") {
+        return "Disabled";
+      }
+    }
+
+    if (canonical === "fuzzy_skin_mode") {
+      if (normalizedValue === "displacement" || normalizedValue === "displaced_edges" || normalizedValue === "displaced") return "Displacement";
+      if (normalizedValue === "extrusion") return "Extrusion";
+      if (normalizedValue === "combined" || normalizedValue === "traditional") return "Combined";
+    }
+
+    if (canonical === "fuzzy_skin_noise_type") {
+      if (normalizedValue === "classic") return "Classic";
+      if (normalizedValue === "perlin") return "Perlin";
+      if (normalizedValue === "billow") return "Billow";
+      if (normalizedValue === "ridged_multifractal" || normalizedValue === "ridgedmultifractal" || normalizedValue === "ridged_multi_fractal") {
+        return "Ridged Multifractal";
+      }
+      if (normalizedValue === "voronoi") return "Voronoi";
     }
 
     if (canonical === "wall_generator") {
@@ -7005,6 +7148,38 @@
     return false;
   }
 
+  function isSliceProcessSpiralVaseEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("spiral_vase", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessKey(raw);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function isSliceProcessBeamInterlockingEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("use_beam_interlocking", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessKey(raw);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
   function shouldRenderSliceProcessSettingEntry(entry, base, overrides) {
     if (!entry || !entry.category) return true;
     const sectionName = String(entry.category.section || "");
@@ -7020,6 +7195,12 @@
     // Hide generic speed fallback rows; Bambu UI uses curated speed
     // groups (Initial layer speed, Other layers speed, Travel speed, Acceleration).
     if (entry.category && entry.category.tab === "speed" && sectionName === "Speed") {
+      return false;
+    }
+
+    // Hide generic Others fallback rows; Bambu UI does not expose an
+    // "Other settings" catch-all section.
+    if (entry.category && entry.category.tab === "others" && sectionName === "Other settings") {
       return false;
     }
 
@@ -7212,6 +7393,7 @@
         "z_overrides_xy",
         "support_object_first_layer_gap",
         "max_bridge_length",
+        "dont_support_bridges",
         "independent_support_layer_height",
       ]);
       if (canonical === "top_z_distance" && raftEnabled) {
@@ -7219,6 +7401,25 @@
       }
       if (!allowedSupportAdvancedKeys.has(canonical)) {
         return false;
+      }
+    }
+
+    if (sectionName === "Special mode" && entry.category && entry.category.tab === "others") {
+      if (canonical === "smooth_spiral") {
+        return isSliceProcessSpiralVaseEnabled(base, overrides);
+      }
+    }
+
+    if (sectionName === "Advanced" && entry.category && entry.category.tab === "others") {
+      const beamInterlockingDetailKeys = new Set([
+        "interlocking_beam_width",
+        "interlocking_direction",
+        "interlocking_beam_layers",
+        "interlocking_depth_of_a_segmented_region",
+        "interlocking_boundary_avoidance",
+      ]);
+      if (beamInterlockingDetailKeys.has(canonical)) {
+        return isSliceProcessBeamInterlockingEnabled(base, overrides);
       }
     }
 
@@ -7268,6 +7469,7 @@
     if (processKeyMatches(normalized, [/^raft_layers$/, /^top_interface_layers$/, /^bottom_interface_layers$/, /^support_interface_top_layers$/, /^support_interface_bottom_layers$/])) {
       return "layers";
     }
+    if (canonical === "interlocking_direction") return "°";
     if (processKeyMatches(normalized, [/^support_ironing_direction$/])) return "°";
     if (processKeyMatches(normalized, [/small_perimeter_speed/, /vertical_shell_speed/])) return "mm/s or %";
     if (processKeyMatches(normalized, [/sparse_infill_acceleration/, /infill_acceleration/, /internal_infill_acceleration/])) return "mm/s² or %";
@@ -7311,7 +7513,7 @@
     if (processKeyMatches(normalized, [/wall_generator/, /perimeter_generator/, /wall_transition/, /wall_distribution/, /minimum_wall_width/, /min_wall_width/, /minimum_feature_size/, /min_feature_size/])) {
       return { tab: "quality", section: "Wall generator", sectionOrder: 60 };
     }
-    if (processKeyMatches(normalized, [/order_of_walls/, /wall_infill_order/, /print_infill_first/, /bridge_flow/, /thick_bridges/, /top_solid_infill_flow_ratio/, /initial_layer_flow_ratio/, /only_one_wall_/, /only_one_wall_top/, /top_area_threshold/, /detect_overhang_wall/, /^smooth_/, /smooth_coefficient/, /avoid_crossing_wall/, /max_travel_detour_distance/, /smoothing_wall_speed_along_z/])) {
+    if (processKeyMatches(normalized, [/order_of_walls/, /wall_infill_order/, /print_infill_first/, /bridge_flow/, /thick_bridges/, /top_solid_infill_flow_ratio/, /initial_layer_flow_ratio/, /only_one_wall_/, /only_one_wall_top/, /top_area_threshold/, /detect_overhang_wall/, /^smooth_(?!spiral$)/, /smooth_coefficient/, /avoid_crossing_wall/, /max_travel_detour_distance/, /smoothing_wall_speed_along_z/])) {
       return { tab: "quality", section: "Advanced", sectionOrder: 70 };
     }
 
@@ -7343,11 +7545,11 @@
       return { tab: "others", section: "Purge options", sectionOrder: 30 };
     }
 
-    if (processKeyMatches(normalized, [/^slicing_mode$/, /^print_sequence$/, /^print_order$/, /^spiral_vase$/, /^spiral_mode$/, /^timelapse_type$/, /^timelapse$/, /^fuzzy_skin$/, /^fuzzy_skin_mode$/, /^fuzzy_skin_point_distance$/, /^fuzzy_skin_distance$/, /^fuzzy_skin_point_dist$/, /^fuzzy_skin_thickness$/])) {
+    if (processKeyMatches(normalized, [/^slicing_mode$/, /^print_sequence$/, /^print_order$/, /^spiral_vase$/, /^spiral_mode$/, /^smooth_spiral$/, /^timelapse_type$/, /^timelapse$/, /^fuzzy_skin$/, /^fuzzy_skin_mode$/, /^fuzzy_skin_generator_mode$/, /^fuzzy_skin_noise_type$/, /^fuzzy_skin_point_distance$/, /^fuzzy_skin_distance$/, /^fuzzy_skin_point_dist$/, /^fuzzy_skin_thickness$/, /^apply_fuzzy_skin_to_first_layer$/, /^fuzzy_skin_first_layer$/, /^apply_fuzzy_skin_first_layer$/])) {
       return { tab: "others", section: "Special mode", sectionOrder: 40 };
     }
 
-    if (processKeyMatches(normalized, [/^enable_clumping_detection_by_probing$/, /^use_beam_interlocking$/, /^beam_interlocking$/, /^interlocking_depth_of_a_segmented_region$/, /^interlocking_depth$/])) {
+    if (processKeyMatches(normalized, [/^enable_clumping_detection_by_probing$/, /^use_beam_interlocking$/, /^beam_interlocking$/, /^interlocking_/])) {
       return { tab: "others", section: "Advanced", sectionOrder: 50 };
     }
 
@@ -7479,7 +7681,10 @@
     const pushOption = (rawValue) => {
       const normalized = normalizeSliceProcessSettingScalar(rawValue, key);
       if (normalized === null) return;
-      const signature = `${typeof normalized}:${String(normalized)}`;
+      const signatureValue = typeof normalized === "string"
+        ? normalizeSliceProcessKey(normalized)
+        : String(normalized);
+      const signature = `${typeof normalized}:${signatureValue}`;
       if (mergedSeen.has(signature)) return;
       mergedSeen.add(signature);
       mergedOptions.push(normalized);
@@ -7512,7 +7717,7 @@
     rawOptions.forEach(pushOption);
     pushOption(baseValue);
     if (hasOverride) pushOption(currentValue);
-    const forceSelectInput = isSupportStyleField || isSupportFilamentField;
+    const forceSelectInput = isSupportStyleField || isSupportFilamentField || canonical === "slicing_mode";
     const forcePlainInput = (meta && meta.category && meta.category.tab === "speed") || new Set([
       "bridge_flow",
       "top_solid_infill_flow_ratio",
@@ -7679,10 +7884,27 @@
             if (activeTab === "support" && entry.category.section === "Raft" && canonical === "top_z_distance") {
               rowLabel = "Raft contact Z distance";
             }
+            const supportOffKeepEnabledCanonicalKeys = new Set([
+              "initial_layer_density",
+              "initial_layer_expansion",
+              "support_wall_loops",
+              "bottom_interface_layers",
+              "support_interface_bottom_layers",
+              "bottom_interface_spacing",
+              "support_interface_bottom_spacing",
+              "support_interface_spacing",
+              "top_interface_spacing",
+              "support_interface_top_spacing",
+              "z_overrides_xy",
+              "support_z_overrides_xy",
+              "independent_support_layer_height",
+              "support_independent_layer_height",
+            ]);
             const disableSupportRow = activeTab === "support"
               && !supportEnabled
               && canonical !== "enable_support"
-              && entry.category.section !== "Raft";
+              && entry.category.section !== "Raft"
+              && !supportOffKeepEnabledCanonicalKeys.has(canonical);
             const disableSkirtDependentRow = activeTab === "others"
               && !skirtEnabled
               && (canonical === "skirt_height" || canonical === "skirt_distance");
@@ -7692,6 +7914,13 @@
             const disablePrimeTowerWidthRow = activeTab === "others"
               && canonical === "prime_tower_width"
               && primeTowerRibWallEnabled;
+            const disablePrimeTowerRibDependentRow = activeTab === "others"
+              && !primeTowerRibWallEnabled
+              && (
+                canonical === "prime_tower_extra_rib_length"
+                || canonical === "prime_tower_rib_width"
+                || canonical === "prime_tower_fillet_wall"
+              );
             const disablePrecisionCircleCompRow = entry.category.section === "Precision"
               && autoCircleCompensationEnabled
               && (canonical === "xy_hole_compensation" || canonical === "xy_contour_compensation");
@@ -7705,7 +7934,7 @@
               {
                 label: rowLabel,
                 category: entry.category,
-                disabled: disableSupportRow || disableSkirtDependentRow || disableBrimWidthRow || disablePrimeTowerWidthRow || disablePrecisionCircleCompRow,
+                disabled: disableSupportRow || disableSkirtDependentRow || disableBrimWidthRow || disablePrimeTowerWidthRow || disablePrimeTowerRibDependentRow || disablePrecisionCircleCompRow,
               }
             );
           })
