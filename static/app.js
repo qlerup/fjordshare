@@ -6644,15 +6644,31 @@
 
     const baseMap = base && typeof base === "object" ? base : {};
     const overridesMap = overrides && typeof overrides === "object" ? overrides : {};
-    const allKeys = Array.from(new Set([...Object.keys(baseMap), ...Object.keys(overridesMap)]));
-    for (const key of allKeys) {
-      if (canonicalSliceProcessKey(key) !== wanted) continue;
-      if (Object.prototype.hasOwnProperty.call(overridesMap, key)) {
-        return overridesMap[key];
-      }
-      return baseMap[key];
+    const baseApiMap = state.sliceProcessSettingsBaseApi && typeof state.sliceProcessSettingsBaseApi === "object"
+      ? state.sliceProcessSettingsBaseApi
+      : {};
+
+    const matchingKeys = Array.from(new Set([...Object.keys(baseMap), ...Object.keys(overridesMap)]))
+      .filter((key) => canonicalSliceProcessKey(key) === wanted);
+    if (!matchingKeys.length) return undefined;
+
+    const rankKey = (key, preferOverrides = false) => {
+      let score = 0;
+      if (preferOverrides && Object.prototype.hasOwnProperty.call(overridesMap, key)) score += 1000;
+      if (Object.prototype.hasOwnProperty.call(baseApiMap, key)) score += 100;
+      if (normalizeSliceProcessKey(key) === wanted) score += 10;
+      score -= String(key || "").length * 0.001;
+      return score;
+    };
+
+    const overrideCandidates = matchingKeys.filter((key) => Object.prototype.hasOwnProperty.call(overridesMap, key));
+    if (overrideCandidates.length) {
+      overrideCandidates.sort((a, b) => rankKey(b, true) - rankKey(a, true));
+      return overridesMap[overrideCandidates[0]];
     }
-    return undefined;
+
+    matchingKeys.sort((a, b) => rankKey(b, false) - rankKey(a, false));
+    return baseMap[matchingKeys[0]];
   }
 
   function isSliceProcessIroningDisabled(base, overrides) {
@@ -6769,6 +6785,12 @@
     if (!entry || !entry.category) return true;
     const sectionName = String(entry.category.section || "");
     const canonical = canonicalSliceProcessKey(entry.key);
+
+    // Hide generic strength fallback rows; Bambu UI only shows curated
+    // strength groups (Walls, Top/bottom shells, Sparse infill, Advanced).
+    if (entry.category && entry.category.tab === "strength" && sectionName === "Strength") {
+      return false;
+    }
 
     if (sectionName === "Line width") {
       const allowedLineWidthKeys = new Set([
