@@ -5582,6 +5582,11 @@
     support_buildplate_only: "support_on_build_plate_only",
     support_on_buildplate_only: "support_on_build_plate_only",
     support_critical_regions: "support_critical_regions_only",
+    scarf_angle_threshold: "scarf_application_angle_threshold",
+    scarf_seam_type: "seam_slope_type",
+    scarf_start_height: "seam_slope_start_height",
+    scarf_slope_gap: "seam_slope_gap",
+    scarf_length: "seam_slope_min_length",
     support_enable: "enable_support",
     enable_support_material: "enable_support",
     support_material: "enable_support",
@@ -5646,6 +5651,10 @@
     scarf_steps: 10,
     scarf_joint_for_inner_walls: true,
     override_filament_scarf_seam_setting: false,
+    seam_slope_type: "none",
+    seam_slope_start_height: "10%",
+    seam_slope_gap: 0,
+    seam_slope_min_length: 10,
     wipe_speed: 80,
     role_based_wipe_speed: true,
     slice_gap_closing_radius: 0.049,
@@ -5854,6 +5863,10 @@
     scarf_steps: "Scarf steps",
     scarf_joint_for_inner_walls: "Scarf joint for inner walls",
     override_filament_scarf_seam_setting: "Override filament scarf seam setting",
+    seam_slope_type: "Scarf seam type",
+    seam_slope_start_height: "Scarf start height",
+    seam_slope_gap: "Scarf slope gap",
+    seam_slope_min_length: "Scarf length",
     wipe_speed: "Wipe speed",
     role_based_wipe_speed: "Role-based wipe speed",
     slice_gap_closing_radius: "Slice gap closing radius",
@@ -6097,6 +6110,10 @@
     scarf_steps: 60,
     scarf_joint_for_inner_walls: 70,
     override_filament_scarf_seam_setting: 80,
+    seam_slope_type: 81,
+    seam_slope_start_height: 82,
+    seam_slope_gap: 83,
+    seam_slope_min_length: 84,
     wipe_speed: 85,
     role_based_wipe_speed: 90,
     slice_gap_closing_radius: 10,
@@ -6552,6 +6569,22 @@
     return false;
   }
 
+  function isSliceProcessScarfOverrideEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("override_filament_scarf_seam_setting", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessKey(raw);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
   function shouldRenderSliceProcessSettingEntry(entry, base, overrides) {
     if (!entry || !entry.category) return true;
     const sectionName = String(entry.category.section || "");
@@ -6584,10 +6617,24 @@
         "scarf_steps",
         "scarf_joint_for_inner_walls",
         "override_filament_scarf_seam_setting",
+        "seam_slope_type",
+        "seam_slope_start_height",
+        "seam_slope_gap",
+        "seam_slope_min_length",
         "wipe_speed",
         "role_based_wipe_speed",
       ]);
       if (!allowedSeamKeys.has(canonical)) {
+        return false;
+      }
+
+      const scarfOverrideDetailKeys = new Set([
+        "seam_slope_type",
+        "seam_slope_start_height",
+        "seam_slope_gap",
+        "seam_slope_min_length",
+      ]);
+      if (scarfOverrideDetailKeys.has(canonical) && !isSliceProcessScarfOverrideEnabled(base, overrides)) {
         return false;
       }
     }
@@ -6637,6 +6684,7 @@
     if (normalized === "skirt_height") return "layers";
     if (normalized === "prime_tower_infill_gap") return "%";
     if (canonical === "seam_gap" || canonical === "wipe_speed") return "%";
+    if (canonical === "seam_slope_start_height" || canonical === "seam_slope_gap") return "mm/%";
     if (processKeyMatches(normalized, [/minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/])) return "mm2";
     if (processKeyMatches(normalized, [/length_of_sparse_infill_anchor/, /maximum_length_of_sparse_infill_anchor/, /sparse_infill_anchor_length/])) {
       return "mm or %";
