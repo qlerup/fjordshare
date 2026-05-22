@@ -3,4 +3,7 @@ WARNING: This is a development server. Do not use it in a production deployment.
  * Running on http://127.0.0.1:8080
  * Running on http://10.10.0.135:8080
 Press CTRL+C to quit
-127.0.0.1 - - [05/May/2026 16:26:32] "GET /api/health HTTP/1.1" 200 -
+127.0.0.1 - - [22/May/2026 17:41:22] "GET /api/slice/status HTTP/1.1" 200 -
+127.0.0.1 - - [22/May/2026 17:41:26] "GET /api/slice/status HTTP/1.1" 200 -
+127.0.0.1 - - [22/May/2026 17:41:30] "GET /api/slice/status HTTP/1.1" 200 -
+127.0.0.1 - - [22/May/2026 17:41:32] "GET /api/health HTTP/1.1" 200 -

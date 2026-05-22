@@ -3011,7 +3011,29 @@ def _resolve_selected_profile_jsons(
                 process_profile_json=process_json,
             )
 
-    return machine_json, process_json, filament_json
+    return (
+        _prefer_bambu_cli_full_profile_json(machine_json),
+        _prefer_bambu_cli_full_profile_json(process_json),
+        _prefer_bambu_cli_full_profile_json(filament_json),
+    )
+
+
+def _prefer_bambu_cli_full_profile_json(profile_json: str) -> str:
+    profile_value = str(profile_json or "").strip()
+    if not profile_value:
+        return ""
+
+    profile_path = Path(profile_value)
+    kind = str(profile_path.parent.name or "").strip().lower()
+    if kind not in {"machine", "process", "filament"}:
+        return profile_value
+
+    # Bambu ships preset deltas in machine/process/filament, while CLI loading
+    # expects the corresponding resolved JSONs from the *_full profile folders.
+    full_profile_path = profile_path.parent.with_name(f"{kind}_full") / profile_path.name
+    if full_profile_path.exists() and full_profile_path.is_file():
+        return str(full_profile_path)
+    return profile_value
 
 
 def _count_profile_extruder_hint_items(value: Any) -> int:
