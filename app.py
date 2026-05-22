@@ -2344,6 +2344,229 @@ def _extract_gcode_from_3mf_archive(archive_path: Path, output_gcode: Path) -> b
         return False
 
 
+def _is_bambu_sliced_3mf_path(path: Path) -> bool:
+    return bool(re.search(r"\.gcode(?:_\d+)?\.3mf$", str(path.name or "").strip().lower()))
+
+
+def _sliced_3mf_contains_gcode(archive_path: Path) -> bool:
+    if not archive_path.exists() or not archive_path.is_file():
+        return False
+    try:
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            return any(
+                not info.is_dir()
+                and (".gcode" in Path(info.filename.lower()).name or info.filename.lower().endswith(".gcode"))
+                and int(info.file_size or 0) > 0
+                for info in zf.infolist()
+            )
+    except Exception:
+        return False
+
+
+_SLICED_3MF_FALLBACK_THUMB_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+XhFoAAAAASUVORK5CYII="
+)
+_SLICED_3MF_PLATE_THUMB_SIZE_PX = 512
+_SLICED_3MF_PLATE_THUMB_SMALL_SIZE_PX = 256
+
+
+def _normalize_sliced_3mf_thumb_bytes(raw: Any) -> Optional[bytes]:
+    if isinstance(raw, bytearray):
+        raw = bytes(raw)
+    if not isinstance(raw, bytes):
+        return None
+    if not raw or len(raw) > THREEMF_THUMBNAIL_MAX_IMAGE_BYTES:
+        return None
+    return raw
+
+
+def _resize_sliced_3mf_thumb_png(image_data: bytes, *, size_px: int) -> Optional[bytes]:
+    if Image is None or ImageOps is None:
+        return None
+    normalized_input = _normalize_sliced_3mf_thumb_bytes(image_data)
+    if not normalized_input:
+        return None
+
+    try:
+        safe_size_px = max(96, int(size_px or THUMB_SIZE_PX))
+        resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS", getattr(Image, "LANCZOS", 1))
+        with Image.open(io.BytesIO(normalized_input)) as src_img:
+            img = ImageOps.exif_transpose(src_img)
+            img = img.convert("RGBA")
+            img = ImageOps.contain(img, (safe_size_px, safe_size_px), method=resampling)
+            canvas = Image.new("RGBA", (safe_size_px, safe_size_px), (15, 23, 33, 255))
+            offset = ((safe_size_px - img.width) // 2, (safe_size_px - img.height) // 2)
+            canvas.alpha_composite(img, offset)
+            out = io.BytesIO()
+            canvas.save(out, format="PNG")
+        return _normalize_sliced_3mf_thumb_bytes(out.getvalue())
+    except Exception:
+        return None
+
+
+def _render_sliced_3mf_plate_thumb_png(source_model_path: Optional[Path], *, size_px: int) -> Optional[bytes]:
+    if source_model_path is None:
+        return None
+
+    source_path = Path(source_model_path)
+    if not source_path.exists() or not source_path.is_file():
+        return None
+
+    source_ext = str(source_path.suffix or "").lower()
+    render_source = source_path
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="slice-plate-thumb-", dir=str(DATA_DIR)) as tmp:
+            tmp_dir = Path(tmp)
+            output_png = tmp_dir / "plate.png"
+
+            if source_ext == ".3mf" and _write_3mf_embedded_thumbnail(source_path, output_png, size_px=size_px):
+                return _normalize_sliced_3mf_thumb_bytes(output_png.read_bytes())
+            if source_ext in {".lys", ".lyt"} and _write_lys_embedded_thumbnail(source_path, output_png, size_px=size_px):
+                return _normalize_sliced_3mf_thumb_bytes(output_png.read_bytes())
+            if source_ext == ".pwscene" and _write_pwscene_embedded_thumbnail(source_path, output_png, size_px=size_px):
+                return _normalize_sliced_3mf_thumb_bytes(output_png.read_bytes())
+
+            if source_ext == ".stl" and _mesh_render_source_exceeds_limit(source_path):
+                if _render_large_stl_thumbnail(
+                    source_path,
+                    output_png,
+                    size_px=size_px,
+                    face_limit=THUMB_FAST_RENDER_FACE_LIMIT,
+                ):
+                    return _normalize_sliced_3mf_thumb_bytes(output_png.read_bytes())
+
+            _ensure_mesh_render_source_within_limit(source_path, context="Slice plate thumbnail")
+            if source_ext in {".step", ".stp"}:
+                converted_obj, _convert_error = _convert_step_to_obj(source_path, tmp_dir)
+                if not converted_obj:
+                    return None
+                render_source = converted_obj
+
+            _render_mesh_thumbnail(
+                render_source,
+                output_png,
+                size_px=size_px,
+                face_limit=THUMB_FAST_RENDER_FACE_LIMIT,
+            )
+            if output_png.exists() and output_png.is_file() and output_png.stat().st_size > 0:
+                return _normalize_sliced_3mf_thumb_bytes(output_png.read_bytes())
+    except Exception:
+        return None
+
+    return None
+
+
+def _build_sliced_3mf_plate_thumb_payloads(source_model_path: Optional[Path]) -> tuple[Optional[bytes], Optional[bytes]]:
+    full_png = _render_sliced_3mf_plate_thumb_png(
+        source_model_path,
+        size_px=_SLICED_3MF_PLATE_THUMB_SIZE_PX,
+    )
+    if not full_png:
+        return None, None
+
+    small_png = _resize_sliced_3mf_thumb_png(
+        full_png,
+        size_px=_SLICED_3MF_PLATE_THUMB_SMALL_SIZE_PX,
+    )
+    if not small_png:
+        small_png = full_png
+    return full_png, small_png
+
+
+def _sliced_3mf_missing_relationship_targets(archive_path: Path) -> Optional[list[str]]:
+    if not archive_path.exists() or not archive_path.is_file():
+        return []
+
+    try:
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            entries = {
+                str(info.filename or "").replace("\\", "/").lstrip("/")
+                for info in zf.infolist()
+                if not info.is_dir()
+            }
+            missing: list[str] = []
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                rel_name = str(info.filename or "").replace("\\", "/")
+                if not rel_name.lower().endswith(".rels"):
+                    continue
+                try:
+                    rel_text = zf.read(info).decode("utf-8", errors="ignore")
+                except Exception:
+                    continue
+                for raw_target in re.findall(r"Target\s*=\s*[\"']([^\"']+)[\"']", rel_text, flags=re.IGNORECASE):
+                    target = str(raw_target or "").strip().replace("\\", "/").lstrip("/")
+                    if not target:
+                        continue
+                    if target not in entries:
+                        missing.append(target)
+            return sorted(set(missing))
+    except Exception:
+        return None
+
+
+def _repair_sliced_3mf_archive(archive_path: Path, *, source_model_path: Optional[Path] = None) -> bool:
+    missing_before = _sliced_3mf_missing_relationship_targets(archive_path)
+    if missing_before is None:
+        # If we cannot inspect the archive, do not block slicing on this guard.
+        return True
+    if not missing_before:
+        return True
+
+    repairable_targets = sorted(
+        {
+            target
+            for target in missing_before
+            if target.lower().startswith("metadata/") and target.lower().endswith(".png")
+        }
+    )
+    if not repairable_targets:
+        return False
+
+    plate_thumb_png = _SLICED_3MF_FALLBACK_THUMB_PNG
+    plate_thumb_small_png = plate_thumb_png
+    generated_full_png, generated_small_png = _build_sliced_3mf_plate_thumb_payloads(source_model_path)
+    if generated_full_png:
+        plate_thumb_png = generated_full_png
+        plate_thumb_small_png = generated_small_png or generated_full_png
+
+    try:
+        with zipfile.ZipFile(archive_path, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+            existing = {
+                str(info.filename or "").replace("\\", "/").lstrip("/")
+                for info in zf.infolist()
+                if not info.is_dir()
+            }
+            for target in repairable_targets:
+                if target in existing:
+                    continue
+                png_payload = plate_thumb_small_png if "_small." in target.lower() else plate_thumb_png
+                zf.writestr(target, png_payload)
+    except Exception:
+        return False
+
+    missing_after = _sliced_3mf_missing_relationship_targets(archive_path)
+    if missing_after is None:
+        return True
+    return not missing_after
+
+
+def _adopt_sliced_3mf_archive(source_3mf: Path, output_3mf: Path, *, source_model_path: Optional[Path] = None) -> bool:
+    if not _sliced_3mf_contains_gcode(source_3mf):
+        return False
+    try:
+        output_3mf.parent.mkdir(parents=True, exist_ok=True)
+        if source_3mf.resolve() != output_3mf.resolve():
+            shutil.copyfile(source_3mf, output_3mf)
+        if not _repair_sliced_3mf_archive(output_3mf, source_model_path=source_model_path):
+            return False
+        return output_3mf.exists() and output_3mf.is_file() and output_3mf.stat().st_size > 0
+    except Exception:
+        return False
+
+
 def _run_bambu_with_runtime_fallback(command: list[str], executable: str) -> tuple[subprocess.CompletedProcess[str], str]:
     def _run_slice_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -2480,51 +2703,70 @@ def _slice_stl_to_gcode_fast(
             },
         )
 
+    prefer_sliced_3mf = _is_bambu_sliced_3mf_path(output_gcode)
     output_dir = output_gcode.parent / f"{output_gcode.stem}.fast-slice-output"
-    temp_3mf = output_gcode.with_suffix(".fast-slice.gcode.3mf")
+    temp_3mf = output_gcode if prefer_sliced_3mf else output_gcode.with_suffix(".fast-slice.gcode.3mf")
     legacy_cmd = [*base_cmd, *config_load_args]
-    attempts: list[tuple[str, list[str], str]] = [
-        (
-            "fast-legacy-export-gcode",
-            [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(input_stl)],
-            "gcode",
-        ),
-        (
-            "fast-legacy-export-gcode-underscore",
-            [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(input_stl)],
-            "gcode",
-        ),
-    ]
+    attempts: list[tuple[str, list[str], str]] = []
     if h2s_profile_args:
-        attempts.extend(
-            [
+        attempts.append(
+            (
+                "fast-h2s-3mf",
+                [*base_cmd, "--slice", "0", *h2s_profile_args, "--export-3mf", str(temp_3mf), str(input_stl)],
+                "3mf",
+            )
+        )
+        if not prefer_sliced_3mf:
+            attempts.append(
                 (
                     "fast-h2s-outputdir",
                     [*base_cmd, "--slice", "0", *h2s_profile_args, "--outputdir", str(output_dir), str(input_stl)],
                     "gcode-dir",
-                ),
-                (
-                    "fast-h2s-3mf",
-                    [*base_cmd, "--slice", "0", *h2s_profile_args, "--export-3mf", str(temp_3mf), str(input_stl)],
-                    "3mf",
-                ),
-            ]
-        )
+                )
+            )
     if config_load_args:
         attempts.append(
             (
-                "fast-config-outputdir",
-                [*base_cmd, *config_load_args, "--slice", "0", "--outputdir", str(output_dir), str(input_stl)],
-                "gcode-dir",
+                "fast-config-3mf",
+                [*base_cmd, *config_load_args, "--slice", "0", "--export-3mf", str(temp_3mf), str(input_stl)],
+                "3mf",
             )
         )
+        if not prefer_sliced_3mf:
+            attempts.append(
+                (
+                    "fast-config-outputdir",
+                    [*base_cmd, *config_load_args, "--slice", "0", "--outputdir", str(output_dir), str(input_stl)],
+                    "gcode-dir",
+                )
+            )
     attempts.append(
         (
-            "fast-raw-outputdir",
-            [*base_cmd, "--slice", "0", "--outputdir", str(output_dir), str(input_stl)],
-            "gcode-dir",
+            "fast-raw-3mf",
+            [*base_cmd, "--slice", "0", "--export-3mf", str(temp_3mf), str(input_stl)],
+            "3mf",
         )
     )
+    if not prefer_sliced_3mf:
+        attempts.extend(
+            [
+                (
+                    "fast-legacy-export-gcode",
+                    [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(input_stl)],
+                    "gcode",
+                ),
+                (
+                    "fast-legacy-export-gcode-underscore",
+                    [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(input_stl)],
+                    "gcode",
+                ),
+                (
+                    "fast-raw-outputdir",
+                    [*base_cmd, "--slice", "0", "--outputdir", str(output_dir), str(input_stl)],
+                    "gcode-dir",
+                ),
+            ]
+        )
     _trace(
         "fast-slice-input",
         {
@@ -2603,24 +2845,34 @@ def _slice_stl_to_gcode_fast(
             continue
 
         if mode == "3mf":
-            if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
-                try:
-                    temp_3mf.unlink(missing_ok=True)
-                except Exception:
-                    pass
+            accepted_3mf = (
+                _adopt_sliced_3mf_archive(
+                    temp_3mf,
+                    output_gcode,
+                    source_model_path=input_stl,
+                )
+                if prefer_sliced_3mf
+                else _extract_gcode_from_3mf_archive(temp_3mf, output_gcode)
+            )
+            if accepted_3mf:
+                if not prefer_sliced_3mf:
+                    try:
+                        temp_3mf.unlink(missing_ok=True)
+                    except Exception:
+                        pass
                 _trace(
                     "fast-slice-success",
                     {
                         "source": label,
                         "mode": mode,
-                        "output_gcode": str(output_gcode),
+                        "output_file": str(output_gcode),
                         "output_bytes": int(output_gcode.stat().st_size) if output_gcode.exists() else 0,
                         "source_3mf": str(temp_3mf),
                     },
                 )
                 return
             if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
-                errors.append(f"{label}: 3MF blev lavet men indeholdt ingen G-code")
+                errors.append(f"{label}: 3MF blev lavet men indeholdt ingen embedded G-code")
             else:
                 errors.append(f"{label}: kommandoen kørte men lavede ingen 3MF output")
 
@@ -4268,6 +4520,83 @@ def _normalize_slice_process_overrides(raw: Any) -> dict[str, Any]:
             break
 
     return out
+
+
+def _default_user_slice_selection() -> dict[str, Any]:
+    return {
+        "printer_profile": "",
+        "print_profile": "",
+        "filament_profile": "",
+        "support_mode": "auto",
+        "support_type": "",
+        "support_style": "",
+        "nozzle_left_diameter": "",
+        "nozzle_right_diameter": "",
+        "nozzle_left_flow": "",
+        "nozzle_right_flow": "",
+        "print_nozzle": "",
+        "rotation_x_degrees": 0.0,
+        "rotation_y_degrees": 0.0,
+        "rotation_z_degrees": 0.0,
+        "lift_z_mm": 0.0,
+        "bed_width_mm": 0.0,
+        "bed_depth_mm": 0.0,
+        "process_overrides": {},
+    }
+
+
+def _normalize_user_slice_selection(raw: Any) -> dict[str, Any]:
+    source = raw if isinstance(raw, dict) else {}
+    normalized = _default_user_slice_selection()
+
+    normalized["printer_profile"] = str(source.get("printer_profile") or "").strip()[:200]
+    normalized["print_profile"] = str(source.get("print_profile") or "").strip()[:200]
+    normalized["filament_profile"] = str(source.get("filament_profile") or "").strip()[:200]
+
+    normalized["support_mode"] = _normalize_slice_support_mode(source.get("support_mode"))
+    normalized["support_type"] = _normalize_slice_support_type(source.get("support_type"))
+    normalized["support_style"] = _normalize_slice_support_style(source.get("support_style"))
+    if normalized["support_mode"] == "off":
+        normalized["support_type"] = ""
+        normalized["support_style"] = ""
+
+    normalized["nozzle_left_diameter"] = _normalize_slice_nozzle_diameter(source.get("nozzle_left_diameter"))
+    normalized["nozzle_right_diameter"] = _normalize_slice_nozzle_diameter(source.get("nozzle_right_diameter"))
+    normalized["nozzle_left_flow"] = _normalize_slice_nozzle_flow(source.get("nozzle_left_flow"))
+    normalized["nozzle_right_flow"] = _normalize_slice_nozzle_flow(source.get("nozzle_right_flow"))
+    normalized["print_nozzle"] = _normalize_slice_print_nozzle(source.get("print_nozzle"))
+
+    normalized["rotation_x_degrees"] = _normalize_rotation_degrees(source.get("rotation_x_degrees"))
+    normalized["rotation_y_degrees"] = _normalize_rotation_degrees(source.get("rotation_y_degrees"))
+    normalized["rotation_z_degrees"] = _normalize_rotation_degrees(source.get("rotation_z_degrees"))
+    normalized["lift_z_mm"] = _normalize_lift_mm(source.get("lift_z_mm"))
+    normalized["bed_width_mm"] = _normalize_bed_size_mm(source.get("bed_width_mm"))
+    normalized["bed_depth_mm"] = _normalize_bed_size_mm(source.get("bed_depth_mm"))
+
+    uses_dual_nozzle = _slice_printer_uses_dual_nozzle(
+        f"{normalized['printer_profile']} {normalized['print_profile']}"
+    )
+    if not uses_dual_nozzle:
+        normalized["nozzle_right_diameter"] = ""
+        normalized["nozzle_right_flow"] = ""
+        normalized["print_nozzle"] = ""
+
+    process_overrides = _normalize_slice_process_overrides(source.get("process_overrides"))
+    if normalized["print_nozzle"]:
+        process_overrides = _apply_slice_print_nozzle_mapping_overrides(
+            process_overrides,
+            normalized["print_nozzle"],
+        )
+    else:
+        process_overrides.pop("print_extruder_id", None)
+        process_overrides.pop("printer_extruder_id", None)
+
+    if not uses_dual_nozzle:
+        process_overrides.pop("print_extruder_id", None)
+        process_overrides.pop("printer_extruder_id", None)
+
+    normalized["process_overrides"] = process_overrides
+    return normalized
 
 
 def _coerce_process_override_value_like(existing: Any, incoming: Any) -> Any:
@@ -6124,7 +6453,8 @@ def _slice_stl_to_gcode(
             },
         )
 
-        temp_3mf = output_gcode.with_suffix(".gcode.3mf")
+        prefer_sliced_3mf = _is_bambu_sliced_3mf_path(output_gcode)
+        temp_3mf = output_gcode if prefer_sliced_3mf else output_gcode.with_suffix(".gcode.3mf")
         direct_gcode_dir = output_gcode.parent / f"{output_gcode.stem}.slice-output"
         enable_modern_underscore_variant = True
 
@@ -6159,29 +6489,6 @@ def _slice_stl_to_gcode(
         def _build_attempts(slice_input_path: Path) -> list[tuple[str, list[str], str]]:
             attempts: list[tuple[str, list[str], str]] = []
 
-            if legacy_allowed:
-                attempts.extend(
-                    [
-                        (
-                            "legacy-hyphen",
-                            [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(slice_input_path)],
-                            "gcode",
-                        ),
-                        (
-                            "legacy-underscore",
-                            [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(slice_input_path)],
-                            "gcode",
-                        ),
-                    ]
-                )
-
-            attempts.append(
-                (
-                    "modern-gcode-outputdir",
-                    [*modern_base, "--outputdir", str(direct_gcode_dir), str(slice_input_path)],
-                    "gcode-dir",
-                )
-            )
             attempts.extend(
                 [
                     (
@@ -6233,6 +6540,30 @@ def _slice_stl_to_gcode(
                             "3mf",
                         ),
                     ]
+                )
+
+            if not prefer_sliced_3mf:
+                if legacy_allowed:
+                    attempts.extend(
+                        [
+                            (
+                                "legacy-hyphen",
+                                [*legacy_cmd, "--export-gcode", "--output", str(output_gcode), str(slice_input_path)],
+                                "gcode",
+                            ),
+                            (
+                                "legacy-underscore",
+                                [*legacy_cmd, "--export_gcode", "--output", str(output_gcode), str(slice_input_path)],
+                                "gcode",
+                            ),
+                        ]
+                    )
+                attempts.append(
+                    (
+                        "modern-gcode-outputdir",
+                        [*modern_base, "--outputdir", str(direct_gcode_dir), str(slice_input_path)],
+                        "gcode-dir",
+                    )
                 )
 
             return attempts
@@ -6376,17 +6707,27 @@ def _slice_stl_to_gcode(
                     errors.append(f"{candidate_label}/{label}: kommandoen kørte men lavede ingen G-code i outputdir")
                     continue
 
-                if _extract_gcode_from_3mf_archive(temp_3mf, output_gcode):
-                    try:
-                        temp_3mf.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                accepted_3mf = (
+                    _adopt_sliced_3mf_archive(
+                        temp_3mf,
+                        output_gcode,
+                        source_model_path=candidate_input,
+                    )
+                    if prefer_sliced_3mf
+                    else _extract_gcode_from_3mf_archive(temp_3mf, output_gcode)
+                )
+                if accepted_3mf:
+                    if not prefer_sliced_3mf:
+                        try:
+                            temp_3mf.unlink(missing_ok=True)
+                        except Exception:
+                            pass
                     _trace(
                         "slice-success",
                         {
                             "source": f"{candidate_label}/{label}",
                             "mode": mode,
-                            "output_gcode": str(output_gcode),
+                            "output_file": str(output_gcode),
                             "output_bytes": int(output_gcode.stat().st_size) if output_gcode.exists() else 0,
                             "source_3mf": str(temp_3mf),
                         },
@@ -6394,7 +6735,7 @@ def _slice_stl_to_gcode(
                     return
 
                 if temp_3mf.exists() and temp_3mf.is_file() and temp_3mf.stat().st_size > 0:
-                    errors.append(f"{candidate_label}/{label}: 3MF blev lavet men indeholdt ingen G-code")
+                    errors.append(f"{candidate_label}/{label}: 3MF blev lavet men indeholdt ingen embedded G-code")
                 else:
                     errors.append(f"{candidate_label}/{label}: kommandoen kørte men lavede ingen 3MF output")
 
@@ -7703,8 +8044,8 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
         source_path_for_debug = source_path
         _, folder_abs = folder_abs_path(folder_path)
         base_name = Path(str(row["filename"] or "model.stl")).stem
-        gcode_name = sanitize_filename(f"{base_name}.gcode")
-        output_path = allocate_unique_target(folder_abs, gcode_name)
+        print_file_name = sanitize_filename(f"{base_name}.gcode.3mf")
+        output_path = allocate_unique_target(folder_abs, print_file_name)
         _record_slice_debug_event(
             slice_debug_trace,
             "worker-slice-start",
@@ -9211,6 +9552,7 @@ def init_db() -> None:
                 sms_verification_phone_number TEXT,
                 app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0,
                 app_onboarding_enabled INTEGER NOT NULL DEFAULT 1,
+                slice_last_selection_json TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             );
 
@@ -9627,6 +9969,9 @@ def init_db() -> None:
             )
         conn.execute("UPDATE users SET app_onboarding_seen_v1=COALESCE(app_onboarding_seen_v1, 0)")
         conn.execute("UPDATE users SET app_onboarding_enabled=COALESCE(app_onboarding_enabled, 1)")
+        if "slice_last_selection_json" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN slice_last_selection_json TEXT NOT NULL DEFAULT ''")
+        conn.execute("UPDATE users SET slice_last_selection_json='' WHERE slice_last_selection_json IS NULL")
 
         signup_request_cols = [r[1] for r in conn.execute("PRAGMA table_info(profile_signup_requests)").fetchall()]
         if "last_initial" not in signup_request_cols:
@@ -10293,6 +10638,51 @@ def _load_user_onboarding_profile(user_id: int) -> dict[str, bool]:
         "app_onboarding_seen_v1": bool(int(row["seen"] if row["seen"] is not None else 0)) if row else False,
         "app_onboarding_enabled": bool(int(row["enabled"] if row["enabled"] is not None else 1)) if row else True,
     }
+
+
+def _load_user_slice_selection(user_id: int) -> dict[str, Any]:
+    default_selection = _default_user_slice_selection()
+    try:
+        with closing(get_conn()) as conn:
+            row = conn.execute(
+                "SELECT slice_last_selection_json FROM users WHERE id=?",
+                (int(user_id),),
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return default_selection
+
+    raw = str(row["slice_last_selection_json"] or "").strip() if row else ""
+    if not raw:
+        return default_selection
+
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return default_selection
+
+    return _normalize_user_slice_selection(payload)
+
+
+def _save_user_slice_selection(user_id: int, selection: Any) -> dict[str, Any]:
+    normalized = _normalize_user_slice_selection(selection)
+    payload = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    try:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "UPDATE users SET slice_last_selection_json=? WHERE id=?",
+                (payload, int(user_id)),
+            )
+            conn.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    return normalized
 
 
 def _sms_token_fernet() -> Optional[Any]:
@@ -11867,8 +12257,13 @@ def _send_thumb_response_cached(thumb_path: Path) -> Any:
     return response
 
 
-def _is_slice_output_ext(ext: str) -> bool:
-    return str(ext or "").strip().lower() == ".gcode"
+def _is_slice_output_ext(ext: str, filename: str = "") -> bool:
+    normalized_ext = str(ext or "").strip().lower()
+    if normalized_ext == ".gcode":
+        return True
+    if normalized_ext != ".3mf":
+        return False
+    return bool(re.search(r"\.gcode(?:_\d+)?\.3mf$", str(filename or "").strip().lower()))
 
 
 def _expected_slice_output_stem(source_filename: str) -> str:
@@ -11884,7 +12279,11 @@ def _slice_output_name_matches_source(source_filename: str, output_filename: str
     if not expected_stem:
         return False
 
-    output_stem = str(Path(str(output_filename or "")).stem or "").strip().lower()
+    output_name = str(Path(str(output_filename or "")).name or "").strip().lower()
+    if re.fullmatch(rf"{re.escape(expected_stem)}\.gcode(?:_\d+)?\.3mf", output_name):
+        return True
+
+    output_stem = str(Path(output_name).stem or "").strip().lower()
     if not output_stem:
         return False
 
@@ -11898,24 +12297,26 @@ def _slice_output_name_matches_source(source_filename: str, output_filename: str
     return False
 
 
-def _pick_slice_output_for_source_row(source_row: sqlite3.Row, candidate_rows: list[sqlite3.Row]) -> Optional[sqlite3.Row]:
+def _slice_output_rows_for_source_row(source_row: sqlite3.Row, candidate_rows: list[sqlite3.Row]) -> list[sqlite3.Row]:
     source_ext = str(source_row["ext"] or "").lower()
     if not _supports_slicing_for_ext(source_ext):
-        return None
+        return []
 
     source_filename = str(source_row["filename"] or "")
+    source_id = int(source_row["id"] or 0)
     matches: list[sqlite3.Row] = []
     for candidate in candidate_rows:
-        candidate_ext = str(candidate["ext"] or "").lower()
-        if not _is_slice_output_ext(candidate_ext):
+        candidate_id = int(candidate["id"] or 0)
+        if candidate_id and candidate_id == source_id:
             continue
 
+        candidate_ext = str(candidate["ext"] or "").lower()
         candidate_name = str(candidate["filename"] or "")
+        if not _is_slice_output_ext(candidate_ext, candidate_name):
+            continue
+
         if _slice_output_name_matches_source(source_filename, candidate_name):
             matches.append(candidate)
-
-    if not matches:
-        return None
 
     matches.sort(
         key=lambda r: (
@@ -11924,25 +12325,32 @@ def _pick_slice_output_for_source_row(source_row: sqlite3.Row, candidate_rows: l
         ),
         reverse=True,
     )
+    return matches
+
+
+def _pick_slice_output_for_source_row(source_row: sqlite3.Row, candidate_rows: list[sqlite3.Row]) -> Optional[sqlite3.Row]:
+    matches = _slice_output_rows_for_source_row(source_row, candidate_rows)
+    if not matches:
+        return None
     return matches[0]
 
 
 def _pair_visible_file_rows_with_slice_output(rows: list[sqlite3.Row]) -> list[tuple[sqlite3.Row, Optional[sqlite3.Row]]]:
-    gcode_by_folder: dict[str, list[sqlite3.Row]] = {}
+    slice_outputs_by_folder: dict[str, list[sqlite3.Row]] = {}
     visible_rows: list[sqlite3.Row] = []
 
     for row in rows:
         folder_path = normalize_folder_path(str(row["folder_path"] or ""))
         ext = str(row["ext"] or "").lower()
-        if _is_slice_output_ext(ext):
-            gcode_by_folder.setdefault(folder_path, []).append(row)
+        if _is_slice_output_ext(ext, str(row["filename"] or "")):
+            slice_outputs_by_folder.setdefault(folder_path, []).append(row)
             continue
         visible_rows.append(row)
 
     paired: list[tuple[sqlite3.Row, Optional[sqlite3.Row]]] = []
     for row in visible_rows:
         folder_path = normalize_folder_path(str(row["folder_path"] or ""))
-        output_row = _pick_slice_output_for_source_row(row, gcode_by_folder.get(folder_path, []))
+        output_row = _pick_slice_output_for_source_row(row, slice_outputs_by_folder.get(folder_path, []))
         paired.append((row, output_row))
 
     return paired
@@ -11964,77 +12372,73 @@ def _parse_first_float_from_text(value: str) -> Optional[float]:
         return None
 
 
-def _parse_gcode_summary_from_path(gcode_path: Path) -> dict[str, Any]:
+def _parse_gcode_summary_from_text_lines(lines: Iterable[str]) -> dict[str, Any]:
     print_time_total = ""
     filament_grams: Optional[float] = None
     filament_cost_per_kg: Optional[float] = None
     filament_cost_total: Optional[float] = None
 
-    try:
-        with gcode_path.open("r", encoding="utf-8", errors="ignore") as fh:
-            for line_no, raw_line in enumerate(fh):
-                if line_no > 4000:
-                    break
+    for line_no, raw_line in enumerate(lines):
+        if line_no > 4000:
+            break
 
-                line = str(raw_line or "").strip()
-                if not line:
-                    continue
+        line = str(raw_line or "").strip()
+        if not line:
+            continue
 
-                lowered = line.lower()
-                if "executable_block_start" in lowered:
-                    break
+        lowered = line.lower()
+        if "executable_block_start" in lowered:
+            break
 
-                if not print_time_total:
-                    model_match = re.search(
-                        r"^;\s*model printing time\s*:\s*([^;]+?)(?:\s*;\s*total estimated time\s*:\s*([^;]+))?\s*$",
-                        line,
-                        flags=re.IGNORECASE,
-                    )
-                    if model_match:
-                        preferred = str(model_match.group(2) or "").strip()
-                        fallback = str(model_match.group(1) or "").strip()
-                        print_time_total = preferred or fallback
+        if not print_time_total:
+            model_match = re.search(
+                r"^;\s*model printing time\s*:\s*([^;]+?)(?:\s*;\s*total estimated time\s*:\s*([^;]+))?\s*$",
+                line,
+                flags=re.IGNORECASE,
+            )
+            if model_match:
+                preferred = str(model_match.group(2) or "").strip()
+                fallback = str(model_match.group(1) or "").strip()
+                print_time_total = preferred or fallback
 
-                if not print_time_total:
-                    total_time_match = re.search(
-                        r"^;\s*total estimated time\s*:\s*(.+)$",
-                        line,
-                        flags=re.IGNORECASE,
-                    )
-                    if total_time_match:
-                        print_time_total = str(total_time_match.group(1) or "").strip()
+        if not print_time_total:
+            total_time_match = re.search(
+                r"^;\s*total estimated time\s*:\s*(.+)$",
+                line,
+                flags=re.IGNORECASE,
+            )
+            if total_time_match:
+                print_time_total = str(total_time_match.group(1) or "").strip()
 
-                if filament_grams is None:
-                    grams_match = re.search(
-                        r"^;\s*total filament weight\s*\[g\]\s*:\s*(.+)$",
-                        line,
-                        flags=re.IGNORECASE,
-                    )
-                    if grams_match:
-                        filament_grams = _parse_first_float_from_text(grams_match.group(1))
+        if filament_grams is None:
+            grams_match = re.search(
+                r"^;\s*total filament weight\s*\[g\]\s*:\s*(.+)$",
+                line,
+                flags=re.IGNORECASE,
+            )
+            if grams_match:
+                filament_grams = _parse_first_float_from_text(grams_match.group(1))
 
-                if filament_cost_total is None:
-                    total_cost_match = re.search(
-                        r"^;\s*total filament cost(?:\s*\[[^\]]+\])?\s*:\s*(.+)$",
-                        line,
-                        flags=re.IGNORECASE,
-                    )
-                    if total_cost_match:
-                        filament_cost_total = _parse_first_float_from_text(total_cost_match.group(1))
+        if filament_cost_total is None:
+            total_cost_match = re.search(
+                r"^;\s*total filament cost(?:\s*\[[^\]]+\])?\s*:\s*(.+)$",
+                line,
+                flags=re.IGNORECASE,
+            )
+            if total_cost_match:
+                filament_cost_total = _parse_first_float_from_text(total_cost_match.group(1))
 
-                if filament_cost_per_kg is None:
-                    per_kg_match = re.search(
-                        r"^;\s*filament_cost\s*=\s*(.+)$",
-                        line,
-                        flags=re.IGNORECASE,
-                    )
-                    if per_kg_match:
-                        filament_cost_per_kg = _parse_first_float_from_text(per_kg_match.group(1))
+        if filament_cost_per_kg is None:
+            per_kg_match = re.search(
+                r"^;\s*filament_cost\s*=\s*(.+)$",
+                line,
+                flags=re.IGNORECASE,
+            )
+            if per_kg_match:
+                filament_cost_per_kg = _parse_first_float_from_text(per_kg_match.group(1))
 
-                if print_time_total and filament_grams is not None and filament_cost_total is not None:
-                    break
-    except Exception:
-        return {}
+        if print_time_total and filament_grams is not None and filament_cost_total is not None:
+            break
 
     if filament_cost_total is None and filament_grams is not None and filament_cost_per_kg is not None:
         try:
@@ -12053,9 +12457,63 @@ def _parse_gcode_summary_from_path(gcode_path: Path) -> dict[str, Any]:
     return summary
 
 
+def _parse_gcode_summary_from_3mf_path(archive_path: Path) -> dict[str, Any]:
+    try:
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            candidates: list[tuple[int, int, str]] = []
+            for info in zf.infolist():
+                normalized = str(info.filename or "").replace("\\", "/").strip().lstrip("/")
+                lowered = normalized.lower()
+                if not lowered or lowered.endswith("/"):
+                    continue
+                if not lowered.endswith(".gcode"):
+                    continue
+
+                priority = 4
+                if lowered == "metadata/plate_1.gcode":
+                    priority = 0
+                elif re.fullmatch(r"metadata/plate_\d+\.gcode", lowered):
+                    priority = 1
+                elif lowered.startswith("metadata/"):
+                    priority = 2
+                elif lowered.endswith("/plate_1.gcode"):
+                    priority = 1
+
+                candidates.append((priority, len(lowered), normalized))
+
+            if not candidates:
+                return {}
+
+            candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+            selected_name = str(candidates[0][2] or "")
+            if not selected_name:
+                return {}
+
+            with zf.open(selected_name, "r") as raw_stream:
+                with io.TextIOWrapper(raw_stream, encoding="utf-8", errors="ignore", newline="") as text_stream:
+                    return _parse_gcode_summary_from_text_lines(text_stream)
+    except Exception:
+        return {}
+
+
+def _parse_gcode_summary_from_path(gcode_path: Path) -> dict[str, Any]:
+    lowered_name = str(gcode_path.name or "").strip().lower()
+    is_gcode_3mf = lowered_name.endswith(".gcode.3mf") or str(gcode_path.suffix or "").lower() == ".3mf"
+    if is_gcode_3mf:
+        summary = _parse_gcode_summary_from_3mf_path(gcode_path)
+        if summary:
+            return summary
+
+    try:
+        with gcode_path.open("r", encoding="utf-8", errors="ignore") as fh:
+            return _parse_gcode_summary_from_text_lines(fh)
+    except Exception:
+        return {}
+
+
 def _extract_gcode_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
     ext = str(row["ext"] or "").lower()
-    if not _is_slice_output_ext(ext):
+    if not _is_slice_output_ext(ext, str(row["filename"] or "")):
         return {}
 
     try:
@@ -12439,10 +12897,14 @@ def _store_folder_preview_cache(conn: sqlite3.Connection, folder_path: str, file
 
 
 def _row_is_folder_preview_candidate(row: sqlite3.Row) -> bool:
+    ext = str(row["ext"] or "").strip().lower()
+    filename = str(row["filename"] or "").strip()
+    if _is_slice_output_ext(ext, filename):
+        return False
+
     mime = str(row["mime_type"] or "").strip().lower()
     if mime.startswith("image/"):
         return True
-    ext = str(row["ext"] or "").strip().lower()
     thumb_rel = str(row["thumb_rel"] or "").strip()
     return ext in THUMBABLE_3D_EXTENSIONS and bool(thumb_rel)
 
@@ -12504,6 +12966,8 @@ def _folder_preview_seeded_rows(
                 return
             file_id = int(row["id"] or 0)
             if file_id <= 0 or file_id in excluded or file_id in selected_ids:
+                continue
+            if not _row_is_folder_preview_candidate(row):
                 continue
             selected.append(row)
             selected_ids.add(file_id)
@@ -16039,6 +16503,96 @@ def api_file_download(file_id: int):
     return send_file(path, as_attachment=True, download_name=str(row["filename"] or path.name))
 
 
+@app.route("/api/files/<int:file_id>/slice-outputs", methods=["GET"])
+@login_required
+def api_file_slice_outputs(file_id: int):
+    with closing(get_conn()) as conn:
+        source_row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+        if source_row is None:
+            return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
+
+        if not user_can_access_file(current_user, source_row, "view"):
+            return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+
+        folder_path = normalize_folder_path(str(source_row["folder_path"] or ""))
+        rows = conn.execute(
+            "SELECT * FROM files WHERE folder_path=? ORDER BY uploaded_at DESC, id DESC",
+            (folder_path,),
+        ).fetchall()
+
+    candidate_rows: list[sqlite3.Row] = []
+    source_id = int(source_row["id"] or 0)
+    for row in rows:
+        file_id_i = int(row["id"] or 0)
+        if file_id_i and file_id_i == source_id:
+            continue
+        if not user_can_access_file(current_user, row, "view"):
+            continue
+        candidate_rows.append(row)
+
+    output_rows = _slice_output_rows_for_source_row(source_row, candidate_rows)
+    items: list[dict[str, Any]] = []
+    for row in output_rows:
+        item = _serialize_slice_output_row(row)
+        item["can_delete"] = bool(user_can_access_file(current_user, row, "manage"))
+        items.append(item)
+
+    return jsonify({
+        "ok": True,
+        "source_id": int(source_row["id"] or 0),
+        "items": items,
+    })
+
+
+@app.route("/api/files/<int:file_id>/slice-result", methods=["GET"])
+@login_required
+def api_file_slice_result(file_id: int):
+    with closing(get_conn()) as conn:
+        source_row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+        if source_row is None:
+            return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
+
+        if not user_can_access_file(current_user, source_row, "view"):
+            return jsonify({"ok": False, "error": "Ingen adgang"}), 403
+
+        folder_path = normalize_folder_path(str(source_row["folder_path"] or ""))
+        rows = conn.execute(
+            "SELECT * FROM files WHERE folder_path=? ORDER BY uploaded_at DESC, id DESC",
+            (folder_path,),
+        ).fetchall()
+
+    source_id = int(source_row["id"] or 0)
+    candidate_rows: list[sqlite3.Row] = []
+    for row in rows:
+        file_id_i = int(row["id"] or 0)
+        if file_id_i and file_id_i == source_id:
+            continue
+        if not user_can_access_file(current_user, row, "view"):
+            continue
+        candidate_rows.append(row)
+
+    output_rows = _slice_output_rows_for_source_row(source_row, candidate_rows)
+    output_row = output_rows[0] if output_rows else None
+
+    item: Optional[dict[str, Any]] = None
+    if output_row is not None:
+        item = _serialize_slice_output_row(output_row)
+        item["summary"] = _extract_gcode_summary_from_row(output_row)
+        item["can_delete"] = bool(user_can_access_file(current_user, output_row, "manage"))
+
+    return jsonify(
+        {
+            "ok": True,
+            "source": {
+                "id": source_id,
+                "slice_status": str(source_row["slice_status"] or "none").strip().lower() or "none",
+                "slice_error": str(source_row["slice_error"] or ""),
+            },
+            "item": item,
+        }
+    )
+
+
 @app.route("/api/files/<int:file_id>/thumb", methods=["GET"])
 @login_required
 def api_file_thumb(file_id: int):
@@ -16436,6 +16990,7 @@ def api_slice_profiles():
 
     data = _read_bambustudio_profiles()
     printer_bed_map = _load_slicer_printer_bed_map()
+    last_selection = _load_user_slice_selection(int(current_user.id))
     return jsonify(
         {
             "ok": True,
@@ -16450,6 +17005,7 @@ def api_slice_profiles():
             "config_path": str(data.get("config_path") or ""),
             "profile_root": str(data.get("profile_root") or ""),
             "parse_error": str(data.get("parse_error") or ""),
+            "last_selection": last_selection,
         }
     )
 
@@ -16643,7 +17199,8 @@ def api_file_slice(file_id: int):
         return jsonify({"ok": False, "error": "Slicing er midlertidigt slået fra"}), 503
 
     body = request.get_json(silent=True) or {}
-    fast_slice = bool(parse_bool(body.get("fast_slice")))
+    # Fast slice is deprecated in UI; always run the full slice flow.
+    fast_slice = False
     printer_profile = str(body.get("printer_profile") or "").strip()[:200]
     print_profile = str(body.get("print_profile") or "").strip()[:200]
     filament_profile = str(body.get("filament_profile") or "").strip()[:200]
@@ -16724,6 +17281,35 @@ def api_file_slice(file_id: int):
 
     if validation_error:
         return jsonify({"ok": False, "error": validation_error}), 400
+
+    if not fast_slice:
+        try:
+            _save_user_slice_selection(
+                int(current_user.id),
+                {
+                    "printer_profile": printer_profile,
+                    "print_profile": print_profile,
+                    "filament_profile": filament_profile,
+                    "support_mode": support_mode,
+                    "support_type": support_type,
+                    "support_style": support_style,
+                    "nozzle_left_diameter": nozzle_left_diameter,
+                    "nozzle_right_diameter": nozzle_right_diameter,
+                    "nozzle_left_flow": nozzle_left_flow,
+                    "nozzle_right_flow": nozzle_right_flow,
+                    "print_nozzle": print_nozzle,
+                    "rotation_x_degrees": rotation_x_degrees,
+                    "rotation_y_degrees": rotation_y_degrees,
+                    "rotation_z_degrees": rotation_z_degrees,
+                    "lift_z_mm": lift_z_mm,
+                    "bed_width_mm": bed_width_mm,
+                    "bed_depth_mm": bed_depth_mm,
+                    "process_overrides": process_overrides,
+                },
+            )
+        except Exception:
+            # Preference persistence should never block the actual slice request.
+            pass
 
     profile_details = []
     if fast_slice:

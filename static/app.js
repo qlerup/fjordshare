@@ -114,6 +114,9 @@
     slicePreviewLoadToken: 0,
     slicePlateAssets: null,
     slicePlateLoadToken: 0,
+    sliceResultWatchSourceId: 0,
+    sliceResultWatchTimer: null,
+    sliceResultFetchToken: 0,
     infoDrawerHideTimer: null,
     selectMode: false,
     selectPurpose: "",
@@ -166,6 +169,10 @@
     appOnboardingStepToken: 0,
     appOnboardingDurationCache: Object.create(null),
     fileInfoSelectedImageUrl: "",
+    fileInfoSliceOutputs: [],
+    fileInfoSliceOutputsLoading: false,
+    fileInfoSliceOutputsToken: 0,
+    fileInfoSliceOutputsFileId: 0,
     trackingExpandedIds: new Set(),
     trackingAssignTrackingId: 0,
     trackingLabelUploadFile: null,
@@ -312,16 +319,11 @@
     fileInfoSliceDebugBtn: document.getElementById("fileInfoSliceDebugBtn"),
     fileInfoSliceDebugMeta: document.getElementById("fileInfoSliceDebugMeta"),
     fileInfoSliceDebugOutput: document.getElementById("fileInfoSliceDebugOutput"),
-    fileInfoModelLinkFields: document.getElementById("fileInfoModelLinkFields"),
-    fileInfoModelLinkInput: document.getElementById("fileInfoModelLinkInput"),
-    fileInfoModelLinkSaveBtn: document.getElementById("fileInfoModelLinkSaveBtn"),
-    fileInfoModelLinkOpen: document.getElementById("fileInfoModelLinkOpen"),
-    fileInfoModelLinkClearBtn: document.getElementById("fileInfoModelLinkClearBtn"),
-    fileInfoModelLinkStatus: document.getElementById("fileInfoModelLinkStatus"),
+    fileInfoSliceOutputsPanel: document.getElementById("fileInfoSliceOutputsPanel"),
+    fileInfoSliceOutputsList: document.getElementById("fileInfoSliceOutputsList"),
+    fileInfoSliceOutputsStatus: document.getElementById("fileInfoSliceOutputsStatus"),
     fileInfoDownloadLink: document.getElementById("fileInfoDownloadLink"),
-    fileInfoSliceDownloadLink: document.getElementById("fileInfoSliceDownloadLink"),
     fileInfoSliceBtn: document.getElementById("fileInfoSliceBtn"),
-    fileInfoFastSliceBtn: document.getElementById("fileInfoFastSliceBtn"),
     fileInfoOpen3DBtn: document.getElementById("fileInfoOpen3DBtn"),
     sliceModal: document.getElementById("sliceModal"),
     sliceModalCloseBtn: document.getElementById("sliceModalCloseBtn"),
@@ -334,6 +336,13 @@
     sliceNozzlePickRightBtn: document.getElementById("sliceNozzlePickRightBtn"),
     sliceModalFileName: document.getElementById("sliceModalFileName"),
     sliceModalStatus: document.getElementById("sliceModalStatus"),
+    sliceResultBox: document.getElementById("sliceResultBox"),
+    sliceResultTitle: document.getElementById("sliceResultTitle"),
+    sliceResultFileMeta: document.getElementById("sliceResultFileMeta"),
+    sliceResultPrintTime: document.getElementById("sliceResultPrintTime"),
+    sliceResultFilamentGrams: document.getElementById("sliceResultFilamentGrams"),
+    sliceResultFilamentCost: document.getElementById("sliceResultFilamentCost"),
+    sliceResultDownloadLink: document.getElementById("sliceResultDownloadLink"),
     slicePrinterSelect: document.getElementById("slicePrinterSelect"),
     sliceKnownPrinterSelect: document.getElementById("sliceKnownPrinterSelect"),
     sliceBedWidthInput: document.getElementById("sliceBedWidthInput"),
@@ -5139,6 +5148,50 @@
     return "";
   }
 
+  function applyPersistedSliceSelection(raw) {
+    if (!raw || typeof raw !== "object") return;
+
+    const printerProfile = String(raw.printer_profile || "").trim();
+    const printProfile = String(raw.print_profile || "").trim();
+    const filamentProfile = String(raw.filament_profile || "").trim();
+    const supportMode = normalizeSliceSupportMode(raw.support_mode || "auto");
+    const supportType = supportMode === "off" ? "" : normalizeSliceSupportType(raw.support_type || "");
+    const supportStyle = supportMode === "off" ? "" : normalizeSliceSupportStyle(raw.support_style || "");
+    const usesDualNozzle = slicePrinterUsesDualNozzle(`${printerProfile} ${printProfile}`);
+    const printNozzle = usesDualNozzle ? normalizeSlicePrintNozzle(raw.print_nozzle || "") : "";
+    const processOverrides = normalizeSliceProcessSettingsMap(
+      raw.process_overrides && typeof raw.process_overrides === "object" ? raw.process_overrides : {}
+    );
+
+    if (printNozzle) {
+      processOverrides.print_extruder_id = printNozzle === "right" ? 2 : 1;
+    }
+    if (!usesDualNozzle) {
+      delete processOverrides.print_extruder_id;
+      delete processOverrides.printer_extruder_id;
+    }
+
+    state.lastSliceSelection = {
+      ...state.lastSliceSelection,
+      printer_profile: printerProfile,
+      print_profile: printProfile,
+      filament_profile: filamentProfile,
+      support_mode: supportMode,
+      support_type: supportType,
+      support_style: supportStyle,
+      nozzle_left_diameter: normalizeSliceNozzleDiameter(raw.nozzle_left_diameter || ""),
+      nozzle_right_diameter: usesDualNozzle ? normalizeSliceNozzleDiameter(raw.nozzle_right_diameter || "") : "",
+      nozzle_left_flow: normalizeSliceNozzleFlow(raw.nozzle_left_flow || ""),
+      nozzle_right_flow: usesDualNozzle ? normalizeSliceNozzleFlow(raw.nozzle_right_flow || "") : "",
+      print_nozzle: printNozzle,
+      rotation_x_degrees: clampSliceRotationDeg(raw.rotation_x_degrees || 0),
+      rotation_y_degrees: clampSliceRotationDeg(raw.rotation_y_degrees || 0),
+      rotation_z_degrees: clampSliceRotationDeg(raw.rotation_z_degrees || 0),
+      lift_z_mm: clampSliceLiftMm(raw.lift_z_mm, 0),
+      process_overrides: processOverrides,
+    };
+  }
+
   function clampSliceBedSizeMm(value, fallback = 0) {
     const numeric = Number(value || fallback || 0);
     if (!Number.isFinite(numeric)) return Number(fallback || 0);
@@ -8559,6 +8612,12 @@
       return state.sliceProfiles;
     }
     const data = await api("/api/slice/profiles");
+    const lastSelection = data && data.last_selection && typeof data.last_selection === "object"
+      ? data.last_selection
+      : null;
+    if (lastSelection) {
+      applyPersistedSliceSelection(lastSelection);
+    }
     const profiles = data && data.profiles && typeof data.profiles === "object" ? data.profiles : {};
     state.sliceProfiles = {
       printers: toStringList(profiles.printers),
@@ -8576,8 +8635,220 @@
     return state.sliceProfiles;
   }
 
+  function resetSliceModalStartButtonIdle() {
+    if (!els.sliceModalStartBtn) return;
+    els.sliceModalStartBtn.textContent = "Slice plate";
+    if (SLICE_ACTIONS_DISABLED) {
+      els.sliceModalStartBtn.disabled = true;
+      els.sliceModalStartBtn.title = SLICE_DISABLED_TITLE;
+      return;
+    }
+    els.sliceModalStartBtn.disabled = false;
+    els.sliceModalStartBtn.removeAttribute("title");
+  }
+
+  function clearSliceResultWatchTimer() {
+    if (!state.sliceResultWatchTimer) return;
+    window.clearTimeout(state.sliceResultWatchTimer);
+    state.sliceResultWatchTimer = null;
+  }
+
+  function stopSliceResultWatch() {
+    state.sliceResultWatchSourceId = 0;
+    clearSliceResultWatchTimer();
+  }
+
+  function clearSliceResultBox() {
+    if (els.sliceResultTitle) {
+      els.sliceResultTitle.textContent = "Total estimation";
+    }
+    if (els.sliceResultFileMeta) {
+      els.sliceResultFileMeta.textContent = "-";
+    }
+    if (els.sliceResultPrintTime) {
+      els.sliceResultPrintTime.textContent = "-";
+    }
+    if (els.sliceResultFilamentGrams) {
+      els.sliceResultFilamentGrams.textContent = "-";
+    }
+    if (els.sliceResultFilamentCost) {
+      els.sliceResultFilamentCost.textContent = "-";
+    }
+    if (els.sliceResultDownloadLink) {
+      els.sliceResultDownloadLink.href = "#";
+      els.sliceResultDownloadLink.classList.add("hidden");
+      els.sliceResultDownloadLink.removeAttribute("title");
+    }
+    if (els.sliceResultBox) {
+      els.sliceResultBox.classList.add("hidden");
+    }
+  }
+
+  function renderSliceResultBox(item = null) {
+    if (!els.sliceResultBox) return;
+
+    const resultItem = item && typeof item === "object" ? item : null;
+    const summary = resultItem && resultItem.summary && typeof resultItem.summary === "object"
+      ? resultItem.summary
+      : {};
+
+    const filename = String((resultItem && resultItem.filename) || "").trim();
+    const fileSize = Number((resultItem && resultItem.file_size) || 0);
+    const uploadedAt = String((resultItem && resultItem.uploaded_at) || "").trim();
+    const downloadUrl = String((resultItem && resultItem.download_url) || "").trim();
+
+    const printTime = String(summary.print_time_total || "").trim() || "-";
+    const filamentGramsValue = Number(summary.filament_grams);
+    const filamentGrams = Number.isFinite(filamentGramsValue) && filamentGramsValue > 0
+      ? `${formatNumberCompact(filamentGramsValue)} g`
+      : "-";
+    const filamentCostValue = Number(summary.filament_cost_kr);
+    const filamentCost = Number.isFinite(filamentCostValue) && filamentCostValue >= 0
+      ? `${formatNumberCompact(filamentCostValue)} kr`
+      : "-";
+
+    if (els.sliceResultTitle) {
+      els.sliceResultTitle.textContent = resultItem
+        ? "Slice complete"
+        : "Slice complete (no output file found)";
+    }
+
+    if (els.sliceResultFileMeta) {
+      if (resultItem) {
+        const metaParts = [];
+        if (filename) metaParts.push(filename);
+        if (fileSize > 0) metaParts.push(formatSize(fileSize));
+        if (uploadedAt) metaParts.push(formatDate(uploadedAt));
+        els.sliceResultFileMeta.textContent = metaParts.length
+          ? metaParts.join(" · ")
+          : "Printfil blev oprettet, men metadata kunne ikke læses.";
+      } else {
+        els.sliceResultFileMeta.textContent = "Kunne ikke finde slicet outputfil.";
+      }
+    }
+
+    if (els.sliceResultPrintTime) {
+      els.sliceResultPrintTime.textContent = printTime;
+    }
+    if (els.sliceResultFilamentGrams) {
+      els.sliceResultFilamentGrams.textContent = filamentGrams;
+    }
+    if (els.sliceResultFilamentCost) {
+      els.sliceResultFilamentCost.textContent = filamentCost;
+    }
+
+    if (els.sliceResultDownloadLink) {
+      const hasDownload = !!downloadUrl;
+      els.sliceResultDownloadLink.classList.toggle("hidden", !hasDownload);
+      if (hasDownload) {
+        els.sliceResultDownloadLink.href = downloadUrl;
+        if (filename) {
+          els.sliceResultDownloadLink.title = filename;
+        } else {
+          els.sliceResultDownloadLink.removeAttribute("title");
+        }
+      } else {
+        els.sliceResultDownloadLink.href = "#";
+        els.sliceResultDownloadLink.removeAttribute("title");
+      }
+    }
+
+    els.sliceResultBox.classList.remove("hidden");
+  }
+
+  async function loadSliceResultInfo(sourceFileId) {
+    const sourceId = Number(sourceFileId || 0);
+    if (!sourceId) return null;
+
+    const token = Number(state.sliceResultFetchToken || 0) + 1;
+    state.sliceResultFetchToken = token;
+
+    const data = await api(`/api/files/${sourceId}/slice-result`);
+    if (Number(state.sliceResultFetchToken || 0) !== token) return null;
+
+    const item = data && data.item && typeof data.item === "object" ? data.item : null;
+    renderSliceResultBox(item);
+    return data;
+  }
+
+  function scheduleSliceResultWatchTick(delayMs = 2500) {
+    clearSliceResultWatchTimer();
+    if (!state.sliceResultWatchSourceId) return;
+    state.sliceResultWatchTimer = window.setTimeout(() => {
+      runSliceResultWatchTick().catch(() => {
+        scheduleSliceResultWatchTick(2500);
+      });
+    }, Math.max(400, Number(delayMs || 0)));
+  }
+
+  async function runSliceResultWatchTick() {
+    const sourceId = Number(state.sliceResultWatchSourceId || 0);
+    if (!sourceId) return;
+
+    const modalOpen = !!(els.sliceModal && !els.sliceModal.classList.contains("hidden"));
+    if (!modalOpen) {
+      stopSliceResultWatch();
+      return;
+    }
+
+    try {
+      await loadFiles();
+    } catch (_err) {
+      scheduleSliceResultWatchTick(2500);
+      return;
+    }
+
+    const sourceFile = fileById(sourceId);
+    if (!sourceFile) {
+      showStatus(els.sliceModalStatus, "Filen kunne ikke findes efter slicing.", "error");
+      stopSliceResultWatch();
+      resetSliceModalStartButtonIdle();
+      return;
+    }
+
+    const status = normalizedSliceStatus(sourceFile);
+    if (status === "queued" || status === "processing") {
+      showStatus(els.sliceModalStatus, "Slicing i gang...", "ok");
+      scheduleSliceResultWatchTick(2500);
+      return;
+    }
+
+    stopSliceResultWatch();
+
+    if (status === "error") {
+      const errorMessage = String(sourceFile.slice_error || "Slicing fejlede.").trim() || "Slicing fejlede.";
+      showStatus(els.sliceModalStatus, errorMessage, "error");
+      resetSliceModalStartButtonIdle();
+      return;
+    }
+
+    if (status === "ready") {
+      try {
+        await loadSliceResultInfo(sourceId);
+        showStatus(els.sliceModalStatus, "Slicing færdig.", "ok");
+      } catch (err) {
+        showStatus(els.sliceModalStatus, (err && err.message) || "Slicing færdig, men kunne ikke hente resultat-info.", "error");
+      }
+      resetSliceModalStartButtonIdle();
+      return;
+    }
+
+    resetSliceModalStartButtonIdle();
+  }
+
+  function startSliceResultWatch(sourceFileId) {
+    const sourceId = Number(sourceFileId || 0);
+    if (!sourceId) return;
+    stopSliceResultWatch();
+    state.sliceResultWatchSourceId = sourceId;
+    scheduleSliceResultWatchTick(1100);
+  }
+
   function closeSliceModal() {
     settleSliceNozzlePick("");
+    stopSliceResultWatch();
+    state.sliceResultFetchToken = Number(state.sliceResultFetchToken || 0) + 1;
+    clearSliceResultBox();
     state.slicePreviewLoadToken += 1;
     clearSlicePreview();
     state.currentSliceFileId = 0;
@@ -8616,6 +8887,9 @@
     setSlicePreviewFootprint("Model footprint: -");
     setSlicePreviewHeight("Model Z: -");
     showStatus(els.sliceModalStatus, "");
+    if (els.sliceModalStartBtn) {
+      els.sliceModalStartBtn.textContent = "Slice plate";
+    }
     if (els.sliceModal) els.sliceModal.classList.add("hidden");
   }
 
@@ -8654,6 +8928,48 @@
     });
   }
 
+  function applyLastSliceSelectionToModalControls() {
+    const saved = state.lastSliceSelection && typeof state.lastSliceSelection === "object"
+      ? state.lastSliceSelection
+      : {};
+
+    if (els.sliceSupportModeSelect) {
+      els.sliceSupportModeSelect.value = normalizeSliceSupportMode(saved.support_mode || "auto");
+    }
+    if (els.sliceSupportTypeSelect) {
+      els.sliceSupportTypeSelect.value = normalizeSliceSupportType(saved.support_type || "");
+    }
+    if (els.sliceSupportStyleSelect) {
+      els.sliceSupportStyleSelect.value = normalizeSliceSupportStyle(saved.support_style || "");
+    }
+
+    const activePrinter = String((els.slicePrinterSelect && els.slicePrinterSelect.value) || saved.printer_profile || "");
+    const usesDualNozzle = slicePrinterUsesDualNozzle(activePrinter);
+    const leftDiameter = normalizeSliceNozzleDiameter(saved.nozzle_left_diameter || DEFAULT_SLICE_NOZZLE_DIAMETER);
+    const rightDiameter = usesDualNozzle
+      ? normalizeSliceNozzleDiameter(saved.nozzle_right_diameter || DEFAULT_SLICE_NOZZLE_DIAMETER)
+      : "";
+    const leftFlow = normalizeSliceNozzleFlow(saved.nozzle_left_flow || DEFAULT_SLICE_NOZZLE_FLOW);
+    const rightFlow = usesDualNozzle
+      ? normalizeSliceNozzleFlow(saved.nozzle_right_flow || DEFAULT_SLICE_NOZZLE_FLOW)
+      : "";
+
+    if (els.sliceNozzleLeftDiameterSelect) {
+      els.sliceNozzleLeftDiameterSelect.value = leftDiameter || DEFAULT_SLICE_NOZZLE_DIAMETER;
+    }
+    if (els.sliceNozzleRightDiameterSelect) {
+      els.sliceNozzleRightDiameterSelect.value = rightDiameter || DEFAULT_SLICE_NOZZLE_DIAMETER;
+    }
+    if (els.sliceNozzleLeftFlowSelect) {
+      els.sliceNozzleLeftFlowSelect.value = leftFlow || DEFAULT_SLICE_NOZZLE_FLOW;
+    }
+    if (els.sliceNozzleRightFlowSelect) {
+      els.sliceNozzleRightFlowSelect.value = rightFlow || DEFAULT_SLICE_NOZZLE_FLOW;
+    }
+
+    setSliceModalLiftMm(clampSliceLiftMm(saved.lift_z_mm, 0));
+  }
+
   async function openSliceModal(fileId) {
     if (SLICE_ACTIONS_DISABLED) {
       showStatus(els.uploadStatus, `${SLICE_DISABLED_TITLE}.`, "error");
@@ -8663,6 +8979,9 @@
     if (!file || !file.can_slice || state.role !== "admin") return;
 
     state.currentSliceFileId = Number(file.id || 0);
+    stopSliceResultWatch();
+    state.sliceResultFetchToken = Number(state.sliceResultFetchToken || 0) + 1;
+    clearSliceResultBox();
     state.slicePlateAssets = null;
     state.sliceProcessSettingsBase = {};
     state.sliceProcessSettingsBaseApi = {};
@@ -8676,47 +8995,17 @@
     if (els.sliceModal) els.sliceModal.classList.remove("hidden");
     setSliceToolMode("view");
     setSliceModalRotation({ x: 0, y: 0, z: 0 });
-    setSliceModalLiftMm(clampSliceLiftMm(state.lastSliceSelection.lift_z_mm, 0));
-    if (els.sliceSupportModeSelect) {
-      els.sliceSupportModeSelect.value = normalizeSliceSupportMode(state.lastSliceSelection.support_mode || "auto");
-    }
-    if (els.sliceSupportTypeSelect) {
-      els.sliceSupportTypeSelect.value = normalizeSliceSupportType(state.lastSliceSelection.support_type || "");
-    }
-    if (els.sliceSupportStyleSelect) {
-      els.sliceSupportStyleSelect.value = normalizeSliceSupportStyle(state.lastSliceSelection.support_style || "");
-    }
-    if (els.sliceNozzleLeftDiameterSelect) {
-      const normalizedNozzleLeftDiameter = normalizeSliceNozzleDiameter(
-        state.lastSliceSelection.nozzle_left_diameter || DEFAULT_SLICE_NOZZLE_DIAMETER
-      );
-      els.sliceNozzleLeftDiameterSelect.value = normalizedNozzleLeftDiameter || DEFAULT_SLICE_NOZZLE_DIAMETER;
-    }
-    if (els.sliceNozzleRightDiameterSelect) {
-      const normalizedNozzleRightDiameter = normalizeSliceNozzleDiameter(
-        state.lastSliceSelection.nozzle_right_diameter || DEFAULT_SLICE_NOZZLE_DIAMETER
-      );
-      els.sliceNozzleRightDiameterSelect.value = normalizedNozzleRightDiameter || DEFAULT_SLICE_NOZZLE_DIAMETER;
-    }
-    if (els.sliceNozzleLeftFlowSelect) {
-      const normalizedNozzleLeftFlow = normalizeSliceNozzleFlow(
-        state.lastSliceSelection.nozzle_left_flow || DEFAULT_SLICE_NOZZLE_FLOW
-      );
-      els.sliceNozzleLeftFlowSelect.value = normalizedNozzleLeftFlow || DEFAULT_SLICE_NOZZLE_FLOW;
-    }
-    if (els.sliceNozzleRightFlowSelect) {
-      const normalizedNozzleRightFlow = normalizeSliceNozzleFlow(
-        state.lastSliceSelection.nozzle_right_flow || DEFAULT_SLICE_NOZZLE_FLOW
-      );
-      els.sliceNozzleRightFlowSelect.value = normalizedNozzleRightFlow || DEFAULT_SLICE_NOZZLE_FLOW;
-    }
+    applyLastSliceSelectionToModalControls();
     if (els.sliceProcessSettingsSearchInput) {
       els.sliceProcessSettingsSearchInput.value = "";
     }
     updateSliceSupportControlsUi();
     setSlicePreviewFootprint("Model footprint: Klargør preview...");
     setSlicePreviewHeight("Model Z: Klargør preview...");
-    if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = true;
+    if (els.sliceModalStartBtn) {
+      els.sliceModalStartBtn.textContent = "Slice plate";
+      els.sliceModalStartBtn.disabled = true;
+    }
     showStatus(els.sliceModalStatus, "Henter slice-profiler...", "ok");
 
     try {
@@ -8730,6 +9019,7 @@
       applySlicePrintProfileFilterForSelectedPrinter(state.lastSliceSelection.print_profile);
       applySliceFilamentFilterForSelectedPrinter(state.lastSliceSelection.filament_profile);
       updateSliceNozzleUiForSelectedPrinter();
+      applyLastSliceSelectionToModalControls();
       syncSliceProcessProfileSelectFromMain();
       if (!String((els.sliceProcessProfileSelect && els.sliceProcessProfileSelect.value) || "").trim()) {
         const firstExplicitProcessProfile = firstNonEmptySliceSelectValue(els.sliceProcessProfileSelect)
@@ -8784,7 +9074,7 @@
           showStatus(els.sliceModalStatus, "Ingen profiler fundet. Slicing kan stadig startes med standard config.", "ok");
         }
       }
-      if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
+      resetSliceModalStartButtonIdle();
     } catch (err) {
       renderSliceSelect(els.slicePrinterSelect, [], "Vælg printer", false);
       renderSliceSelect(els.slicePrintProfileSelect, [], "Auto / fra config");
@@ -8795,7 +9085,7 @@
       state.sliceProcessSettingsOptions = {};
       state.sliceProcessSettingsOverrides = {};
       showStatus(els.sliceModalStatus, err.message || "Kunne ikke hente slice-profiler", "error");
-      if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
+      resetSliceModalStartButtonIdle();
       refreshSlicePreviewBedFromSelection();
       updateSliceNozzleUiForSelectedPrinter();
       if (els.sliceProcessSettingsMeta) {
@@ -9056,31 +9346,139 @@
     els.fileInfoLinkDetails.classList.remove("hidden");
   }
 
-  function renderFileInfoModelLink(file) {
-    const isExternalLink = !!(file && file.is_external_link);
-    const url = String((file && file.model_link_url) || "").trim();
-    const source = String((file && file.model_link_source) || "").trim();
-    const title = String((file && file.model_link_title) || "").trim();
-    if (els.fileInfoModelLinkFields) {
-      els.fileInfoModelLinkFields.classList.toggle("hidden", isExternalLink);
+  function fileInfoSliceOutputsEnabledForFile(file) {
+    return !!(file && file.can_slice && !file.is_external_link);
+  }
+
+  function renderFileInfoSliceOutputs(file, items = [], options = {}) {
+    if (!els.fileInfoSliceOutputsPanel || !els.fileInfoSliceOutputsList) return;
+
+    const enabled = fileInfoSliceOutputsEnabledForFile(file);
+    if (!enabled) {
+      els.fileInfoSliceOutputsPanel.classList.add("hidden");
+      els.fileInfoSliceOutputsList.innerHTML = "";
+      showStatus(els.fileInfoSliceOutputsStatus, "");
+      return;
     }
-    if (els.fileInfoModelLinkInput) {
-      els.fileInfoModelLinkInput.value = url;
-      els.fileInfoModelLinkInput.disabled = isExternalLink;
+
+    const rows = Array.isArray(items) ? items : [];
+    const loading = !!(options && options.loading);
+
+    els.fileInfoSliceOutputsPanel.classList.remove("hidden");
+
+    if (loading && !rows.length) {
+      els.fileInfoSliceOutputsList.innerHTML = '<div class="hint">Henter slicede filer...</div>';
+      return;
     }
-    if (els.fileInfoModelLinkSaveBtn) {
-      els.fileInfoModelLinkSaveBtn.disabled = isExternalLink;
-      els.fileInfoModelLinkSaveBtn.textContent = "Gem link";
+
+    if (!rows.length) {
+      els.fileInfoSliceOutputsList.innerHTML = '<div class="hint">Ingen slicede filer endnu.</div>';
+      return;
     }
-    if (els.fileInfoModelLinkOpen) {
-      els.fileInfoModelLinkOpen.classList.toggle("hidden", !url || isExternalLink);
-      els.fileInfoModelLinkOpen.href = url || "#";
-      els.fileInfoModelLinkOpen.textContent = source ? `Åbn ${source}` : "Åbn link";
-      if (title) els.fileInfoModelLinkOpen.title = title;
-      else els.fileInfoModelLinkOpen.removeAttribute("title");
+
+    const html = rows
+      .map((item) => {
+        const id = Number(item && item.id ? item.id : 0);
+        const filename = String((item && item.filename) || `printfil-${id || "ukendt"}`);
+        const uploadedAt = String((item && item.uploaded_at) || "").trim();
+        const sizeValue = Number((item && item.file_size) || 0);
+        const sizeLabel = sizeValue > 0 ? formatSize(sizeValue) : "-";
+        const uploadedLabel = uploadedAt ? formatDate(uploadedAt) : "-";
+        const downloadUrl = String((item && item.download_url) || "").trim();
+        const canDelete = !!(item && item.can_delete);
+
+        return `
+          <div class="file-info-slice-output-row" data-slice-output-id="${id}">
+            <div class="file-info-slice-output-main">
+              <div class="file-info-slice-output-name" title="${esc(filename)}">${esc(filename)}</div>
+              <div class="file-info-slice-output-meta">${esc(sizeLabel)} · ${esc(uploadedLabel)}</div>
+            </div>
+            <div class="file-info-slice-output-actions">
+              ${downloadUrl ? `<a class="btn small" href="${esc(downloadUrl)}" target="_blank" rel="noopener">Download</a>` : ""}
+              ${canDelete ? `<button class="btn small danger" type="button" data-slice-output-delete="${id}">Slet</button>` : ""}
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    els.fileInfoSliceOutputsList.innerHTML = html;
+  }
+
+  async function loadFileInfoSliceOutputs(fileId, options = {}) {
+    const id = Number(fileId || 0);
+    if (!id || Number(state.currentInfoFileId || 0) !== id) return;
+
+    const file = fileById(id);
+    if (!fileInfoSliceOutputsEnabledForFile(file)) {
+      state.fileInfoSliceOutputs = [];
+      state.fileInfoSliceOutputsLoading = false;
+      state.fileInfoSliceOutputsFileId = 0;
+      renderFileInfoSliceOutputs(file, []);
+      return;
     }
-    if (els.fileInfoModelLinkClearBtn) {
-      els.fileInfoModelLinkClearBtn.classList.toggle("hidden", !url || isExternalLink);
+
+    const force = !!(options && options.force);
+    if (!force && state.fileInfoSliceOutputsLoading && Number(state.fileInfoSliceOutputsFileId || 0) === id) {
+      return;
+    }
+
+    const fileChanged = Number(state.fileInfoSliceOutputsFileId || 0) !== id;
+    if (fileChanged) {
+      state.fileInfoSliceOutputs = [];
+      state.fileInfoSliceOutputsFileId = id;
+    }
+
+    const token = Number(state.fileInfoSliceOutputsToken || 0) + 1;
+    state.fileInfoSliceOutputsToken = token;
+    state.fileInfoSliceOutputsLoading = true;
+    renderFileInfoSliceOutputs(file, state.fileInfoSliceOutputs, { loading: true });
+
+    try {
+      const data = await api(`/api/files/${id}/slice-outputs`);
+      if (Number(state.fileInfoSliceOutputsToken || 0) !== token) return;
+      if (Number(state.currentInfoFileId || 0) !== id) return;
+
+      const items = Array.isArray(data && data.items) ? data.items : [];
+      state.fileInfoSliceOutputs = items;
+      showStatus(els.fileInfoSliceOutputsStatus, "");
+      renderFileInfoSliceOutputs(fileById(id) || file, items);
+    } catch (err) {
+      if (Number(state.fileInfoSliceOutputsToken || 0) !== token) return;
+      showStatus(els.fileInfoSliceOutputsStatus, (err && err.message) || "Kunne ikke hente slicede filer", "error");
+      renderFileInfoSliceOutputs(fileById(id) || file, []);
+    } finally {
+      if (Number(state.fileInfoSliceOutputsToken || 0) === token) {
+        state.fileInfoSliceOutputsLoading = false;
+      }
+    }
+  }
+
+  async function deleteFileInfoSliceOutputById(outputFileId) {
+    const id = Number(outputFileId || 0);
+    if (!id) return;
+
+    const currentItem = Array.isArray(state.fileInfoSliceOutputs)
+      ? state.fileInfoSliceOutputs.find((item) => Number(item && item.id ? item.id : 0) === id)
+      : null;
+    const label = String((currentItem && currentItem.filename) || `printfil-${id}`).trim();
+    if (!window.confirm(`Slet '${label}'? Dette kan ikke fortrydes.`)) return;
+
+    showStatus(els.fileInfoSliceOutputsStatus, "Sletter slicet fil...", "ok");
+
+    await api("/api/files/batch-delete", {
+      method: "POST",
+      body: {
+        file_ids: [id],
+        folder_paths: [],
+      },
+    });
+
+    showStatus(els.fileInfoSliceOutputsStatus, "Slicet fil slettet.", "ok");
+    await loadFiles();
+    const currentInfoId = Number(state.currentInfoFileId || 0);
+    if (currentInfoId) {
+      loadFileInfoSliceOutputs(currentInfoId, { force: true }).catch(() => {});
     }
   }
 
@@ -9144,7 +9542,16 @@
     }
 
     renderFileInfoLinkDetails(file);
-    renderFileInfoModelLink(file);
+    const useCachedSliceOutputs = Number(state.fileInfoSliceOutputsFileId || 0) === id;
+    const cachedSliceOutputs = useCachedSliceOutputs && Array.isArray(state.fileInfoSliceOutputs)
+      ? state.fileInfoSliceOutputs
+      : [];
+    renderFileInfoSliceOutputs(file, cachedSliceOutputs, {
+      loading: fileInfoSliceOutputsEnabledForFile(file) && !useCachedSliceOutputs,
+    });
+    loadFileInfoSliceOutputs(id).catch((err) => {
+      showStatus(els.fileInfoSliceOutputsStatus, err.message || "Kunne ikke hente slicede filer", "error");
+    });
 
     if (els.fileInfoDownloadLink) {
       const externalUrl = String(file.external_url || "").trim();
@@ -9154,23 +9561,6 @@
         els.fileInfoDownloadLink.title = String(file.external_source || "Eksternt link");
       } else {
         els.fileInfoDownloadLink.removeAttribute("title");
-      }
-    }
-    if (els.fileInfoSliceDownloadLink) {
-      const sliceOutput = file && file.slice_output && typeof file.slice_output === "object" ? file.slice_output : null;
-      const downloadUrl = String((sliceOutput && sliceOutput.download_url) || "").trim();
-      const hasSliceOutput = !!downloadUrl;
-      els.fileInfoSliceDownloadLink.classList.toggle("hidden", !hasSliceOutput);
-      if (hasSliceOutput) {
-        const sizeValue = Number((sliceOutput && sliceOutput.file_size) || 0);
-        const sizeLabel = sizeValue > 0 ? ` (${formatSize(sizeValue)})` : "";
-        els.fileInfoSliceDownloadLink.href = downloadUrl;
-        els.fileInfoSliceDownloadLink.textContent = `Download G-code${sizeLabel}`;
-        els.fileInfoSliceDownloadLink.title = String((sliceOutput && sliceOutput.filename) || "G-code");
-      } else {
-        els.fileInfoSliceDownloadLink.href = "#";
-        els.fileInfoSliceDownloadLink.textContent = "Download G-code";
-        els.fileInfoSliceDownloadLink.removeAttribute("title");
       }
     }
     if (els.fileInfoOpen3DBtn) {
@@ -9188,7 +9578,6 @@
     if (els.fileInfoSliceBtn) {
       const canSlice = state.role === "admin" && !!file.can_slice;
       const isQueued = sliceStatus === "queued";
-      const isBusy = sliceStatus === "queued" || sliceStatus === "processing";
       els.fileInfoSliceBtn.classList.toggle("hidden", !canSlice);
       els.fileInfoSliceBtn.disabled = !canSlice || isQueued || SLICE_ACTIONS_DISABLED;
       els.fileInfoSliceBtn.dataset.fileId = String(id);
@@ -9200,20 +9589,6 @@
         els.fileInfoSliceBtn.title = sliceErrorMessage;
       } else {
         els.fileInfoSliceBtn.removeAttribute("title");
-      }
-      if (els.fileInfoFastSliceBtn) {
-        els.fileInfoFastSliceBtn.classList.toggle("hidden", !canSlice);
-        els.fileInfoFastSliceBtn.disabled = !canSlice || isBusy || SLICE_ACTIONS_DISABLED;
-        els.fileInfoFastSliceBtn.dataset.fileId = String(id);
-        els.fileInfoFastSliceBtn.dataset.sliceStatus = sliceStatus;
-        els.fileInfoFastSliceBtn.textContent = SLICE_ACTIONS_DISABLED ? "Fast slice slået fra" : "Fast slice";
-        if (SLICE_ACTIONS_DISABLED) {
-          els.fileInfoFastSliceBtn.title = SLICE_DISABLED_TITLE;
-        } else if (canSlice && !isBusy) {
-          els.fileInfoFastSliceBtn.title = "Starter slicing uden dialog, profiler eller ekstra settings";
-        } else {
-          els.fileInfoFastSliceBtn.removeAttribute("title");
-        }
       }
     }
   }
@@ -9297,7 +9672,12 @@
   function closeFileInfoDrawer() {
     state.currentInfoFileId = 0;
     state.fileInfoSelectedImageUrl = "";
-    showStatus(els.fileInfoModelLinkStatus, "");
+    state.fileInfoSliceOutputs = [];
+    state.fileInfoSliceOutputsLoading = false;
+    state.fileInfoSliceOutputsFileId = 0;
+    state.fileInfoSliceOutputsToken = Number(state.fileInfoSliceOutputsToken || 0) + 1;
+    renderFileInfoSliceOutputs(null, []);
+    showStatus(els.fileInfoSliceOutputsStatus, "");
     if (els.fileInfoDrawer) {
       els.fileInfoDrawer.classList.remove("open");
       els.fileInfoDrawer.setAttribute("aria-hidden", "true");
@@ -9316,45 +9696,6 @@
       if (els.fileInfoBackdrop) els.fileInfoBackdrop.classList.add("hidden");
       state.infoDrawerHideTimer = null;
     }, 200);
-  }
-
-  async function saveCurrentFileModelLink(options = {}) {
-    const id = Number(state.currentInfoFileId || 0);
-    if (!id) return;
-    const clear = !!(options && options.clear);
-    const url = clear ? "" : String((els.fileInfoModelLinkInput && els.fileInfoModelLinkInput.value) || "").trim();
-    if (url && !/^https?:\/\//i.test(url)) {
-      showStatus(els.fileInfoModelLinkStatus, "Linket skal starte med http:// eller https://.", "error");
-      if (els.fileInfoModelLinkInput) els.fileInfoModelLinkInput.focus();
-      return;
-    }
-    if (els.fileInfoModelLinkSaveBtn) {
-      els.fileInfoModelLinkSaveBtn.disabled = true;
-      els.fileInfoModelLinkSaveBtn.textContent = "Gemmer...";
-    }
-    if (els.fileInfoModelLinkClearBtn) els.fileInfoModelLinkClearBtn.disabled = true;
-    try {
-      const data = await api(`/api/files/${id}/model-link`, {
-        method: "PATCH",
-        body: { url },
-      });
-      if (data && data.item) {
-        const idx = state.files.findIndex((file) => Number(file && file.id ? file.id : 0) === id);
-        if (idx >= 0) state.files[idx] = data.item;
-      }
-      await loadFiles();
-      const refreshed = fileById(id);
-      if (refreshed) renderFileInfoDrawer(refreshed);
-      showStatus(els.fileInfoModelLinkStatus, url ? "Model-link gemt." : "Model-link fjernet.", "ok");
-    } catch (err) {
-      showStatus(els.fileInfoModelLinkStatus, err.message || "Kunne ikke gemme model-link", "error");
-    } finally {
-      if (els.fileInfoModelLinkSaveBtn) {
-        els.fileInfoModelLinkSaveBtn.disabled = false;
-        els.fileInfoModelLinkSaveBtn.textContent = "Gem link";
-      }
-      if (els.fileInfoModelLinkClearBtn) els.fileInfoModelLinkClearBtn.disabled = false;
-    }
   }
 
   function getUploadModelLinkCurrentItem() {
@@ -9574,25 +9915,6 @@
       showStatus(els.uploadStatus, "Slicing kører allerede for filen.", "ok");
     } else {
       showStatus(els.uploadStatus, "Slicing sat i kø.", "ok");
-    }
-    await loadFiles();
-  }
-
-  async function fastSliceFileById(fileId) {
-    const id = Number(fileId || 0);
-    if (!id) return;
-    if (SLICE_ACTIONS_DISABLED) {
-      showStatus(els.uploadStatus, `${SLICE_DISABLED_TITLE}.`, "error");
-      return;
-    }
-    const data = await api(`/api/files/${id}/slice`, {
-      method: "POST",
-      body: { fast_slice: true },
-    });
-    if (data && data.already_running) {
-      showStatus(els.uploadStatus, "Slicing kører allerede for filen.", "ok");
-    } else {
-      showStatus(els.uploadStatus, "Fast slice sat i kø.", "ok");
     }
     await loadFiles();
   }
@@ -16169,31 +16491,17 @@
         );
       });
     }
-    if (els.fileInfoModelLinkSaveBtn) {
-      els.fileInfoModelLinkSaveBtn.addEventListener("click", () => {
-        saveCurrentFileModelLink().catch((err) => {
-          showStatus(els.fileInfoModelLinkStatus, err.message || "Kunne ikke gemme model-link", "error");
+    if (els.fileInfoSliceOutputsList) {
+      els.fileInfoSliceOutputsList.addEventListener("click", (event) => {
+        const deleteBtn = event.target && event.target.closest
+          ? event.target.closest("[data-slice-output-delete]")
+          : null;
+        if (!deleteBtn) return;
+        const outputId = Number((deleteBtn.dataset && deleteBtn.dataset.sliceOutputDelete) || 0);
+        if (!outputId) return;
+        deleteFileInfoSliceOutputById(outputId).catch((err) => {
+          showStatus(els.fileInfoSliceOutputsStatus, err.message || "Kunne ikke slette slicet fil", "error");
         });
-      });
-    }
-    if (els.fileInfoModelLinkClearBtn) {
-      els.fileInfoModelLinkClearBtn.addEventListener("click", () => {
-        if (els.fileInfoModelLinkInput) els.fileInfoModelLinkInput.value = "";
-        saveCurrentFileModelLink({ clear: true }).catch((err) => {
-          showStatus(els.fileInfoModelLinkStatus, err.message || "Kunne ikke fjerne model-link", "error");
-        });
-      });
-    }
-    if (els.fileInfoModelLinkInput) {
-      els.fileInfoModelLinkInput.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter") return;
-        event.preventDefault();
-        saveCurrentFileModelLink().catch((err) => {
-          showStatus(els.fileInfoModelLinkStatus, err.message || "Kunne ikke gemme model-link", "error");
-        });
-      });
-      els.fileInfoModelLinkInput.addEventListener("input", () => {
-        showStatus(els.fileInfoModelLinkStatus, "");
       });
     }
     if (els.uploadModelLinksSkipBtn) {
@@ -16307,19 +16615,6 @@
         openSliceModal(id).catch((err) => {
           showStatus(els.uploadStatus, err.message || "Kunne ikke åbne slice-dialog", "error");
         });
-      });
-    }
-    if (els.fileInfoFastSliceBtn) {
-      els.fileInfoFastSliceBtn.addEventListener("click", async () => {
-        const id = Number((els.fileInfoFastSliceBtn && els.fileInfoFastSliceBtn.dataset.fileId) || state.currentInfoFileId || 0);
-        if (!id || els.fileInfoFastSliceBtn.disabled) return;
-        try {
-          els.fileInfoFastSliceBtn.disabled = true;
-          await fastSliceFileById(id);
-        } catch (err) {
-          showStatus(els.uploadStatus, err.message || "Kunne ikke starte fast slice", "error");
-          if (els.fileInfoFastSliceBtn) els.fileInfoFastSliceBtn.disabled = false;
-        }
       });
     }
 
@@ -16590,12 +16885,12 @@
     updateSliceToolUi();
 
     if (els.sliceModalStartBtn) {
-      els.sliceModalStartBtn.disabled = SLICE_ACTIONS_DISABLED;
-      if (SLICE_ACTIONS_DISABLED) els.sliceModalStartBtn.title = SLICE_DISABLED_TITLE;
+      resetSliceModalStartButtonIdle();
       els.sliceModalStartBtn.addEventListener("click", async () => {
         if (SLICE_ACTIONS_DISABLED) return;
         const id = Number(state.currentSliceFileId || state.currentInfoFileId || 0);
         if (!id) return;
+        let keepWatching = false;
         let profiles = null;
         try {
           profiles = selectedSliceProfiles();
@@ -16603,7 +16898,13 @@
           showStatus(els.sliceModalStatus, (err && err.message) || "Ugyldige process-indstillinger", "error");
           return;
         }
-        els.sliceModalStartBtn.disabled = true;
+        stopSliceResultWatch();
+        state.sliceResultFetchToken = Number(state.sliceResultFetchToken || 0) + 1;
+        clearSliceResultBox();
+        if (els.sliceModalStartBtn) {
+          els.sliceModalStartBtn.disabled = true;
+          els.sliceModalStartBtn.textContent = "Starter...";
+        }
         try {
           const usesDualNozzle = slicePrinterUsesDualNozzle(profiles.printer_profile);
           const normalizedProcessOverrides = profiles.process_overrides && typeof profiles.process_overrides === "object"
@@ -16652,11 +16953,25 @@
 
           showStatus(els.sliceModalStatus, "Starter slicing...", "ok");
           await sliceFileById(id, profiles);
-          closeSliceModal();
+          try {
+            await loadFiles();
+          } catch (_err) {
+            // Polling loop retries status refresh if this immediate update fails.
+          }
+          showStatus(els.sliceModalStatus, "Slicing startet. Vent mens filen behandles...", "ok");
+          if (els.sliceModalStartBtn) {
+            els.sliceModalStartBtn.textContent = "Slicer...";
+            els.sliceModalStartBtn.disabled = true;
+          }
+          keepWatching = true;
+          startSliceResultWatch(id);
         } catch (err) {
+          stopSliceResultWatch();
           showStatus(els.sliceModalStatus, err.message || "Kunne ikke starte slicing", "error");
         } finally {
-          if (els.sliceModalStartBtn) els.sliceModalStartBtn.disabled = false;
+          if (!keepWatching) {
+            resetSliceModalStartButtonIdle();
+          }
         }
       });
     }

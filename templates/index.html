@@ -148,24 +148,17 @@
           <pre id="fileInfoSliceDebugOutput" class="file-info-slice-debug-output hidden"></pre>
         </div>
 
-        <div id="fileInfoModelLinkFields" class="file-info-fields">
-          <label for="fileInfoModelLinkInput">Model-link</label>
-          <div class="file-info-model-link-row">
-            <input id="fileInfoModelLinkInput" class="input" type="url" placeholder="MakerWorld eller Printables link">
-            <button id="fileInfoModelLinkSaveBtn" class="btn primary" type="button">Gem link</button>
+        <div id="fileInfoSliceOutputsPanel" class="file-info-slice-outputs hidden">
+          <div class="file-info-slice-outputs-head">
+            <strong>Slicede filer</strong>
           </div>
-          <div class="file-info-model-link-actions">
-            <a id="fileInfoModelLinkOpen" class="btn hidden" href="#" target="_blank" rel="noopener">Åbn link</a>
-            <button id="fileInfoModelLinkClearBtn" class="btn hidden" type="button">Fjern link</button>
-          </div>
-          <div id="fileInfoModelLinkStatus" class="status hidden"></div>
+          <div id="fileInfoSliceOutputsList" class="file-info-slice-outputs-list"></div>
+          <div id="fileInfoSliceOutputsStatus" class="status hidden"></div>
         </div>
       </div>
       <div class="file-info-actions">
         <a id="fileInfoDownloadLink" class="btn" href="#" target="_blank" rel="noopener">Download</a>
-        <a id="fileInfoSliceDownloadLink" class="btn hidden" href="#" target="_blank" rel="noopener">Download G-code</a>
         <button id="fileInfoSliceBtn" class="btn hidden admin-only" type="button" disabled>Slice STL</button>
-        <button id="fileInfoFastSliceBtn" class="btn hidden admin-only" type="button" disabled>Fast slice</button>
         <button id="fileInfoOpen3DBtn" class="btn" type="button">Åbn 3D</button>
       </div>
     </aside>
@@ -1248,6 +1241,22 @@
         <div class="slice-preview-wrap">
           <div class="slice-preview-canvas-wrap">
             <canvas id="slicePreviewCanvas" class="slice-preview-canvas" aria-label="Printplade preview"></canvas>
+
+            <div id="sliceResultBox" class="slice-result-box hidden" aria-live="polite">
+              <div class="slice-result-head">
+                <div class="slice-result-head-label">Slicing Result</div>
+              </div>
+              <div id="sliceResultTitle" class="slice-result-title">Total estimation</div>
+              <div id="sliceResultFileMeta" class="slice-result-meta">-</div>
+              <div class="slice-result-grid">
+                <div class="slice-result-row"><span>Print time</span><strong id="sliceResultPrintTime">-</strong></div>
+                <div class="slice-result-row"><span>Used filament</span><strong id="sliceResultFilamentGrams">-</strong></div>
+                <div class="slice-result-row"><span>Filament cost</span><strong id="sliceResultFilamentCost">-</strong></div>
+              </div>
+              <div class="slice-result-actions">
+                <a id="sliceResultDownloadLink" class="btn small" href="#" target="_blank" rel="noopener">Export plate sliced file</a>
+              </div>
+            </div>
           </div>
           <div class="slice-preview-meta">
             <div id="slicePreviewBed" class="slice-preview-row">Plade: 256 x 256 mm</div>
