@@ -5379,6 +5379,20 @@
     return normalized;
   }
 
+  function normalizeSliceProcessBrimType(value) {
+    const normalized = normalizeSliceProcessKey(value);
+    if (!normalized) return "";
+    if (normalized === "auto") return "auto";
+    if (normalized === "painted") return "auto";
+    if (normalized === "outer_only" || normalized === "outer_brim_only") return "outer_only";
+    if (normalized === "inner_only" || normalized === "inner_brim_only") return "inner_only";
+    if (normalized === "outer_and_inner" || normalized === "all") return "outer_and_inner";
+    if (normalized === "none" || normalized === "no_brim" || normalized === "off" || normalized === "false" || normalized === "0") {
+      return "none";
+    }
+    return normalized;
+  }
+
   function normalizeSliceProcessOneWallTopMode(value) {
     const normalized = normalizeSliceProcessKey(value);
     if (!normalized) return "";
@@ -5408,6 +5422,9 @@
         const normalizedTopWallMode = normalizeSliceProcessOneWallTopMode(String(value));
         if (normalizedTopWallMode) return normalizedTopWallMode;
       }
+      if (canonicalKey === "prime_tower_brim_width" && value === -1) {
+        return "auto";
+      }
       if (sliceProcessKeyLooksBoolean(key) && (value === 0 || value === 1)) {
         return value === 1;
       }
@@ -5425,6 +5442,18 @@
       if (canonicalKey === "support_style" || normalizedKey === "style") {
         const normalizedSupportStyle = normalizeSliceSupportStyle(text);
         if (normalizedSupportStyle) return normalizedSupportStyle;
+      }
+      if (canonicalKey === "base_pattern" || canonicalKey === "interface_pattern") {
+        const normalizedPattern = normalizeSliceProcessKey(text);
+        if (normalizedPattern === "auto") return "default";
+      }
+      if (canonicalKey === "brim_type") {
+        const normalizedBrimType = normalizeSliceProcessBrimType(text);
+        if (normalizedBrimType) return normalizedBrimType;
+      }
+      if (canonicalKey === "prime_tower_brim_width") {
+        const normalizedPrimeTowerBrimWidth = normalizeSliceProcessKey(text);
+        if (text === "-1" || normalizedPrimeTowerBrimWidth === "auto") return "auto";
       }
       if (canonicalKey === "order_of_walls") {
         const normalizedOrder = normalizeSliceProcessOrderOfWalls(text);
@@ -5694,6 +5723,8 @@
     support_remove_small_overhangs: "remove_small_overhangs",
     support_filament_1: "support_filament_raft_base",
     support_filament_2: "support_filament_raft_interface",
+    support_filament: "support_filament_raft_base",
+    support_interface_filament: "support_filament_raft_interface",
     support_raft_base_filament: "support_filament_raft_base",
     support_raft_interface_filament: "support_filament_raft_interface",
     support_base_pattern: "base_pattern",
@@ -5702,9 +5733,16 @@
     support_interface_bottom_layers: "bottom_interface_layers",
     support_interface_pattern: "interface_pattern",
     support_interface_top_spacing: "top_interface_spacing",
+    support_top_z_distance: "top_z_distance",
+    support_bottom_z_distance: "bottom_z_distance",
+    support_ironing_enable: "enable_support_ironing",
+    support_interface_ironing: "enable_support_ironing",
+    support_ironing_line_spacing: "support_ironing_spacing",
+    support_expansion: "normal_support_expansion",
     support_xy_distance: "support_object_xy_distance",
     support_first_layer_gap: "support_object_first_layer_gap",
     support_z_overrides_xy: "z_overrides_xy",
+    bridge_no_support: "dont_support_bridges",
     support_independent_layer_height: "independent_support_layer_height",
     skirt_line_count: "skirt_loops",
     skirt_loop_count: "skirt_loops",
@@ -5714,6 +5752,9 @@
     prime_tower_enable: "enable_prime_tower",
     prime_tower: "enable_prime_tower",
     wipe_tower: "enable_prime_tower",
+    prime_tower_enable_framework: "enable_tower_interface_features",
+    prime_tower_interface: "enable_tower_interface_features",
+    is_prime_tower_interface: "enable_tower_interface_features",
     purge_into_infill: "purge_into_objects_infill",
     purge_into_support: "purge_into_objects_support",
     flush_into_infill: "purge_into_objects_infill",
@@ -5863,14 +5904,21 @@
     support_on_build_plate_only: false,
     support_critical_regions_only: false,
     remove_small_overhangs: true,
+    enable_support_ironing: false,
+    support_ironing_pattern: "zig-zag",
+    support_ironing_speed: 30,
+    support_ironing_flow: 10,
+    support_ironing_spacing: 0.15,
+    support_ironing_inset: 0,
+    support_ironing_direction: 0,
     raft_layers: 0,
     support_filament_raft_base: "default",
     support_filament_raft_interface: "default",
     initial_layer_density: 90,
-    initial_layer_expansion: 3,
+    initial_layer_expansion: -1,
     support_wall_loops: -1,
-    top_z_distance: 0.16,
-    bottom_z_distance: 0.16,
+    top_z_distance: 0.2,
+    bottom_z_distance: 0.2,
     base_pattern: "default",
     base_pattern_spacing: 2.5,
     pattern_angle: 0,
@@ -5882,6 +5930,7 @@
     support_object_xy_distance: 0.35,
     z_overrides_xy: false,
     support_object_first_layer_gap: 0.2,
+    max_bridge_length: 0,
     dont_support_bridges: false,
     independent_support_layer_height: true,
     skirt_loops: 0,
@@ -5900,6 +5949,7 @@
     prime_tower_extra_rib_length: 0,
     prime_tower_rib_width: 8,
     prime_tower_fillet_wall: true,
+    enable_tower_interface_features: true,
     purge_into_objects_infill: false,
     purge_into_objects_support: true,
     slicing_mode: "regular",
@@ -5941,6 +5991,7 @@
     sparse_infill_acceleration: [50, 75, 100],
     support_type: ["tree(auto)", "normal(auto)"],
     support_style: [...SLICE_SUPPORT_STYLE_ALL_VALUES],
+    support_ironing_pattern: ["rectilinear", "zig-zag"],
     support_filament_raft_base: ["default"],
     support_filament_raft_interface: ["default"],
     base_pattern: ["default", "rectilinear", "grid", "concentric", "honeycomb"],
@@ -6129,6 +6180,13 @@
     support_critical_regions: "Support critical regions only",
     remove_small_overhangs: "Remove small overhangs",
     support_remove_small_overhangs: "Remove small overhangs",
+    enable_support_ironing: "Enable ironing support interface",
+    support_ironing_pattern: "Support ironing pattern",
+    support_ironing_speed: "Support ironing speed",
+    support_ironing_flow: "Support ironing flow",
+    support_ironing_spacing: "Support ironing line spacing",
+    support_ironing_inset: "Support ironing inset",
+    support_ironing_direction: "Support ironing direction",
     raft_layers: "Raft layers",
     support_filament_raft_base: "Support/raft base",
     support_filament_raft_interface: "Support/raft interface",
@@ -6152,13 +6210,14 @@
     support_interface_pattern: "Interface pattern",
     top_interface_spacing: "Top interface spacing",
     support_interface_top_spacing: "Top interface spacing",
-    normal_support_expansion: "Normal Support expansion",
+    normal_support_expansion: "Support expansion",
     support_object_xy_distance: "Support/object xy distance",
     support_xy_distance: "Support/object xy distance",
     z_overrides_xy: "Z overrides X/Y",
     support_z_overrides_xy: "Z overrides X/Y",
     support_object_first_layer_gap: "Support/object first layer gap",
     support_first_layer_gap: "Support/object first layer gap",
+    max_bridge_length: "Max bridge length",
     dont_support_bridges: "Don't support bridges",
     independent_support_layer_height: "Independent support layer height",
     support_independent_layer_height: "Independent support layer height",
@@ -6186,6 +6245,8 @@
     prime_tower_extra_rib_length: "Extra rib length",
     prime_tower_rib_width: "Rib width",
     prime_tower_fillet_wall: "Fillet wall",
+    enable_tower_interface_features: "Enable tower interface features",
+    prime_tower_enable_framework: "Enable tower interface features",
     purge_into_objects_infill: "Purge into objects' infill",
     purge_into_infill: "Purge into objects' infill",
     flush_into_infill: "Purge into objects' infill",
@@ -6405,6 +6466,14 @@
     remove_small_overhangs: 70,
     support_remove_small_overhangs: 70,
 
+    enable_support_ironing: 10,
+    support_ironing_pattern: 20,
+    support_ironing_speed: 30,
+    support_ironing_flow: 40,
+    support_ironing_spacing: 50,
+    support_ironing_inset: 60,
+    support_ironing_direction: 70,
+
     raft_layers: 10,
 
     support_filament_raft_base: 10,
@@ -6437,6 +6506,7 @@
     support_z_overrides_xy: 150,
     support_object_first_layer_gap: 160,
     support_first_layer_gap: 160,
+    max_bridge_length: 170,
     dont_support_bridges: 170,
     independent_support_layer_height: 180,
     support_independent_layer_height: 180,
@@ -6447,6 +6517,7 @@
     skirt_line_count: 10,
     skirt_loop_count: 10,
     skirt_height: 20,
+    skirt_distance: 25,
     brim_type: 30,
     brim_width: 40,
     brim_object_gap: 50,
@@ -6468,6 +6539,8 @@
     prime_tower_extra_rib_length: 90,
     prime_tower_rib_width: 100,
     prime_tower_fillet_wall: 110,
+    enable_tower_interface_features: 120,
+    prime_tower_enable_framework: 120,
 
     purge_into_objects_infill: 10,
     purge_into_infill: 10,
@@ -6578,16 +6651,22 @@
       if (normalizedValue === "honeycomb") return "Honeycomb";
     }
 
+    if (canonical === "support_ironing_pattern") {
+      if (normalizedValue === "rectilinear") return "Rectilinear";
+      if (normalizedValue === "concentric") return "Concentric";
+      if (normalizedValue === "zig_zag" || normalizedValue === "zigzag") return "Zig zag";
+    }
+
     if (canonical === "brim_type") {
       if (normalizedValue === "auto") return "Auto";
       if (normalizedValue === "outer_only") return "Outer only";
       if (normalizedValue === "inner_only") return "Inner only";
       if (normalizedValue === "outer_and_inner" || normalizedValue === "all") return "Outer and inner";
-      if (normalizedValue === "none" || normalizedValue === "no_brim" || normalizedValue === "off") return "None";
+      if (normalizedValue === "none" || normalizedValue === "no_brim" || normalizedValue === "off") return "No-brim";
     }
 
     if (canonical === "prime_tower_brim_width") {
-      if (normalizedValue === "auto") return "Auto";
+      if (normalizedValue === "auto" || String(optionValue == null ? "" : optionValue).trim() === "-1") return "Auto";
     }
 
     if (canonical === "slicing_mode") {
@@ -6759,6 +6838,74 @@
     return false;
   }
 
+  function isSliceProcessSupportIroningEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("enable_support_ironing", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessKey(raw);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function isSliceProcessPrimeTowerRibWallEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("prime_tower_rib_wall", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessKey(raw);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function isSliceProcessBrimWidthEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("brim_type", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessBrimType(raw);
+      if (!normalized || normalized === "auto" || normalized === "none") {
+        return false;
+      }
+      return true;
+    }
+    return true;
+  }
+
+  function isSliceProcessSkirtEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("skirt_loops", base, overrides);
+    if (typeof raw === "number") return raw >= 1;
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "string") {
+      const text = raw.trim();
+      if (!text) return false;
+      if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) {
+        const n = Number(text);
+        return Number.isFinite(n) && n >= 1;
+      }
+      const normalized = normalizeSliceProcessKey(text);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
   function isSliceProcessScarfOverrideEnabled(base, overrides) {
     const raw = sliceProcessCurrentValueByCanonicalKey("override_filament_scarf_seam_setting", base, overrides);
     if (typeof raw === "boolean") return raw;
@@ -6836,10 +6983,33 @@
     return !!mode && mode !== "none";
   }
 
+  function isSliceProcessRaftEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("raft_layers", base, overrides);
+    if (typeof raw === "number") return raw >= 1;
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "string") {
+      const text = raw.trim();
+      if (!text) return false;
+      if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) {
+        const n = Number(text);
+        return Number.isFinite(n) && n >= 1;
+      }
+      const normalized = normalizeSliceProcessKey(text);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
   function shouldRenderSliceProcessSettingEntry(entry, base, overrides) {
     if (!entry || !entry.category) return true;
     const sectionName = String(entry.category.section || "");
     const canonical = canonicalSliceProcessKey(entry.key);
+    const raftEnabled = isSliceProcessRaftEnabled(base, overrides);
 
     // Hide generic strength fallback rows; Bambu UI only shows curated
     // strength groups (Walls, Top/bottom shells, Sparse infill, Advanced).
@@ -6996,6 +7166,62 @@
       }
     }
 
+    if (sectionName === "Raft" && entry.category && entry.category.tab === "support") {
+      if (canonical === "raft_layers") return true;
+      if (canonical === "top_z_distance") return raftEnabled;
+      return false;
+    }
+
+    if (sectionName === "Support ironing" && entry.category && entry.category.tab === "support") {
+      const allowedSupportIroningKeys = new Set([
+        "enable_support_ironing",
+        "support_ironing_pattern",
+        "support_ironing_speed",
+        "support_ironing_flow",
+        "support_ironing_spacing",
+        "support_ironing_inset",
+        "support_ironing_direction",
+      ]);
+      if (!allowedSupportIroningKeys.has(canonical)) {
+        return false;
+      }
+      if (canonical === "enable_support_ironing") {
+        return true;
+      }
+      if (!isSliceProcessSupportEnabled(base, overrides)) {
+        return false;
+      }
+      return isSliceProcessSupportIroningEnabled(base, overrides);
+    }
+
+    if (sectionName === "Advanced" && entry.category && entry.category.tab === "support") {
+      const allowedSupportAdvancedKeys = new Set([
+        "initial_layer_density",
+        "initial_layer_expansion",
+        "support_wall_loops",
+        "top_z_distance",
+        "bottom_z_distance",
+        "base_pattern",
+        "base_pattern_spacing",
+        "pattern_angle",
+        "top_interface_layers",
+        "interface_pattern",
+        "top_interface_spacing",
+        "normal_support_expansion",
+        "support_object_xy_distance",
+        "z_overrides_xy",
+        "support_object_first_layer_gap",
+        "max_bridge_length",
+        "independent_support_layer_height",
+      ]);
+      if (canonical === "top_z_distance" && raftEnabled) {
+        return false;
+      }
+      if (!allowedSupportAdvancedKeys.has(canonical)) {
+        return false;
+      }
+    }
+
     return true;
   }
 
@@ -7039,10 +7265,10 @@
     if (processKeyMatches(normalized, [/length_of_sparse_infill_anchor/, /maximum_length_of_sparse_infill_anchor/, /sparse_infill_anchor_length/])) {
       return "mm or %";
     }
-    if (normalized === "support_wall_loops") return "loops";
     if (processKeyMatches(normalized, [/^raft_layers$/, /^top_interface_layers$/, /^bottom_interface_layers$/, /^support_interface_top_layers$/, /^support_interface_bottom_layers$/])) {
       return "layers";
     }
+    if (processKeyMatches(normalized, [/^support_ironing_direction$/])) return "°";
     if (processKeyMatches(normalized, [/small_perimeter_speed/, /vertical_shell_speed/])) return "mm/s or %";
     if (processKeyMatches(normalized, [/sparse_infill_acceleration/, /infill_acceleration/, /internal_infill_acceleration/])) return "mm/s² or %";
     if (processKeyMatches(normalized, [/accel/, /acceleration/])) return "mm/s²";
@@ -7062,6 +7288,10 @@
 
   function sliceProcessSettingCategory(key) {
     const normalized = canonicalSliceProcessKey(key);
+
+    if (processKeyMatches(normalized, [/^enable_support_ironing$/, /^support_ironing_pattern$/, /^support_ironing_speed$/, /^support_ironing_flow$/, /^support_ironing_spacing$/, /^support_ironing_inset$/, /^support_ironing_direction$/])) {
+      return { tab: "support", section: "Support ironing", sectionOrder: 35 };
+    }
 
     if (processKeyMatches(normalized, [/^layer_height$/, /^initial_layer_(print_)?height$/, /^first_layer_height$/])) {
       return { tab: "quality", section: "Layer height", sectionOrder: 10 };
@@ -7101,11 +7331,11 @@
       return { tab: "speed", section: "Acceleration", sectionOrder: 40 };
     }
 
-    if (processKeyMatches(normalized, [/^skirt_loops$/, /^skirt_line_count$/, /^skirt_loop_count$/, /^skirt_height$/, /^brim_type$/, /^brim_width$/, /^brim_object_gap$/, /^brim_gap$/, /^brim_separation$/, /^brim_object_distance$/])) {
+    if (processKeyMatches(normalized, [/^skirt_loops$/, /^skirt_line_count$/, /^skirt_loop_count$/, /^skirt_height$/, /^skirt_distance$/, /^brim_type$/, /^brim_width$/, /^brim_object_gap$/, /^brim_gap$/, /^brim_separation$/, /^brim_object_distance$/])) {
       return { tab: "others", section: "Bed adhesion", sectionOrder: 10 };
     }
 
-    if (processKeyMatches(normalized, [/^enable_prime_tower$/, /^prime_tower_enable$/, /^prime_tower$/, /^wipe_tower$/, /^prime_tower_skip_points$/, /^prime_tower_internal_ribs$/, /^prime_tower_width$/, /^prime_tower_max_speed$/, /^prime_tower_brim_width$/, /^prime_tower_infill_gap$/, /^prime_tower_rib_wall$/, /^prime_tower_extra_rib_length$/, /^prime_tower_rib_width$/, /^prime_tower_fillet_wall$/])) {
+    if (processKeyMatches(normalized, [/^enable_prime_tower$/, /^prime_tower_enable$/, /^prime_tower$/, /^wipe_tower$/, /^prime_tower_skip_points$/, /^prime_tower_internal_ribs$/, /^prime_tower_width$/, /^prime_tower_max_speed$/, /^prime_tower_brim_width$/, /^prime_tower_infill_gap$/, /^prime_tower_rib_wall$/, /^prime_tower_extra_rib_length$/, /^prime_tower_rib_width$/, /^prime_tower_fillet_wall$/, /^enable_tower_interface_features$/])) {
       return { tab: "others", section: "Prime tower", sectionOrder: 20 };
     }
 
@@ -7145,7 +7375,7 @@
       return { tab: "support", section: "Filament for Supports", sectionOrder: 30 };
     }
 
-    if (processKeyMatches(normalized, [/^initial_layer_density$/, /^initial_layer_expansion$/, /^support_wall_loops$/, /^top_z_distance$/, /^bottom_z_distance$/, /^base_pattern$/, /^support_base_pattern$/, /^base_pattern_spacing$/, /^support_base_pattern_spacing$/, /^pattern_angle$/, /^top_interface_layers$/, /^support_interface_top_layers$/, /^bottom_interface_layers$/, /^support_interface_bottom_layers$/, /^interface_pattern$/, /^support_interface_pattern$/, /^top_interface_spacing$/, /^support_interface_top_spacing$/, /^normal_support_expansion$/, /^support_object_xy_distance$/, /^support_xy_distance$/, /^z_overrides_xy$/, /^support_z_overrides_xy$/, /^support_object_first_layer_gap$/, /^support_first_layer_gap$/, /^dont_support_bridges$/, /^independent_support_layer_height$/, /^support_independent_layer_height$/])) {
+    if (processKeyMatches(normalized, [/^initial_layer_density$/, /^initial_layer_expansion$/, /^support_wall_loops$/, /^top_z_distance$/, /^bottom_z_distance$/, /^base_pattern$/, /^support_base_pattern$/, /^base_pattern_spacing$/, /^support_base_pattern_spacing$/, /^pattern_angle$/, /^top_interface_layers$/, /^support_interface_top_layers$/, /^bottom_interface_layers$/, /^support_interface_bottom_layers$/, /^interface_pattern$/, /^support_interface_pattern$/, /^top_interface_spacing$/, /^support_interface_top_spacing$/, /^normal_support_expansion$/, /^support_object_xy_distance$/, /^support_xy_distance$/, /^z_overrides_xy$/, /^support_z_overrides_xy$/, /^support_object_first_layer_gap$/, /^support_first_layer_gap$/, /^max_bridge_length$/, /^dont_support_bridges$/, /^independent_support_layer_height$/, /^support_independent_layer_height$/])) {
       return { tab: "support", section: "Advanced", sectionOrder: 40 };
     }
 
@@ -7197,7 +7427,7 @@
         return SLICE_PROCESS_SPEED_ROW_ORDER[normalized];
       }
     }
-    if (section === "Support" || section === "Raft" || section === "Filament for Supports" || section === "Advanced") {
+    if (section === "Support" || section === "Raft" || section === "Filament for Supports" || section === "Support ironing" || section === "Advanced") {
       if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_SUPPORT_ROW_ORDER, normalized)) {
         return SLICE_PROCESS_SUPPORT_ROW_ORDER[normalized];
       }
@@ -7257,6 +7487,9 @@
     const normalizedKey = normalizeSliceProcessKey(key);
     const isSupportStyleField = canonical === "support_style"
       || (normalizedKey === "style" && meta && meta.category && meta.category.tab === "support");
+    const isSupportFilamentField = canonical === "support_filament_raft_base"
+      || canonical === "support_filament_raft_interface";
+    const isRaftLayersField = canonical === "raft_layers";
     const supportStyleValues = isSupportStyleField
       ? supportStyleValuesForType(currentSliceProcessSupportType())
       : [];
@@ -7279,7 +7512,7 @@
     rawOptions.forEach(pushOption);
     pushOption(baseValue);
     if (hasOverride) pushOption(currentValue);
-    const forceSelectInput = isSupportStyleField;
+    const forceSelectInput = isSupportStyleField || isSupportFilamentField;
     const forcePlainInput = (meta && meta.category && meta.category.tab === "speed") || new Set([
       "bridge_flow",
       "top_solid_infill_flow_ratio",
@@ -7293,7 +7526,7 @@
       "bottom_shell_layers",
       "bottom_shell_thickness",
       "bottom_paint_penetration_layers",
-    ]).has(canonical);
+    ]).has(canonical) || isRaftLayersField;
 
     const unitHtml = unit ? `<span class="slice-process-setting-unit">${esc(unit)}</span>` : "";
     if (!forcePlainInput && (forceSelectInput || mergedOptions.length > 1)) {
@@ -7320,12 +7553,15 @@
 
     const inputType = valueType === "number" ? "number" : "text";
     const valueText = valueType === "number" ? String(currentValue) : sliceProcessValueToText(currentValue);
-    const stepAttr = valueType === "number" ? " step=\"any\"" : "";
+    const stepAttr = valueType === "number"
+      ? (isRaftLayersField ? " step=\"1\"" : " step=\"any\"")
+      : "";
+    const minAttr = valueType === "number" && isRaftLayersField ? " min=\"0\"" : "";
     return `
       <div class="slice-process-setting-row ${hasOverride ? "changed" : ""}${disabled ? " is-disabled" : ""}">
         <div class="slice-process-setting-key">${labelEsc}</div>
         <div class="slice-process-setting-control ${unit ? "has-unit" : ""}">
-          <input class="input" type="${inputType}"${stepAttr} data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}" value="${esc(valueText)}"${disabledAttr}>
+          <input class="input" type="${inputType}"${stepAttr}${minAttr} data-slice-setting-key="${keyEsc}" data-slice-setting-type="${valueType}" value="${esc(valueText)}"${disabledAttr}>
           ${unitHtml}
         </div>
       </div>
@@ -7373,13 +7609,19 @@
     });
     const keys = Array.from(canonicalToKey.values()).sort((a, b) => a.localeCompare(b, "da"));
 
+    const raftLayersEnabled = isSliceProcessRaftEnabled(base, overrides);
     const categorizedAll = keys.map((key) => {
-      const category = sliceProcessSettingCategory(key);
+      const canonical = canonicalSliceProcessKey(key);
+      let category = sliceProcessSettingCategory(key);
+      if (activeTab === "support" && canonical === "top_z_distance" && raftLayersEnabled) {
+        category = { tab: "support", section: "Raft", sectionOrder: 20 };
+      }
+      const label = sliceProcessSettingLabel(key);
       return {
         key,
         category,
-        label: sliceProcessSettingLabel(key),
-        labelLower: sliceProcessSettingLabel(key).toLowerCase(),
+        label,
+        labelLower: label.toLowerCase(),
       };
     });
     const allTabCount = categorizedAll.filter((entry) => entry.category.tab === activeTab).length;
@@ -7398,6 +7640,9 @@
       els.sliceProcessSettingsList.innerHTML = `<div class="slice-process-setting-empty hint">Ingen settings matcher denne fane/søgning.</div>`;
     } else {
       const supportEnabled = isSliceProcessSupportEnabled(base, overrides);
+      const skirtEnabled = isSliceProcessSkirtEnabled(base, overrides);
+      const brimWidthEnabled = isSliceProcessBrimWidthEnabled(base, overrides);
+      const primeTowerRibWallEnabled = isSliceProcessPrimeTowerRibWallEnabled(base, overrides);
       const autoCircleCompensationEnabled = isSliceProcessAutoCircleCompensationEnabled(base, overrides);
       const sorted = filtered
         .map((entry) => {
@@ -7430,10 +7675,23 @@
             const currentValue = hasOverride ? overrides[key] : baseValue;
             const valueType = sliceProcessValueInputType(baseValue);
             const canonical = canonicalSliceProcessKey(key);
+            let rowLabel = entry.label;
+            if (activeTab === "support" && entry.category.section === "Raft" && canonical === "top_z_distance") {
+              rowLabel = "Raft contact Z distance";
+            }
             const disableSupportRow = activeTab === "support"
-              && entry.category.section === "Support"
               && !supportEnabled
-              && canonical !== "enable_support";
+              && canonical !== "enable_support"
+              && entry.category.section !== "Raft";
+            const disableSkirtDependentRow = activeTab === "others"
+              && !skirtEnabled
+              && (canonical === "skirt_height" || canonical === "skirt_distance");
+            const disableBrimWidthRow = activeTab === "others"
+              && canonical === "brim_width"
+              && !brimWidthEnabled;
+            const disablePrimeTowerWidthRow = activeTab === "others"
+              && canonical === "prime_tower_width"
+              && primeTowerRibWallEnabled;
             const disablePrecisionCircleCompRow = entry.category.section === "Precision"
               && autoCircleCompensationEnabled
               && (canonical === "xy_hole_compensation" || canonical === "xy_contour_compensation");
@@ -7445,9 +7703,9 @@
               valueType,
               optionsByKey,
               {
-                label: entry.label,
+                label: rowLabel,
                 category: entry.category,
-                disabled: disableSupportRow || disablePrecisionCircleCompRow,
+                disabled: disableSupportRow || disableSkirtDependentRow || disableBrimWidthRow || disablePrimeTowerWidthRow || disablePrecisionCircleCompRow,
               }
             );
           })
@@ -7535,14 +7793,45 @@
       ? state.sliceProcessSettingsBase
       : {};
     if (!Object.prototype.hasOwnProperty.call(base, name)) return;
-    const next = parseSliceProcessOverrideByType(base[name], value, valueType);
     if (!state.sliceProcessSettingsOverrides || typeof state.sliceProcessSettingsOverrides !== "object") {
       state.sliceProcessSettingsOverrides = {};
     }
+    const overrides = state.sliceProcessSettingsOverrides;
+    let next = parseSliceProcessOverrideByType(base[name], value, valueType);
+    const canonical = canonicalSliceProcessKey(name);
+    if (canonical === "prime_tower_brim_width") {
+      const rawText = String(value == null ? "" : value).trim();
+      const normalized = normalizeSliceProcessKey(rawText);
+      if (rawText === "-1" || normalized === "auto") {
+        next = "auto";
+      } else if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(rawText)) {
+        const n = Number(rawText);
+        if (Number.isFinite(n)) {
+          next = n;
+        }
+      }
+    }
+    if (canonical === "enable_support_ironing" && !isSliceProcessSupportEnabled(base, overrides)) {
+      next = false;
+    }
+    if (canonical === "raft_layers") {
+      const n = Number(next);
+      next = Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+    }
     if (sliceProcessValueEquals(base[name], next)) {
-      delete state.sliceProcessSettingsOverrides[name];
+      delete overrides[name];
     } else {
-      state.sliceProcessSettingsOverrides[name] = next;
+      overrides[name] = next;
+    }
+    if (canonical === "enable_support" && !next) {
+      Object.keys(base).forEach((candidateKey) => {
+        if (canonicalSliceProcessKey(candidateKey) !== "enable_support_ironing") return;
+        if (sliceProcessValueEquals(base[candidateKey], false)) {
+          delete overrides[candidateKey];
+        } else {
+          overrides[candidateKey] = false;
+        }
+      });
     }
     renderSliceProcessSettingsList();
   }
