@@ -5639,12 +5639,14 @@
     support_line_width: 0.42,
     seam_position: "aligned",
     seam_placement_away_from_overhangs: false,
+    seam_gap: 15,
     smart_scarf_seam_application: true,
     scarf_application_angle_threshold: 155,
     scarf_around_entire_wall: false,
     scarf_steps: 10,
     scarf_joint_for_inner_walls: true,
     override_filament_scarf_seam_setting: false,
+    wipe_speed: 80,
     role_based_wipe_speed: true,
     slice_gap_closing_radius: 0.049,
     resolution: 0.012,
@@ -5845,12 +5847,14 @@
     support_line_width: "Support",
     seam_position: "Seam position",
     seam_placement_away_from_overhangs: "Seam placement away from overhangs (experimental)",
+    seam_gap: "Seam gap",
     smart_scarf_seam_application: "Smart scarf seam application",
     scarf_application_angle_threshold: "Scarf application angle threshold",
     scarf_around_entire_wall: "Scarf around entire wall",
     scarf_steps: "Scarf steps",
     scarf_joint_for_inner_walls: "Scarf joint for inner walls",
     override_filament_scarf_seam_setting: "Override filament scarf seam setting",
+    wipe_speed: "Wipe speed",
     role_based_wipe_speed: "Role-based wipe speed",
     slice_gap_closing_radius: "Slice gap closing radius",
     resolution: "Resolution",
@@ -6086,12 +6090,14 @@
     support_line_width: 80,
     seam_position: 10,
     seam_placement_away_from_overhangs: 20,
+    seam_gap: 25,
     smart_scarf_seam_application: 30,
     scarf_application_angle_threshold: 40,
     scarf_around_entire_wall: 50,
     scarf_steps: 60,
     scarf_joint_for_inner_walls: 70,
     override_filament_scarf_seam_setting: 80,
+    wipe_speed: 85,
     role_based_wipe_speed: 90,
     slice_gap_closing_radius: 10,
     resolution: 20,
@@ -6551,6 +6557,47 @@
     const sectionName = String(entry.category.section || "");
     const canonical = canonicalSliceProcessKey(entry.key);
 
+    if (sectionName === "Line width") {
+      const allowedLineWidthKeys = new Set([
+        "line_width",
+        "initial_layer_line_width",
+        "outer_wall_line_width",
+        "inner_wall_line_width",
+        "top_surface_line_width",
+        "sparse_infill_line_width",
+        "internal_solid_infill_line_width",
+        "support_line_width",
+      ]);
+      if (!allowedLineWidthKeys.has(canonical)) {
+        return false;
+      }
+    }
+
+    if (sectionName === "Seam") {
+      const allowedSeamKeys = new Set([
+        "seam_position",
+        "seam_placement_away_from_overhangs",
+        "seam_gap",
+        "smart_scarf_seam_application",
+        "scarf_application_angle_threshold",
+        "scarf_around_entire_wall",
+        "scarf_steps",
+        "scarf_joint_for_inner_walls",
+        "override_filament_scarf_seam_setting",
+        "wipe_speed",
+        "role_based_wipe_speed",
+      ]);
+      if (!allowedSeamKeys.has(canonical)) {
+        return false;
+      }
+    }
+
+    // Match Bambu UI: adaptive layer height is not shown in the standard
+    // Layer height panel for these profiles.
+    if (canonical === "adaptive_layer_height") {
+      return false;
+    }
+
     if (sectionName === "Ironing") {
       if (canonical === "ironing_type" || canonical === "enable_ironing") return true;
       return !isSliceProcessIroningDisabled(base, overrides);
@@ -6585,9 +6632,11 @@
 
   function sliceProcessSettingUnit(key) {
     const normalized = normalizeSliceProcessKey(key);
+    const canonical = canonicalSliceProcessKey(key);
     if (normalized === "skirt_loops") return "loops";
     if (normalized === "skirt_height") return "layers";
     if (normalized === "prime_tower_infill_gap") return "%";
+    if (canonical === "seam_gap" || canonical === "wipe_speed") return "%";
     if (processKeyMatches(normalized, [/minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/])) return "mm2";
     if (processKeyMatches(normalized, [/length_of_sparse_infill_anchor/, /maximum_length_of_sparse_infill_anchor/, /sparse_infill_anchor_length/])) {
       return "mm or %";
@@ -6616,13 +6665,13 @@
   function sliceProcessSettingCategory(key) {
     const normalized = canonicalSliceProcessKey(key);
 
-    if (processKeyMatches(normalized, [/layer_height/, /^initial_layer_(print_)?height$/, /^first_layer_height$/])) {
+    if (processKeyMatches(normalized, [/^layer_height$/, /^initial_layer_(print_)?height$/, /^first_layer_height$/])) {
       return { tab: "quality", section: "Layer height", sectionOrder: 10 };
     }
     if (processKeyMatches(normalized, [/line_width/, /extrusion_width/])) {
       return { tab: "quality", section: "Line width", sectionOrder: 20 };
     }
-    if (processKeyMatches(normalized, [/seam/, /scarf/, /role_based_wipe/])) {
+    if (processKeyMatches(normalized, [/seam/, /scarf/, /role_based_wipe/, /(^|_)wipe_speed($|_)/])) {
       return { tab: "quality", section: "Seam", sectionOrder: 30 };
     }
     if (processKeyMatches(normalized, [/slice_gap_closing_radius/, /resolution/, /arc_fitting/, /_hole_compensation$/, /_contour_compensation$/, /elephant_foot_compensation/, /precise_z_height/, /precision/, /compensation/])) {
@@ -8228,6 +8277,7 @@
     const axisGrid = new THREE.GridHelper(700, 14, 0x2d4964, 0x1a2d3f);
     axisGrid.rotation.x = Math.PI / 2;
     axisGrid.position.z = -0.2;
+    axisGrid.visible = false;
     scene.add(axisGrid);
 
     const bedMesh = new THREE.Mesh(
