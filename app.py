@@ -3939,6 +3939,24 @@ def _normalize_slice_print_nozzle(value: Any) -> str:
     return ""
 
 
+def _apply_slice_print_nozzle_mapping_overrides(overrides: Any, print_nozzle: Any) -> dict[str, Any]:
+    normalized_overrides = _normalize_slice_process_overrides(overrides or {})
+    normalized_nozzle = _normalize_slice_print_nozzle(print_nozzle)
+    if not normalized_nozzle:
+        return normalized_overrides
+
+    extruder_id = 2 if normalized_nozzle == "right" else 1
+    mapped = dict(normalized_overrides)
+    mapped["print_extruder_id"] = extruder_id
+    mapped["printer_extruder_id"] = extruder_id
+    # Make the H2D side choice explicit to Bambu's multi-extruder CLI path.
+    mapped["filament_map_mode"] = "Manual"
+    mapped["filament_map"] = str(extruder_id)
+    mapped["filament_nozzle_map"] = str(max(0, extruder_id - 1))
+    mapped["filament_volume_map"] = "0"
+    return mapped
+
+
 def _slice_printer_uses_dual_nozzle(profile_name: Any) -> bool:
     raw = str(profile_name or "").strip().lower()
     if not raw:
@@ -16392,8 +16410,7 @@ def api_file_slice(file_id: int):
         process_overrides.pop("print_extruder_id", None)
         process_overrides.pop("printer_extruder_id", None)
     if print_nozzle:
-        process_overrides = dict(process_overrides)
-        process_overrides["print_extruder_id"] = 2 if print_nozzle == "right" else 1
+        process_overrides = _apply_slice_print_nozzle_mapping_overrides(process_overrides, print_nozzle)
 
     with closing(get_conn()) as conn:
         row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
