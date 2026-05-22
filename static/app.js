@@ -5343,18 +5343,80 @@
     if (/^(prime_tower|wipe_tower|prime_tower_skip_points|prime_tower_internal_ribs|prime_tower_rib_wall|prime_tower_fillet_wall|purge_into_objects_infill|purge_into_objects_support|purge_into_infill|purge_into_support|flush_into_infill|flush_into_support|spiral_vase|reduce_infill_retraction)$/.test(normalized)) {
       return true;
     }
-    return /(^|_)(enable|enabled|is|has|use|only|avoid|detect|combination|embedding|slow_down|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_top_surfaces|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental|remove|dont|independent|z_overrides)($|_)/.test(normalized);
+    return /(^|_)(enable|enabled|is|has|use|only|avoid|detect|combination|embedding|slow_down|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental|detect_overhang_wall|remove|dont|independent|z_overrides)($|_)/.test(normalized);
+  }
+
+  function normalizeSliceProcessIroningType(value) {
+    const normalized = normalizeSliceProcessKey(value);
+    if (!normalized) return "";
+    if (normalized === "none" || normalized === "no_ironing" || normalized === "off" || normalized === "false" || normalized === "0") {
+      return "none";
+    }
+    if (normalized === "top" || normalized === "top_surfaces") {
+      return "top";
+    }
+    if (normalized === "topmost" || normalized === "topmost_surface" || normalized === "topmost_surfaces") {
+      return "topmost_surface";
+    }
+    if (normalized === "all_top_surfaces" || normalized === "all_solid_layer" || normalized === "all_solid_layers") {
+      return "all_top_surfaces";
+    }
+    return normalized;
+  }
+
+  function normalizeSliceProcessOrderOfWalls(value) {
+    const normalized = normalizeSliceProcessKey(value);
+    if (!normalized) return "";
+    if (normalized === "inner_outer" || normalized === "inner_wall_outer_wall_infill" || normalized === "inner_wall_outer_wall") {
+      return "inner_outer";
+    }
+    if (normalized === "outer_inner" || normalized === "outer_wall_inner_wall_infill" || normalized === "outer_wall_inner_wall") {
+      return "outer_inner";
+    }
+    if (normalized === "inner_outer_inner" || normalized === "inner_wall_outer_wall_inner_wall_infill") {
+      return "inner_outer_inner";
+    }
+    return normalized;
+  }
+
+  function normalizeSliceProcessOneWallTopMode(value) {
+    const normalized = normalizeSliceProcessKey(value);
+    if (!normalized) return "";
+    if (normalized === "0" || normalized === "none" || normalized === "off" || normalized === "false" || normalized === "disabled") {
+      return "none";
+    }
+    if (normalized === "1" || normalized === "top_surfaces" || normalized === "top_surface" || normalized === "top" || normalized === "on" || normalized === "true" || normalized === "enabled") {
+      return "top_surfaces";
+    }
+    if (normalized === "2" || normalized === "all_top_surfaces" || normalized === "all_surfaces" || normalized === "all") {
+      return "all_top_surfaces";
+    }
+    return normalized;
   }
 
   function normalizeSliceProcessSettingScalar(value, key = "") {
+    const canonicalKey = canonicalSliceProcessKey(key);
+    const normalizedKey = normalizeSliceProcessKey(key);
+
+    if (Array.isArray(value)) {
+      if (!value.length) return "";
+      return normalizeSliceProcessSettingScalar(value[0], key);
+    }
     if (typeof value === "boolean") return value;
-    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      if (canonicalKey === "only_one_wall_on_top_surfaces") {
+        const normalizedTopWallMode = normalizeSliceProcessOneWallTopMode(String(value));
+        if (normalizedTopWallMode) return normalizedTopWallMode;
+      }
+      if (sliceProcessKeyLooksBoolean(key) && (value === 0 || value === 1)) {
+        return value === 1;
+      }
+      return value;
+    }
     if (typeof value === "string") {
       const text = value.trim();
       if (!text) return "";
       const lower = text.toLowerCase();
-      const canonicalKey = canonicalSliceProcessKey(key);
-      const normalizedKey = normalizeSliceProcessKey(key);
 
       if (canonicalKey === "support_type") {
         const normalizedSupportType = normalizeSliceSupportType(text);
@@ -5363,6 +5425,27 @@
       if (canonicalKey === "support_style" || normalizedKey === "style") {
         const normalizedSupportStyle = normalizeSliceSupportStyle(text);
         if (normalizedSupportStyle) return normalizedSupportStyle;
+      }
+      if (canonicalKey === "order_of_walls") {
+        const normalizedOrder = normalizeSliceProcessOrderOfWalls(text);
+        if (normalizedOrder) return normalizedOrder;
+      }
+      if (canonicalKey === "only_one_wall_on_top_surfaces") {
+        const normalizedTopWallMode = normalizeSliceProcessOneWallTopMode(text);
+        if (normalizedTopWallMode) return normalizedTopWallMode;
+      }
+      if (canonicalKey === "avoid_crossing_wall") {
+        const normalizedBool = normalizeSliceProcessKey(text);
+        if (normalizedBool === "1" || normalizedBool === "true" || normalizedBool === "on" || normalizedBool === "yes" || normalizedBool === "enabled") {
+          return true;
+        }
+        if (normalizedBool === "0" || normalizedBool === "false" || normalizedBool === "off" || normalizedBool === "no" || normalizedBool === "disabled") {
+          return false;
+        }
+      }
+      if (canonicalKey === "ironing_type") {
+        const normalizedIroningType = normalizeSliceProcessIroningType(text);
+        if (normalizedIroningType) return normalizedIroningType;
       }
 
       if (lower === "true" || lower === "false") return lower === "true";
@@ -5527,6 +5610,7 @@
     initial_layer_print_height: "initial_layer_height",
     first_layer_height: "initial_layer_height",
     default_line_width: "line_width",
+    wall_infill_order: "order_of_walls",
     perimeter_generator: "wall_generator",
     perimeters: "wall_loops",
     wall_count: "wall_loops",
@@ -5582,11 +5666,16 @@
     support_buildplate_only: "support_on_build_plate_only",
     support_on_buildplate_only: "support_on_build_plate_only",
     support_critical_regions: "support_critical_regions_only",
+    only_one_wall_top: "only_one_wall_on_top_surfaces",
+    reduce_crossing_wall: "avoid_crossing_wall",
     scarf_angle_threshold: "scarf_application_angle_threshold",
     scarf_seam_type: "seam_slope_type",
     scarf_start_height: "seam_slope_start_height",
     scarf_slope_gap: "seam_slope_gap",
     scarf_length: "seam_slope_min_length",
+    enable_arc_fitting: "arc_fitting",
+    enable_circle_compensation: "auto_circle_contour_hole_compensation",
+    enable_precise_wall: "precise_wall",
     support_enable: "enable_support",
     enable_support_material: "enable_support",
     support_material: "enable_support",
@@ -5659,11 +5748,13 @@
     role_based_wipe_speed: true,
     slice_gap_closing_radius: 0.049,
     resolution: 0.012,
-    arc_fitting: false,
+    arc_fitting: true,
     xy_hole_compensation: 0,
     xy_contour_compensation: 0,
-    auto_circle_contour_hole_compensation: true,
+    auto_circle_contour_hole_compensation: false,
+    circle_compensation_manual_offset: 0,
     elephant_foot_compensation: 0.075,
+    precise_wall: false,
     precise_z_height: false,
     ironing_type: "none",
     ironing_pattern: "rectilinear",
@@ -5683,12 +5774,18 @@
     print_infill_first: false,
     bridge_flow: 1,
     thick_bridges: false,
-    only_one_wall_on_top_surfaces: false,
+    top_solid_infill_flow_ratio: 1,
+    initial_layer_flow_ratio: 1,
+    only_one_wall_on_top_surfaces: "top_surfaces",
+    top_area_threshold: 200,
     only_one_wall_on_first_layer: false,
-    smooth_speed_discontinuity_area: false,
+    detect_overhang_wall: true,
+    smooth_speed_discontinuity_area: true,
     smooth_coefficient: 150,
     avoid_crossing_wall: false,
-    smoothing_wall_speed_along_z_experimental: false,
+    max_travel_detour_distance: 0,
+    avoid_crossing_wall_includes_support: false,
+    smoothing_wall_speed_along_z_experimental: true,
     wall_loops: 2,
     embedding_wall_into_infill: false,
     detect_thin_wall: false,
@@ -5811,6 +5908,7 @@
     seam_position: ["aligned", "nearest", "rear", "random"],
     wall_generator: ["classic", "arachne"],
     order_of_walls: ["inner_outer", "outer_inner", "inner_outer_inner"],
+    only_one_wall_on_top_surfaces: ["none", "top_surfaces", "all_top_surfaces"],
     ironing_type: ["none", "top", "topmost_surface", "all_top_surfaces"],
     ironing_pattern: ["rectilinear", "concentric", "zig_zag"],
     ironing_flow: [10, 15, 20, 25, 30],
@@ -5872,12 +5970,16 @@
     slice_gap_closing_radius: "Slice gap closing radius",
     resolution: "Resolution",
     arc_fitting: "Arc fitting",
+    enable_arc_fitting: "Arc fitting",
     xy_hole_compensation: "X-Y hole compensation",
     x_y_hole_compensation: "X-Y hole compensation",
     xy_contour_compensation: "X-Y contour compensation",
     x_y_contour_compensation: "X-Y contour compensation",
     auto_circle_contour_hole_compensation: "Auto circle contour-hole compensation",
+    enable_circle_compensation: "Auto circle contour-hole compensation",
+    circle_compensation_manual_offset: "User Customized Offset",
     elephant_foot_compensation: "Elephant foot compensation",
+    precise_wall: "Precise wall",
     precise_z_height: "Precise Z height",
     ironing_type: "Ironing Type",
     ironing_pattern: "Ironing Pattern",
@@ -5899,14 +6001,23 @@
     minimum_feature_size: "Minimum feature size",
     min_feature_size: "Minimum feature size",
     order_of_walls: "Order of walls",
+    wall_infill_order: "Order of walls",
     print_infill_first: "Print infill first",
     bridge_flow: "Bridge flow",
     thick_bridges: "Thick bridges",
+    top_solid_infill_flow_ratio: "Top surface flow ratio",
+    initial_layer_flow_ratio: "Initial layer flow ratio",
     only_one_wall_on_top_surfaces: "Only one wall on top surfaces",
+    only_one_wall_top: "Only one wall on top surfaces",
+    top_area_threshold: "Top area threshold",
     only_one_wall_on_first_layer: "Only one wall on first layer",
+    detect_overhang_wall: "Detect overhang walls",
     smooth_speed_discontinuity_area: "Smooth speed discontinuity area",
     smooth_coefficient: "Smooth coefficient",
     avoid_crossing_wall: "Avoid crossing wall",
+    reduce_crossing_wall: "Avoid crossing wall",
+    max_travel_detour_distance: "Avoid crossing wall - Max detour length",
+    avoid_crossing_wall_includes_support: "Avoid crossing wall - Includes support",
     smoothing_wall_speed_along_z_experimental: "Smoothing wall speed along Z (experimental)",
     wall_loops: "Wall loops",
     wall_count: "Wall loops",
@@ -6124,7 +6235,9 @@
     xy_contour_compensation: 50,
     x_y_contour_compensation: 50,
     auto_circle_contour_hole_compensation: 60,
+    circle_compensation_manual_offset: 65,
     elephant_foot_compensation: 70,
+    precise_wall: 75,
     precise_z_height: 80,
     ironing_type: 10,
     ironing_pattern: 20,
@@ -6149,11 +6262,17 @@
     print_infill_first: 20,
     bridge_flow: 30,
     thick_bridges: 40,
+    top_solid_infill_flow_ratio: 45,
+    initial_layer_flow_ratio: 47,
     only_one_wall_on_top_surfaces: 50,
+    top_area_threshold: 55,
     only_one_wall_on_first_layer: 60,
+    detect_overhang_wall: 65,
     smooth_speed_discontinuity_area: 70,
     smooth_coefficient: 80,
     avoid_crossing_wall: 90,
+    max_travel_detour_distance: 95,
+    avoid_crossing_wall_includes_support: 96,
     smoothing_wall_speed_along_z_experimental: 100,
   };
 
@@ -6472,6 +6591,22 @@
       if (normalizedValue === "arachne") return "Arachne";
     }
 
+    if (canonical === "order_of_walls") {
+      if (normalizedValue === "inner_outer" || normalizedValue === "inner_wall_outer_wall_infill") return "inner/outer";
+      if (normalizedValue === "outer_inner" || normalizedValue === "outer_wall_inner_wall_infill") return "outer/inner";
+      if (normalizedValue === "inner_outer_inner" || normalizedValue === "inner_wall_outer_wall_inner_wall_infill") return "inner/outer/inner";
+    }
+
+    if (canonical === "only_one_wall_on_top_surfaces") {
+      if (normalizedValue === "none" || normalizedValue === "off" || normalizedValue === "false" || normalizedValue === "0") return "None";
+      if (normalizedValue === "top_surfaces" || normalizedValue === "top_surface" || normalizedValue === "top" || normalizedValue === "1") {
+        return "Top surfaces";
+      }
+      if (normalizedValue === "all_top_surfaces" || normalizedValue === "all_surfaces" || normalizedValue === "all" || normalizedValue === "2") {
+        return "All top surfaces";
+      }
+    }
+
     if (canonical === "ironing_type") {
       if (normalizedValue === "none" || normalizedValue === "no_ironing") return "No ironing";
       if (normalizedValue === "top" || normalizedValue === "top_surfaces") return "Top surfaces";
@@ -6585,6 +6720,51 @@
     return false;
   }
 
+  function isSliceProcessAutoCircleCompensationEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("auto_circle_contour_hole_compensation", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessKey(raw);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function isSliceProcessAvoidCrossingWallEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("avoid_crossing_wall", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessKey(raw);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
+  function currentSliceProcessOneWallTopMode(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("only_one_wall_on_top_surfaces", base, overrides);
+    if (typeof raw === "boolean") return raw ? "top_surfaces" : "none";
+    if (typeof raw === "number") return normalizeSliceProcessOneWallTopMode(String(raw));
+    if (typeof raw === "string") return normalizeSliceProcessOneWallTopMode(raw);
+    return "none";
+  }
+
+  function isSliceProcessOneWallTopEnabled(base, overrides) {
+    const mode = currentSliceProcessOneWallTopMode(base, overrides);
+    return !!mode && mode !== "none";
+  }
+
   function shouldRenderSliceProcessSettingEntry(entry, base, overrides) {
     if (!entry || !entry.category) return true;
     const sectionName = String(entry.category.section || "");
@@ -6639,6 +6819,64 @@
       }
     }
 
+    if (sectionName === "Precision") {
+      const allowedPrecisionKeys = new Set([
+        "slice_gap_closing_radius",
+        "resolution",
+        "arc_fitting",
+        "xy_hole_compensation",
+        "xy_contour_compensation",
+        "auto_circle_contour_hole_compensation",
+        "circle_compensation_manual_offset",
+        "elephant_foot_compensation",
+        "precise_wall",
+        "precise_z_height",
+      ]);
+      if (!allowedPrecisionKeys.has(canonical)) {
+        return false;
+      }
+
+      if (canonical === "circle_compensation_manual_offset" && !isSliceProcessAutoCircleCompensationEnabled(base, overrides)) {
+        return false;
+      }
+    }
+
+    if (sectionName === "Advanced" && entry.category && entry.category.tab === "quality") {
+      const allowedAdvancedKeys = new Set([
+        "order_of_walls",
+        "print_infill_first",
+        "bridge_flow",
+        "thick_bridges",
+        "top_solid_infill_flow_ratio",
+        "initial_layer_flow_ratio",
+        "only_one_wall_on_top_surfaces",
+        "top_area_threshold",
+        "only_one_wall_on_first_layer",
+        "detect_overhang_wall",
+        "smooth_speed_discontinuity_area",
+        "smooth_coefficient",
+        "avoid_crossing_wall",
+        "max_travel_detour_distance",
+        "avoid_crossing_wall_includes_support",
+        "smoothing_wall_speed_along_z_experimental",
+      ]);
+      if (!allowedAdvancedKeys.has(canonical)) {
+        return false;
+      }
+
+      if (canonical === "top_area_threshold" && !isSliceProcessOneWallTopEnabled(base, overrides)) {
+        return false;
+      }
+
+      const avoidCrossingDetailKeys = new Set([
+        "max_travel_detour_distance",
+        "avoid_crossing_wall_includes_support",
+      ]);
+      if (avoidCrossingDetailKeys.has(canonical) && !isSliceProcessAvoidCrossingWallEnabled(base, overrides)) {
+        return false;
+      }
+    }
+
     // Match Bambu UI: adaptive layer height is not shown in the standard
     // Layer height panel for these profiles.
     if (canonical === "adaptive_layer_height") {
@@ -6667,6 +6905,10 @@
     if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_LABEL_OVERRIDES, normalized)) {
       return SLICE_PROCESS_LABEL_OVERRIDES[normalized];
     }
+    const canonical = canonicalSliceProcessKey(key);
+    if (Object.prototype.hasOwnProperty.call(SLICE_PROCESS_LABEL_OVERRIDES, canonical)) {
+      return SLICE_PROCESS_LABEL_OVERRIDES[canonical];
+    }
     const words = normalized.replace(/_/g, " ").trim().split(/\s+/).filter(Boolean);
     if (!words.length) return String(key || "");
     return words.map((word, idx) => {
@@ -6683,6 +6925,9 @@
     if (normalized === "skirt_loops") return "loops";
     if (normalized === "skirt_height") return "layers";
     if (normalized === "prime_tower_infill_gap") return "%";
+    if (canonical === "bridge_flow" || canonical === "top_solid_infill_flow_ratio" || canonical === "initial_layer_flow_ratio") return "";
+    if (canonical === "top_area_threshold") return "%";
+    if (canonical === "max_travel_detour_distance") return "mm or %";
     if (canonical === "seam_gap" || canonical === "wipe_speed") return "%";
     if (canonical === "seam_slope_start_height" || canonical === "seam_slope_gap") return "mm/%";
     if (processKeyMatches(normalized, [/minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/])) return "mm2";
@@ -6731,7 +6976,7 @@
     if (processKeyMatches(normalized, [/wall_generator/, /perimeter_generator/, /wall_transition/, /wall_distribution/, /minimum_wall_width/, /min_wall_width/, /minimum_feature_size/, /min_feature_size/])) {
       return { tab: "quality", section: "Wall generator", sectionOrder: 60 };
     }
-    if (processKeyMatches(normalized, [/order_of_walls/, /print_infill_first/, /bridge_flow/, /thick_bridges/, /only_one_wall_/, /^smooth_/, /smooth_coefficient/, /avoid_crossing_wall/, /smoothing_wall_speed_along_z/])) {
+    if (processKeyMatches(normalized, [/order_of_walls/, /wall_infill_order/, /print_infill_first/, /bridge_flow/, /thick_bridges/, /top_solid_infill_flow_ratio/, /initial_layer_flow_ratio/, /only_one_wall_/, /only_one_wall_top/, /top_area_threshold/, /detect_overhang_wall/, /^smooth_/, /smooth_coefficient/, /avoid_crossing_wall/, /max_travel_detour_distance/, /smoothing_wall_speed_along_z/])) {
       return { tab: "quality", section: "Advanced", sectionOrder: 70 };
     }
 
@@ -6915,6 +7160,9 @@
     if (Array.isArray(optionsByKey[key])) {
       rawOptions.push(...optionsByKey[key]);
     }
+    if (Array.isArray(optionsByKey[canonical])) {
+      rawOptions.push(...optionsByKey[canonical]);
+    }
     if (isSupportStyleField) {
       rawOptions.push(...supportStyleValues);
       if (Array.isArray(optionsByKey.support_style)) {
@@ -6928,9 +7176,17 @@
     pushOption(baseValue);
     if (hasOverride) pushOption(currentValue);
     const forceSelectInput = isSupportStyleField;
+    const forcePlainInput = new Set([
+      "bridge_flow",
+      "top_solid_infill_flow_ratio",
+      "initial_layer_flow_ratio",
+      "smooth_coefficient",
+      "top_area_threshold",
+      "max_travel_detour_distance",
+    ]).has(canonical);
 
     const unitHtml = unit ? `<span class="slice-process-setting-unit">${esc(unit)}</span>` : "";
-    if (forceSelectInput || mergedOptions.length > 1) {
+    if (!forcePlainInput && (forceSelectInput || mergedOptions.length > 1)) {
       const optionsHtml = mergedOptions
         .map((optionValue) => {
           const attrValue = sliceProcessValueToAttr(optionValue);
@@ -7032,6 +7288,7 @@
       els.sliceProcessSettingsList.innerHTML = `<div class="slice-process-setting-empty hint">Ingen settings matcher denne fane/søgning.</div>`;
     } else {
       const supportEnabledForEditing = activeTab !== "support" || isSliceProcessSupportEnabled(base, overrides);
+      const autoCircleCompensationEnabled = isSliceProcessAutoCircleCompensationEnabled(base, overrides);
       const sorted = filtered
         .map((entry) => {
           const sectionOrder = Number(entry.category.sectionOrder || 900);
@@ -7064,6 +7321,9 @@
             const valueType = sliceProcessValueInputType(baseValue);
             const canonical = canonicalSliceProcessKey(key);
             const disableSupportRow = activeTab === "support" && !supportEnabledForEditing && canonical !== "enable_support";
+            const disablePrecisionCircleCompRow = entry.category.section === "Precision"
+              && autoCircleCompensationEnabled
+              && (canonical === "xy_hole_compensation" || canonical === "xy_contour_compensation");
             return buildSliceProcessSettingRowHtml(
               key,
               baseValue,
@@ -7073,7 +7333,7 @@
               optionsByKey,
               {
                 label: entry.label,
-                disabled: disableSupportRow,
+                disabled: disableSupportRow || disablePrecisionCircleCompRow,
               }
             );
           })
