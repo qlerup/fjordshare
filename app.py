@@ -96,6 +96,7 @@ _TUS_TMP_DIR_ENV = str(os.getenv("TUS_TMP_DIR", "") or "").strip()
 _THUMBS_DIR_ENV = str(os.getenv("THUMBS_DIR", os.getenv("THUMB_DIR", "")) or "").strip()
 BAMBU_DIR = DATA_DIR / "bambu"
 BAMBU_SLICE_DEBUG_DIR = BAMBU_DIR / "slice-debug"
+BAMBU_EFFECTIVE_PROFILE_DIR = BAMBU_DIR / "effective-profiles"
 UPLOAD_ROOT = Path(_UPLOAD_ROOT_ENV or str(DATA_DIR / "uploads")).resolve()
 TUS_TMP_DIR = Path(_TUS_TMP_DIR_ENV or str(UPLOAD_ROOT / ".tus_uploads")).resolve()
 THUMBS_DIR = Path(_THUMBS_DIR_ENV or str(DATA_DIR / "thumbs")).resolve()
@@ -818,6 +819,7 @@ def _ensure_storage_dirs() -> None:
     PRINT_READY_PROJECT_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     BAMBU_SLICED_DIR.mkdir(parents=True, exist_ok=True)
+    BAMBU_EFFECTIVE_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_PRINTER_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_PRINT_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
     SLICER_PROFILE_FILAMENT_DIR.mkdir(parents=True, exist_ok=True)
@@ -3012,9 +3014,9 @@ def _resolve_selected_profile_jsons(
             )
 
     return (
-        _prefer_bambu_cli_full_profile_json(machine_json),
-        _prefer_bambu_cli_full_profile_json(process_json),
-        _prefer_bambu_cli_full_profile_json(filament_json),
+        _materialize_bambu_cli_profile_json(executable, machine_json, "machine"),
+        _materialize_bambu_cli_profile_json(executable, process_json, "process"),
+        _materialize_bambu_cli_profile_json(executable, filament_json, "filament"),
     )
 
 
@@ -3034,6 +3036,167 @@ def _prefer_bambu_cli_full_profile_json(profile_json: str) -> str:
     if full_profile_path.exists() and full_profile_path.is_file():
         return str(full_profile_path)
     return profile_value
+
+
+def _candidate_slicer_profile_dirs_for_kind(
+    executable: str,
+    kind: str,
+    current_path: Optional[Path] = None,
+) -> list[Path]:
+    normalized_kind = str(kind or "").strip().lower()
+    uploaded_dir = {
+        "machine": SLICER_PROFILE_PRINTER_DIR,
+        "process": SLICER_PROFILE_PRINT_SETTINGS_DIR,
+        "filament": SLICER_PROFILE_FILAMENT_DIR,
+    }.get(normalized_kind)
+
+    out: list[Path] = []
+    if current_path is not None:
+        out.append(current_path.parent)
+    if uploaded_dir is not None:
+        out.append(uploaded_dir)
+    try:
+        discovered_root = _find_bambu_profile_root(executable)
+    except Exception:
+        discovered_root = None
+    if discovered_root:
+        out.append(discovered_root / normalized_kind)
+
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for path in out:
+        try:
+            key = str(path.resolve()) if path.exists() else str(path)
+        except Exception:
+            key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.exists() and path.is_dir():
+            deduped.append(path)
+    return deduped
+
+
+def _inherited_slicer_profile_path(
+    inherits_name: str,
+    current_path: Path,
+    profile_dirs: list[Path],
+) -> Optional[Path]:
+    requested = str(inherits_name or "").strip()
+    if not requested:
+        return None
+
+    filename = requested if requested.lower().endswith(".json") else f"{requested}.json"
+    for profile_dir in [current_path.parent, *profile_dirs]:
+        candidate = profile_dir / filename
+        if candidate.exists() and candidate.is_file():
+            return candidate
+
+    for profile_dir in [current_path.parent, *profile_dirs]:
+        candidate = _pick_profile_json(profile_dir, requested, fallback_first=False)
+        if candidate:
+            candidate_path = Path(candidate)
+            if candidate_path.exists() and candidate_path.is_file():
+                return candidate_path
+    return None
+
+
+def _resolve_effective_slicer_profile_payload(
+    executable: str,
+    profile_json: str,
+    kind: str,
+    max_depth: int = 16,
+) -> tuple[dict[str, Any], list[str]]:
+    start_path = Path(str(profile_json or "").strip())
+    normalized_kind = str(kind or "").strip().lower()
+    if (
+        normalized_kind not in {"machine", "process", "filament"}
+        or not start_path.exists()
+        or not start_path.is_file()
+    ):
+        return {}, []
+
+    profile_dirs = _candidate_slicer_profile_dirs_for_kind(
+        executable,
+        normalized_kind,
+        current_path=start_path,
+    )
+    chain: list[str] = []
+    visited: set[str] = set()
+
+    def _walk(path: Path, depth: int) -> dict[str, Any]:
+        if depth > max_depth:
+            return {}
+
+        try:
+            path_key = str(path.resolve())
+        except Exception:
+            path_key = str(path)
+        if path_key in visited:
+            return {}
+        visited.add(path_key)
+
+        payload = _read_profile_json_payload(path)
+        if not isinstance(payload, dict):
+            return {}
+
+        merged_payload: dict[str, Any] = {}
+        for inherits_name in _slicer_profile_names_from_value(payload.get("inherits")):
+            parent_path = _inherited_slicer_profile_path(inherits_name, path, profile_dirs)
+            if parent_path is None:
+                continue
+            parent_payload = _walk(parent_path, depth + 1)
+            merged_payload = _deep_merge_process_profile_payload(merged_payload, parent_payload)
+
+        merged_payload = _deep_merge_process_profile_payload(merged_payload, payload)
+        chain.append(str(path))
+        return merged_payload if isinstance(merged_payload, dict) else {}
+
+    return _walk(start_path, 0), chain
+
+
+def _materialize_bambu_cli_profile_json(executable: str, profile_json: str, kind: str) -> str:
+    preferred_profile = _prefer_bambu_cli_full_profile_json(profile_json)
+    profile_path = Path(str(preferred_profile or "").strip())
+    if not preferred_profile or not profile_path.exists() or not profile_path.is_file():
+        return preferred_profile
+    if str(profile_path.parent.name or "").strip().lower().endswith("_full"):
+        return preferred_profile
+
+    payload, chain = _resolve_effective_slicer_profile_payload(
+        executable,
+        preferred_profile,
+        kind,
+    )
+    if not isinstance(payload, dict) or len(chain) <= 1:
+        return preferred_profile
+
+    fingerprint_parts: list[str] = [str(kind or "").strip().lower()]
+    for chain_path_value in chain:
+        chain_path = Path(chain_path_value)
+        try:
+            stat = chain_path.stat()
+            fingerprint_parts.append(f"{chain_path.resolve()}:{int(stat.st_mtime_ns)}:{int(stat.st_size)}")
+        except Exception:
+            fingerprint_parts.append(str(chain_path))
+    digest = hashlib.sha256("|".join(fingerprint_parts).encode("utf-8")).hexdigest()[:20]
+    target = BAMBU_EFFECTIVE_PROFILE_DIR / f"{str(kind or 'profile').strip().lower()}-{digest}.json"
+    encoded = (json.dumps(payload, ensure_ascii=False, indent=4) + "\n").encode("utf-8")
+
+    try:
+        BAMBU_EFFECTIVE_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        if target.exists() and target.is_file() and target.read_bytes() == encoded:
+            return str(target)
+        temp_target = target.with_suffix(f"{target.suffix}.tmp")
+        temp_target.write_bytes(encoded)
+        temp_target.replace(target)
+        return str(target)
+    except Exception:
+        try:
+            temp_target.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return preferred_profile
 
 
 def _count_profile_extruder_hint_items(value: Any) -> int:
@@ -3979,6 +4142,84 @@ def _apply_slice_print_nozzle_mapping_overrides(overrides: Any, print_nozzle: An
     return mapped
 
 
+def _slicer_profile_has_curr_bed_type(payload: Any) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return bool(str(payload.get("curr_bed_type") or "").strip())
+
+
+def _slicer_filament_supports_bed_temperature(payload: Any, keys: Iterable[str]) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    for key in keys:
+        if key not in payload:
+            continue
+        if any(float(value) > 0.0 for value in _extract_float_numbers(payload.get(key), max_items=16)):
+            return True
+    return False
+
+
+def _split_slicer_bed_types(value: Any) -> set[str]:
+    if isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = re.split(r"[;,|]", str(value or ""))
+    return {
+        str(item or "").strip().lower()
+        for item in items
+        if str(item or "").strip()
+    }
+
+
+def _resolve_slice_curr_bed_type_override(
+    executable: str,
+    printer_profile: str,
+    print_profile: str,
+    filament_profile: str,
+    auto_pick_when_blank: bool = True,
+) -> str:
+    try:
+        machine_json, process_json, filament_json = _resolve_selected_profile_jsons(
+            executable,
+            str(printer_profile or "").strip(),
+            str(print_profile or "").strip(),
+            str(filament_profile or "").strip(),
+            prefer_uploaded=False,
+            auto_pick_when_blank=auto_pick_when_blank,
+        )
+    except Exception:
+        return ""
+
+    machine_payload = _read_profile_json_payload(Path(machine_json)) if machine_json else None
+    process_payload = _read_profile_json_payload(Path(process_json)) if process_json else None
+    filament_payload = _read_profile_json_payload(Path(filament_json)) if filament_json else None
+    if _slicer_profile_has_curr_bed_type(machine_payload) or _slicer_profile_has_curr_bed_type(process_payload):
+        return ""
+    if not isinstance(filament_payload, dict):
+        return ""
+
+    cool_plate_keys = ("cool_plate_temp", "cool_plate_temp_initial_layer")
+    if not any(key in filament_payload for key in cool_plate_keys):
+        return ""
+    if _slicer_filament_supports_bed_temperature(filament_payload, cool_plate_keys):
+        return ""
+
+    blocked_bed_types = _split_slicer_bed_types(
+        machine_payload.get("not_support_bed_type") if isinstance(machine_payload, dict) else ""
+    )
+    candidates = (
+        ("Textured PEI Plate", ("textured_plate_temp", "textured_plate_temp_initial_layer")),
+        ("Engineering Plate", ("eng_plate_temp", "eng_plate_temp_initial_layer")),
+        ("Smooth PEI Plate / High Temp Plate", ("hot_plate_temp", "hot_plate_temp_initial_layer")),
+    )
+    for bed_type, temperature_keys in candidates:
+        if bed_type.lower() in blocked_bed_types:
+            continue
+        if _slicer_filament_supports_bed_temperature(filament_payload, temperature_keys):
+            return bed_type
+    return ""
+
+
 def _slice_printer_uses_dual_nozzle(profile_name: Any) -> bool:
     raw = str(profile_name or "").strip().lower()
     if not raw:
@@ -4805,6 +5046,7 @@ def _build_support_override_load_settings(
             "filament_nozzle_map",
             "filament_map_2",
             "filament_volume_map",
+            "curr_bed_type",
         }
 
         def _parse_mapping_tokens(raw_value: Any) -> list[str]:
@@ -5489,6 +5731,23 @@ def _slice_stl_to_gcode(
         normalized_nozzle_right_flow = ""
         normalized_process_overrides.pop("print_extruder_id", None)
         normalized_process_overrides.pop("printer_extruder_id", None)
+    if not str(normalized_process_overrides.get("curr_bed_type") or "").strip():
+        auto_curr_bed_type = _resolve_slice_curr_bed_type_override(
+            executable,
+            printer_profile_value,
+            print_profile_value,
+            filament_profile_value,
+            auto_pick_when_blank=auto_pick_blank_profiles,
+        )
+        if auto_curr_bed_type:
+            normalized_process_overrides["curr_bed_type"] = auto_curr_bed_type
+            _trace(
+                "bed-type-override-selected",
+                {
+                    "curr_bed_type": auto_curr_bed_type,
+                    "reason": "cool plate has no printable filament temperature",
+                },
+            )
 
     def _build_cli_override_args(overrides: dict[str, Any]) -> list[str]:
         if not isinstance(overrides, dict) or not overrides:
@@ -7090,6 +7349,7 @@ def _slice_debug_profile_snapshot(profile_path: Path) -> dict[str, Any]:
         "filament_nozzle_map",
         "filament_map_2",
         "filament_volume_map",
+        "curr_bed_type",
         "extruder_ams_count",
         "different_extruder",
         "new_printer_name",
