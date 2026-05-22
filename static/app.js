@@ -307,6 +307,11 @@
     fileInfoFilamentGrams: document.getElementById("fileInfoFilamentGrams"),
     fileInfoRowFilamentCost: document.getElementById("fileInfoRowFilamentCost"),
     fileInfoFilamentCost: document.getElementById("fileInfoFilamentCost"),
+    fileInfoSliceErrorPanel: document.getElementById("fileInfoSliceErrorPanel"),
+    fileInfoSliceErrorText: document.getElementById("fileInfoSliceErrorText"),
+    fileInfoSliceDebugBtn: document.getElementById("fileInfoSliceDebugBtn"),
+    fileInfoSliceDebugMeta: document.getElementById("fileInfoSliceDebugMeta"),
+    fileInfoSliceDebugOutput: document.getElementById("fileInfoSliceDebugOutput"),
     fileInfoModelLinkFields: document.getElementById("fileInfoModelLinkFields"),
     fileInfoModelLinkInput: document.getElementById("fileInfoModelLinkInput"),
     fileInfoModelLinkSaveBtn: document.getElementById("fileInfoModelLinkSaveBtn"),
@@ -9083,6 +9088,12 @@
     if (!file || !els.fileInfoDrawer) return;
     const id = Number(file.id || 0);
     if (!id) return;
+    const sliceStatus = normalizedSliceStatus(file);
+    const sliceErrorMessage = String(file.slice_error || "").trim();
+    const canInspectSliceError = state.role === "admin"
+      && !!file.can_slice
+      && sliceStatus === "error"
+      && !!sliceErrorMessage;
 
     if (els.fileInfoPreview) {
       els.fileInfoPreview.innerHTML = filePreviewHtml(file, { interactive: true });
@@ -9166,9 +9177,16 @@
       els.fileInfoOpen3DBtn.classList.toggle("hidden", !file.is_3d_openable);
       els.fileInfoOpen3DBtn.dataset.fileId = String(id);
     }
+    if (els.fileInfoSliceErrorPanel) {
+      els.fileInfoSliceErrorPanel.classList.toggle("hidden", !canInspectSliceError);
+      els.fileInfoSliceErrorPanel.dataset.fileId = canInspectSliceError ? String(id) : "";
+    }
+    if (els.fileInfoSliceErrorText) {
+      els.fileInfoSliceErrorText.textContent = canInspectSliceError ? sliceErrorMessage : "";
+    }
+    clearFileInfoSliceDebug();
     if (els.fileInfoSliceBtn) {
       const canSlice = state.role === "admin" && !!file.can_slice;
-      const sliceStatus = normalizedSliceStatus(file);
       const isQueued = sliceStatus === "queued";
       const isBusy = sliceStatus === "queued" || sliceStatus === "processing";
       els.fileInfoSliceBtn.classList.toggle("hidden", !canSlice);
@@ -9176,11 +9194,10 @@
       els.fileInfoSliceBtn.dataset.fileId = String(id);
       els.fileInfoSliceBtn.dataset.sliceStatus = sliceStatus;
       els.fileInfoSliceBtn.textContent = SLICE_ACTIONS_DISABLED ? "Slice slået fra" : sliceButtonLabelForStatus(sliceStatus);
-      const errorMessage = String(file.slice_error || "").trim();
       if (SLICE_ACTIONS_DISABLED) {
         els.fileInfoSliceBtn.title = SLICE_DISABLED_TITLE;
-      } else if (sliceStatus === "error" && errorMessage) {
-        els.fileInfoSliceBtn.title = errorMessage;
+      } else if (sliceStatus === "error" && sliceErrorMessage) {
+        els.fileInfoSliceBtn.title = sliceErrorMessage;
       } else {
         els.fileInfoSliceBtn.removeAttribute("title");
       }
@@ -9198,6 +9215,53 @@
           els.fileInfoFastSliceBtn.removeAttribute("title");
         }
       }
+    }
+  }
+
+  function clearFileInfoSliceDebug() {
+    if (els.fileInfoSliceDebugMeta) {
+      els.fileInfoSliceDebugMeta.textContent = "";
+      els.fileInfoSliceDebugMeta.classList.add("hidden");
+    }
+    if (els.fileInfoSliceDebugOutput) {
+      els.fileInfoSliceDebugOutput.textContent = "";
+      els.fileInfoSliceDebugOutput.classList.add("hidden");
+    }
+    if (els.fileInfoSliceDebugBtn) {
+      els.fileInfoSliceDebugBtn.disabled = false;
+      els.fileInfoSliceDebugBtn.textContent = "Vis debug";
+    }
+  }
+
+  async function loadFileInfoSliceDebug(fileId) {
+    const id = Number(fileId || 0);
+    if (!id || !els.fileInfoSliceDebugMeta || !els.fileInfoSliceDebugOutput) return;
+    if (els.fileInfoSliceDebugBtn) els.fileInfoSliceDebugBtn.disabled = true;
+    els.fileInfoSliceDebugMeta.textContent = "Henter slice debug...";
+    els.fileInfoSliceDebugMeta.classList.remove("hidden");
+    els.fileInfoSliceDebugOutput.textContent = "";
+    els.fileInfoSliceDebugOutput.classList.add("hidden");
+
+    try {
+      const data = await api(`/api/files/${id}/slice/debug`);
+      const debug = data && data.debug && typeof data.debug === "object" ? data.debug : null;
+      if (!debug) {
+        els.fileInfoSliceDebugMeta.textContent = "Ingen debug-trace fundet endnu.";
+        return;
+      }
+
+      const debugFile = String(debug.filename || "slice-debug.json");
+      const debugUpdatedAt = String(debug.updated_at || "").trim();
+      els.fileInfoSliceDebugMeta.textContent = debugUpdatedAt
+        ? `Debugfil: ${debugFile} · ${formatDate(debugUpdatedAt)}`
+        : `Debugfil: ${debugFile}`;
+      els.fileInfoSliceDebugOutput.textContent = JSON.stringify(debug.record || {}, null, 2);
+      els.fileInfoSliceDebugOutput.classList.remove("hidden");
+      if (els.fileInfoSliceDebugBtn) els.fileInfoSliceDebugBtn.textContent = "Opdater debug";
+    } catch (err) {
+      els.fileInfoSliceDebugMeta.textContent = (err && err.message) || "Kunne ikke hente slice debug.";
+    } finally {
+      if (els.fileInfoSliceDebugBtn) els.fileInfoSliceDebugBtn.disabled = false;
     }
   }
 
@@ -16216,6 +16280,14 @@
         open3DModal(file).catch((err) => {
           showStatus(els.uploadStatus, err.message || "Kunne ikke åbne 3D", "error");
         });
+      });
+    }
+    if (els.fileInfoSliceDebugBtn) {
+      els.fileInfoSliceDebugBtn.addEventListener("click", () => {
+        const panelFileId = Number((els.fileInfoSliceErrorPanel && els.fileInfoSliceErrorPanel.dataset.fileId) || 0);
+        const id = panelFileId || Number(state.currentInfoFileId || 0);
+        if (!id) return;
+        loadFileInfoSliceDebug(id);
       });
     }
     if (els.fileInfoSliceBtn) {

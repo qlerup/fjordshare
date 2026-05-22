@@ -219,7 +219,7 @@ BAMBUSTUDIO_ALLOW_PROFILE_FALLBACK = str(os.getenv("BAMBUSTUDIO_ALLOW_PROFILE_FA
 BAMBUSTUDIO_FAST_PRINTER_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_PRINTER_PROFILE", "Bambu Lab H2S 0.4 nozzle")).strip()
 BAMBUSTUDIO_FAST_PRINT_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_PRINT_PROFILE", "0.20mm Standard @BBL H2S")).strip()
 BAMBUSTUDIO_FAST_FILAMENT_PROFILE = str(os.getenv("BAMBUSTUDIO_FAST_FILAMENT_PROFILE", "Bambu ABS @BBL H2S")).strip()
-SLICING_DISABLED = str(os.getenv("SLICING_DISABLED", "1")).strip().lower() in {"1", "true", "yes", "on"}
+SLICING_DISABLED = str(os.getenv("SLICING_DISABLED", "0")).strip().lower() in {"1", "true", "yes", "on"}
 BAMBUSTUDIO_SLICE_DEBUG_ALWAYS = str(os.getenv("BAMBUSTUDIO_SLICE_DEBUG_ALWAYS", "0")).strip().lower() in {"1", "true", "yes", "on"}
 BAMBUSTUDIO_SLICE_DEBUG_MAX_EVENTS = 400
 try:
@@ -7169,6 +7169,65 @@ def _write_slice_debug_record(
             return target
         except Exception:
             return None
+
+
+def _latest_slice_debug_record_for_file(file_id: int, row: Any) -> Optional[dict[str, Any]]:
+    safe_file_id = max(0, int(file_id or 0))
+    if safe_file_id <= 0:
+        return None
+
+    candidate_dirs: list[Path] = []
+    try:
+        source_path = file_disk_path(row)
+        if isinstance(source_path, Path):
+            candidate_dirs.append(source_path.parent)
+    except Exception:
+        pass
+    candidate_dirs.append(BAMBU_SLICE_DEBUG_DIR)
+
+    latest_path: Optional[Path] = None
+    latest_mtime = -1.0
+    seen_dirs: set[str] = set()
+    pattern = f"slice-debug-*-file-{safe_file_id}.json"
+    for debug_dir in candidate_dirs:
+        try:
+            resolved_key = str(debug_dir.resolve())
+        except Exception:
+            resolved_key = str(debug_dir)
+        if resolved_key in seen_dirs:
+            continue
+        seen_dirs.add(resolved_key)
+        try:
+            if not debug_dir.exists() or not debug_dir.is_dir():
+                continue
+            for debug_path in debug_dir.glob(pattern):
+                if not debug_path.is_file():
+                    continue
+                debug_mtime = float(debug_path.stat().st_mtime)
+                if debug_mtime >= latest_mtime:
+                    latest_mtime = debug_mtime
+                    latest_path = debug_path
+        except Exception:
+            continue
+
+    if latest_path is None:
+        return None
+
+    try:
+        record = json.loads(latest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        record = {"read_error": str(exc)}
+
+    try:
+        updated_at = datetime.fromtimestamp(latest_path.stat().st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        updated_at = ""
+
+    return {
+        "filename": latest_path.name,
+        "updated_at": updated_at,
+        "record": _slice_debug_json_safe(record),
+    }
 
 
 # ---- Slice cancel + status helpers and endpoints ----
@@ -16256,6 +16315,23 @@ def api_slicer_plates():
         return jsonify({"ok": False, "error": f"Kunne ikke læse slicer plate assets: {exc}"}), 500
 
     return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/files/<int:file_id>/slice/debug", methods=["GET"])
+@login_required
+def api_file_slice_debug(file_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin kan se slice debug"}), 403
+
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+
+    if row is None:
+        return jsonify({"ok": False, "error": "Filen findes ikke"}), 404
+    if not user_can_access_file(current_user, row, "upload"):
+        return jsonify({"ok": False, "error": "Ingen rettighed til at se slice debug"}), 403
+
+    return jsonify({"ok": True, "debug": _latest_slice_debug_record_for_file(int(file_id), row)})
 
 
 @app.route("/api/files/<int:file_id>/slice", methods=["POST"])

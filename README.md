@@ -36,6 +36,11 @@ It is built for fast file sharing, per-print-file metadata, and Bambu Studio bas
   - Print profile
   - Filament profile
   - Support mode/type/style
+- H2D/dual-nozzle controls for left/right nozzle selection in the modal
+- Failed slice jobs expose the error and latest debug trace from the file drawer
+
+`SLICING_DISABLED=0` keeps the slicer actions available for testing and normal use.
+Set `SLICING_DISABLED=1` when slicing must be paused without removing the profiles.
 
 ### Slicer profiles in Settings
 

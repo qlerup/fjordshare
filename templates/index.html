@@ -138,6 +138,16 @@
 
         <div id="fileInfoLinkDetails" class="file-info-link-details hidden"></div>
 
+        <div id="fileInfoSliceErrorPanel" class="file-info-slice-error hidden" aria-live="polite">
+          <div class="file-info-slice-error-head">
+            <strong>Slice fejl</strong>
+            <button id="fileInfoSliceDebugBtn" class="btn small admin-only" type="button">Vis debug</button>
+          </div>
+          <div id="fileInfoSliceErrorText" class="file-info-slice-error-text"></div>
+          <div id="fileInfoSliceDebugMeta" class="hint hidden"></div>
+          <pre id="fileInfoSliceDebugOutput" class="file-info-slice-debug-output hidden"></pre>
+        </div>
+
         <div id="fileInfoModelLinkFields" class="file-info-fields">
           <label for="fileInfoModelLinkInput">Model-link</label>
           <div class="file-info-model-link-row">
