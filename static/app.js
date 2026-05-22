@@ -5340,7 +5340,7 @@
   function sliceProcessKeyLooksBoolean(key) {
     const normalized = String(key || "").trim().toLowerCase();
     if (!normalized) return false;
-    if (/^(prime_tower|wipe_tower|prime_tower_skip_points|prime_tower_internal_ribs|prime_tower_rib_wall|prime_tower_fillet_wall|purge_into_objects_infill|purge_into_objects_support|purge_into_infill|purge_into_support|flush_into_infill|flush_into_support|spiral_vase|reduce_infill_retraction)$/.test(normalized)) {
+    if (/^(prime_tower|wipe_tower|prime_tower_skip_points|prime_tower_internal_ribs|prime_tower_rib_wall|prime_tower_fillet_wall|purge_into_objects_infill|purge_into_objects_support|purge_into_infill|purge_into_support|flush_into_infill|flush_into_support|spiral_vase|reduce_infill_retraction|interface_shells)$/.test(normalized)) {
       return true;
     }
     return /(^|_)(enable|enabled|is|has|use|only|avoid|detect|combination|embedding|slow_down|arc_fitting|precise|print_infill_first|thick_bridges|smooth_speed_discontinuity_area|role_based_wipe_speed|scarf_joint_for_inner_walls|override_filament_scarf_seam_setting|auto_circle_contour_hole_compensation|seam_placement_away_from_overhangs|smart_scarf_seam_application|scarf_around_entire_wall|prime_tower_flat_ironing|only_one_wall_on_first_layer|smoothing_wall_speed_along_z_experimental|detect_overhang_wall|remove|dont|independent|z_overrides)($|_)/.test(normalized);
@@ -5454,6 +5454,12 @@
 
       if (sliceProcessKeyLooksBoolean(key) && (text === "0" || text === "1")) {
         return text === "1";
+      }
+
+      if (((/(^|_)(density|overlap)$/.test(canonicalKey)) || canonicalKey === "monotonic_travel_into_wall")
+        && /^-?(?:\d+\.?\d*|\.\d+)\s*%$/.test(text)) {
+        const n = Number(text.replace(/\s*%$/, ""));
+        if (Number.isFinite(n)) return n;
       }
 
       if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(text)) {
@@ -5652,10 +5658,10 @@
     first_layer_acceleration: "initial_layer_acceleration",
     first_layer_travel_acceleration: "initial_layer_travel_acceleration",
     top_surface_accel: "top_surface_acceleration",
-    overhang_1_4_speed: "overhang_speed_25",
-    overhang_2_4_speed: "overhang_speed_50",
-    overhang_3_4_speed: "overhang_speed_75",
-    overhang_4_4_speed: "overhang_speed_100",
+    overhang_1_4_speed: "overhang_speed_10",
+    overhang_2_4_speed: "overhang_speed_25",
+    overhang_3_4_speed: "overhang_speed_50",
+    overhang_4_4_speed: "overhang_speed_75",
     overhang_speed_0: "overhang_speed_10",
     overhang_speed_1: "overhang_speed_25",
     overhang_speed_2: "overhang_speed_50",
@@ -5663,11 +5669,16 @@
     overhang_speed_4: "overhang_speed_100",
     overhang_totally_speed: "overhang_speed_100",
     enable_overhang_speed: "slow_down_for_overhangs",
+    enable_height_slowdown: "slow_down_by_height",
     support_buildplate_only: "support_on_build_plate_only",
     support_on_buildplate_only: "support_on_build_plate_only",
     support_critical_regions: "support_critical_regions_only",
     only_one_wall_top: "only_one_wall_on_top_surfaces",
     reduce_crossing_wall: "avoid_crossing_wall",
+    monotonic_line_travel_extend: "monotonic_travel_into_wall",
+    monotonic_line_travel_into_wall: "monotonic_travel_into_wall",
+    interface_shell: "interface_shells",
+    detect_floating_vertical_shell: "detect_floating_vertical_shells",
     scarf_angle_threshold: "scarf_application_angle_threshold",
     scarf_seam_type: "seam_slope_type",
     scarf_start_height: "seam_slope_start_height",
@@ -5806,6 +5817,7 @@
     length_of_sparse_infill_anchor: 400,
     maximum_length_of_sparse_infill_anchor: 20,
     infill_wall_overlap: 15,
+    monotonic_travel_into_wall: 45,
     infill_direction: 45,
     bridge_direction: 0,
     minimum_sparse_infill_threshold: 15,
@@ -5829,7 +5841,7 @@
     overhang_speed_50: 30,
     overhang_speed_75: 10,
     overhang_speed_100: 10,
-    slow_down_by_height: false,
+    slow_down_by_height: true,
     bridge_speed: 50,
     gap_infill_speed: 250,
     support_speed: 150,
@@ -5837,6 +5849,7 @@
     travel_speed: 1000,
     normal_printing_acceleration: 8000,
     travel_acceleration: 10000,
+    travel_short_distance_acceleration: 250,
     initial_layer_travel_acceleration: 6000,
     initial_layer_acceleration: 500,
     outer_wall_acceleration: 5000,
@@ -5920,6 +5933,8 @@
     bottom_surface_pattern: ["monotonic", "monotonic_line", "rectilinear", "concentric"],
     internal_solid_infill_pattern: ["rectilinear", "grid", "monotonic", "aligned_rectilinear"],
     sparse_infill_pattern: ["grid", "gyroid", "cubic", "triangles", "rectilinear", "honeycomb"],
+    length_of_sparse_infill_anchor: [100, 200, 300, 400],
+    maximum_length_of_sparse_infill_anchor: [0, 5, 10, 20, 30, 40, 50],
     ensure_vertical_shell_thickness: ["enabled", "critical_only", "disabled"],
     small_perimeter_speed: [30, 40, 50, 60, 70, 80, 100],
     vertical_shell_speed: [60, 70, 80, 90, 100],
@@ -6043,12 +6058,16 @@
     length_of_sparse_infill_anchor: "Length of sparse infill anchor",
     maximum_length_of_sparse_infill_anchor: "Maximum length of sparse infill anchor",
     infill_wall_overlap: "Infill/Wall overlap",
+    monotonic_travel_into_wall: "Monotonic line travel extend",
     infill_direction: "Infill direction",
     bridge_direction: "Bridge direction",
     minimum_sparse_infill_threshold: "Minimum sparse infill threshold",
+    minimum_sparse_infill_area: "Minimum sparse infill threshold",
     infill_combination: "Infill combination",
     detect_narrow_internal_solid_infill: "Detect narrow internal solid infill",
     ensure_vertical_shell_thickness: "Ensure vertical shell thickness",
+    interface_shells: "Interface shells",
+    detect_floating_vertical_shell: "Detect floating vertical shells",
     detect_floating_vertical_shells: "Detect floating vertical shells",
     initial_layer_speed: "Initial layer",
     initial_layer_print_speed: "Initial layer",
@@ -6087,6 +6106,7 @@
     default_acceleration: "Normal printing",
     print_acceleration: "Normal printing",
     travel_acceleration: "Travel",
+    travel_short_distance_acceleration: "Short travel",
     initial_layer_travel_acceleration: "Initial layer travel",
     first_layer_travel_acceleration: "Initial layer travel",
     initial_layer_acceleration: "Initial layer",
@@ -6283,6 +6303,7 @@
     embedding_wall_into_infill: 20,
     detect_thin_wall: 30,
 
+    interface_shells: 5,
     top_surface_pattern: 10,
     top_surface_density: 20,
     top_shell_layers: 30,
@@ -6304,13 +6325,15 @@
     maximum_length_of_sparse_infill_anchor: 50,
 
     infill_wall_overlap: 10,
-    infill_direction: 20,
-    bridge_direction: 30,
-    minimum_sparse_infill_threshold: 40,
-    infill_combination: 50,
-    detect_narrow_internal_solid_infill: 60,
-    ensure_vertical_shell_thickness: 70,
-    detect_floating_vertical_shells: 80,
+    monotonic_travel_into_wall: 20,
+    infill_direction: 30,
+    bridge_direction: 40,
+    minimum_sparse_infill_threshold: 50,
+    minimum_sparse_infill_area: 50,
+    infill_combination: 60,
+    detect_narrow_internal_solid_infill: 70,
+    ensure_vertical_shell_thickness: 80,
+    detect_floating_vertical_shells: 90,
   };
 
   const SLICE_PROCESS_SPEED_ROW_ORDER = {
@@ -6355,6 +6378,7 @@
     default_acceleration: 10,
     print_acceleration: 10,
     travel_acceleration: 20,
+    travel_short_distance_acceleration: 25,
     initial_layer_travel_acceleration: 30,
     first_layer_travel_acceleration: 30,
     initial_layer_acceleration: 40,
@@ -6630,9 +6654,24 @@
       if (normalizedValue === "disabled") return "Disabled";
     }
 
+    if (canonical === "length_of_sparse_infill_anchor") {
+      const rawText = String(optionValue == null ? "" : optionValue).trim();
+      if (typeof optionValue === "number") return `${formatNumberCompact(optionValue)}%`;
+      if (/^-?(?:\d+\.?\d*|\.\d+)\s*%$/.test(rawText)) return rawText.replace(/\s+/g, "");
+      if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(rawText)) return `${rawText}%`;
+    }
+
     if (processKeyMatches(canonical, [/pattern$/])) {
-      if (normalizedValue === "monotonic_line") return "Monotonic line";
+      if (normalizedValue === "monotonic") return "Monotonic";
+      if (normalizedValue === "monotonic_line" || normalizedValue === "monotonicline") return "Monotonic line";
       if (normalizedValue === "aligned_rectilinear") return "Aligned rectilinear";
+      if (normalizedValue === "rectilinear") return "Rectilinear";
+      if (normalizedValue === "concentric") return "Concentric";
+      if (normalizedValue === "grid") return "Grid";
+      if (normalizedValue === "gyroid") return "Gyroid";
+      if (normalizedValue === "cubic") return "Cubic";
+      if (normalizedValue === "triangles") return "Triangles";
+      if (normalizedValue === "honeycomb") return "Honeycomb";
     }
 
     return sliceProcessValueToText(optionValue);
@@ -6768,6 +6807,22 @@
     return false;
   }
 
+  function isSliceProcessDetectNarrowInternalSolidInfillEnabled(base, overrides) {
+    const raw = sliceProcessCurrentValueByCanonicalKey("detect_narrow_internal_solid_infill", base, overrides);
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "number") return raw > 0;
+    if (typeof raw === "string") {
+      const normalized = normalizeSliceProcessKey(raw);
+      if (normalized === "1" || normalized === "true" || normalized === "on" || normalized === "yes" || normalized === "enabled") {
+        return true;
+      }
+      if (normalized === "0" || normalized === "false" || normalized === "off" || normalized === "no" || normalized === "disabled") {
+        return false;
+      }
+    }
+    return false;
+  }
+
   function currentSliceProcessOneWallTopMode(base, overrides) {
     const raw = sliceProcessCurrentValueByCanonicalKey("only_one_wall_on_top_surfaces", base, overrides);
     if (typeof raw === "boolean") return raw ? "top_surfaces" : "none";
@@ -6789,6 +6844,12 @@
     // Hide generic strength fallback rows; Bambu UI only shows curated
     // strength groups (Walls, Top/bottom shells, Sparse infill, Advanced).
     if (entry.category && entry.category.tab === "strength" && sectionName === "Strength") {
+      return false;
+    }
+
+    // Hide generic speed fallback rows; Bambu UI uses curated speed
+    // groups (Initial layer speed, Other layers speed, Travel speed, Acceleration).
+    if (entry.category && entry.category.tab === "speed" && sectionName === "Speed") {
       return false;
     }
 
@@ -6899,6 +6960,12 @@
       }
     }
 
+    if (sectionName === "Advanced" && entry.category && entry.category.tab === "strength") {
+      if (canonical === "detect_floating_vertical_shells" && !isSliceProcessDetectNarrowInternalSolidInfillEnabled(base, overrides)) {
+        return false;
+      }
+    }
+
     // Match Bambu UI: adaptive layer height is not shown in the standard
     // Layer height panel for these profiles.
     if (canonical === "adaptive_layer_height") {
@@ -6913,6 +6980,20 @@
     if (sectionName === "Wall generator") {
       if (canonical === "wall_generator") return true;
       return isSliceProcessWallGeneratorArachne(base, overrides);
+    }
+
+    if (sectionName === "Support" && entry.category && entry.category.tab === "support") {
+      const allowedSupportKeys = new Set([
+        "enable_support",
+        "support_type",
+        "support_style",
+        "support_threshold_angle",
+        "support_on_build_plate_only",
+        "remove_small_overhangs",
+      ]);
+      if (!allowedSupportKeys.has(canonical)) {
+        return false;
+      }
     }
 
     return true;
@@ -6946,13 +7027,15 @@
     const canonical = canonicalSliceProcessKey(key);
     if (normalized === "skirt_loops") return "loops";
     if (normalized === "skirt_height") return "layers";
+    if (canonical === "small_perimeter_threshold") return "mm";
     if (normalized === "prime_tower_infill_gap") return "%";
     if (canonical === "bridge_flow" || canonical === "top_solid_infill_flow_ratio" || canonical === "initial_layer_flow_ratio") return "";
+    if (canonical === "monotonic_travel_into_wall") return "%";
     if (canonical === "top_area_threshold") return "%";
     if (canonical === "max_travel_detour_distance") return "mm or %";
     if (canonical === "seam_gap" || canonical === "wipe_speed") return "%";
     if (canonical === "seam_slope_start_height" || canonical === "seam_slope_gap") return "mm/%";
-    if (processKeyMatches(normalized, [/minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/])) return "mm2";
+    if (processKeyMatches(normalized, [/minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/])) return "mm²";
     if (processKeyMatches(normalized, [/length_of_sparse_infill_anchor/, /maximum_length_of_sparse_infill_anchor/, /sparse_infill_anchor_length/])) {
       return "mm or %";
     }
@@ -6961,10 +7044,10 @@
       return "layers";
     }
     if (processKeyMatches(normalized, [/small_perimeter_speed/, /vertical_shell_speed/])) return "mm/s or %";
-    if (processKeyMatches(normalized, [/sparse_infill_acceleration/, /infill_acceleration/, /internal_infill_acceleration/])) return "mm/s2 or %";
-    if (processKeyMatches(normalized, [/accel/, /acceleration/])) return "mm/s2";
-    if (processKeyMatches(normalized, [/(^|_)angle($|_)/])) return "deg";
-    if (processKeyMatches(normalized, [/infill_direction/, /bridge_direction/])) return "deg";
+    if (processKeyMatches(normalized, [/sparse_infill_acceleration/, /infill_acceleration/, /internal_infill_acceleration/])) return "mm/s² or %";
+    if (processKeyMatches(normalized, [/accel/, /acceleration/])) return "mm/s²";
+    if (processKeyMatches(normalized, [/(^|_)angle($|_)/])) return "°";
+    if (processKeyMatches(normalized, [/infill_direction/, /bridge_direction/])) return "°";
     if (processKeyMatches(normalized, [/(^|_)(filter_margin|transition_length|minimum_wall_width|min_wall_width|minimum_feature_size|min_feature_size)($|_)/])) {
       return "%";
     }
@@ -7074,7 +7157,7 @@
       return { tab: "strength", section: "Walls", sectionOrder: 10 };
     }
 
-    if (processKeyMatches(normalized, [/top_surface_pattern/, /top_surface_density/, /top_shell_layers/, /top_shell_thickness/, /top_paint_penetration_layers/, /bottom_surface_pattern/, /bottom_surface_density/, /bottom_shell_layers/, /bottom_shell_thickness/, /bottom_paint_penetration_layers/, /internal_solid_infill_pattern/, /solid_infill_pattern/])) {
+    if (processKeyMatches(normalized, [/top_surface_pattern/, /interface_shells/, /top_surface_density/, /top_shell_layers/, /top_shell_thickness/, /top_paint_penetration_layers/, /bottom_surface_pattern/, /bottom_surface_density/, /bottom_shell_layers/, /bottom_shell_thickness/, /bottom_paint_penetration_layers/, /internal_solid_infill_pattern/, /solid_infill_pattern/])) {
       return { tab: "strength", section: "Top/bottom shells", sectionOrder: 20 };
     }
 
@@ -7082,7 +7165,7 @@
       return { tab: "strength", section: "Sparse infill", sectionOrder: 30 };
     }
 
-    if (processKeyMatches(normalized, [/infill_wall_overlap/, /infill_overlap/, /infill_direction/, /bridge_direction/, /minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/, /infill_combination/, /detect_narrow_internal_solid_infill/, /ensure_vertical_shell_thickness/, /detect_floating_vertical_shells/])) {
+    if (processKeyMatches(normalized, [/infill_wall_overlap/, /infill_overlap/, /monotonic_travel_into_wall/, /infill_direction/, /bridge_direction/, /minimum_sparse_infill_threshold/, /minimum_sparse_infill_area/, /infill_combination/, /detect_narrow_internal_solid_infill/, /ensure_vertical_shell_thickness/, /detect_floating_vertical_shells/])) {
       return { tab: "strength", section: "Advanced", sectionOrder: 40 };
     }
 
@@ -7130,7 +7213,7 @@
   function buildSliceProcessSettingRowHtml(key, baseValue, currentValue, hasOverride, valueType, optionsByKey, meta) {
     const keyEsc = esc(key);
     const labelEsc = esc(meta.label);
-    const unit = valueType === "number" ? sliceProcessSettingUnit(key) : "";
+    const unit = valueType === "bool" ? "" : sliceProcessSettingUnit(key);
     const canonical = canonicalSliceProcessKey(key);
     const disabled = !!(meta && meta.disabled);
     const disabledAttr = disabled ? " disabled" : "";
@@ -7141,7 +7224,6 @@
           <div class="slice-process-setting-key">${labelEsc}</div>
           <label class="slice-process-setting-bool">
             <input type="checkbox" data-slice-setting-key="${keyEsc}" data-slice-setting-type="bool" ${currentValue ? "checked" : ""}${disabledAttr}>
-            <span>${currentValue ? "On" : "Off"}</span>
           </label>
         </div>
       `;
@@ -7198,13 +7280,19 @@
     pushOption(baseValue);
     if (hasOverride) pushOption(currentValue);
     const forceSelectInput = isSupportStyleField;
-    const forcePlainInput = new Set([
+    const forcePlainInput = (meta && meta.category && meta.category.tab === "speed") || new Set([
       "bridge_flow",
       "top_solid_infill_flow_ratio",
       "initial_layer_flow_ratio",
       "smooth_coefficient",
       "top_area_threshold",
       "max_travel_detour_distance",
+      "top_shell_layers",
+      "top_shell_thickness",
+      "top_paint_penetration_layers",
+      "bottom_shell_layers",
+      "bottom_shell_thickness",
+      "bottom_paint_penetration_layers",
     ]).has(canonical);
 
     const unitHtml = unit ? `<span class="slice-process-setting-unit">${esc(unit)}</span>` : "";
@@ -7309,7 +7397,7 @@
     if (!filtered.length) {
       els.sliceProcessSettingsList.innerHTML = `<div class="slice-process-setting-empty hint">Ingen settings matcher denne fane/søgning.</div>`;
     } else {
-      const supportEnabledForEditing = activeTab !== "support" || isSliceProcessSupportEnabled(base, overrides);
+      const supportEnabled = isSliceProcessSupportEnabled(base, overrides);
       const autoCircleCompensationEnabled = isSliceProcessAutoCircleCompensationEnabled(base, overrides);
       const sorted = filtered
         .map((entry) => {
@@ -7342,7 +7430,10 @@
             const currentValue = hasOverride ? overrides[key] : baseValue;
             const valueType = sliceProcessValueInputType(baseValue);
             const canonical = canonicalSliceProcessKey(key);
-            const disableSupportRow = activeTab === "support" && !supportEnabledForEditing && canonical !== "enable_support";
+            const disableSupportRow = activeTab === "support"
+              && entry.category.section === "Support"
+              && !supportEnabled
+              && canonical !== "enable_support";
             const disablePrecisionCircleCompRow = entry.category.section === "Precision"
               && autoCircleCompensationEnabled
               && (canonical === "xy_hole_compensation" || canonical === "xy_contour_compensation");
@@ -7355,6 +7446,7 @@
               optionsByKey,
               {
                 label: entry.label,
+                category: entry.category,
                 disabled: disableSupportRow || disablePrecisionCircleCompRow,
               }
             );
@@ -9534,6 +9626,26 @@
     const process_overrides = Object.keys(apiBaseSettings).length
       ? { ...filteredOverrides }
       : { ...normalizedOverrides };
+
+    // Match Bambu behavior: this dependent setting is only active when
+    // "Detect narrow internal solid infill" is enabled.
+    const detectNarrowEnabled = isSliceProcessDetectNarrowInternalSolidInfillEnabled(
+      state.sliceProcessSettingsBase,
+      settingsOverrides
+    );
+    if (!detectNarrowEnabled) {
+      const dependentCanonicalKey = "detect_floating_vertical_shells";
+      const lookupMap = Object.keys(apiBaseSettings).length
+        ? apiBaseSettings
+        : (state.sliceProcessSettingsBase && typeof state.sliceProcessSettingsBase === "object"
+          ? state.sliceProcessSettingsBase
+          : {});
+      const resolvedDependentKey = Object.keys(lookupMap).find(
+        (key) => canonicalSliceProcessKey(key) === dependentCanonicalKey
+      ) || dependentCanonicalKey;
+      process_overrides[resolvedDependentKey] = false;
+    }
+
     if (!usesDualNozzle) {
       delete process_overrides.print_extruder_id;
       delete process_overrides.printer_extruder_id;
