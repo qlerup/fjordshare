@@ -12691,9 +12691,34 @@
   async function loadPrintReadyProjects() {
     if (!els.printReadyAdminList) return;
     const listEndpoint = state.role === "admin" ? "/api/admin/print-ready" : "/api/print-ready";
+    const finishedEndpoint = state.role === "admin" ? "/api/admin/finished-projects" : "/api/finished-projects";
     try {
-      const data = await api(listEndpoint);
-      state.printReadyProjects = Array.isArray(data.items) ? data.items : [];
+      const [activeResult, finishedResult] = await Promise.allSettled([
+        api(listEndpoint),
+        api(finishedEndpoint),
+      ]);
+
+      if (activeResult.status !== "fulfilled") {
+        throw activeResult.reason;
+      }
+
+      const activeItems = Array.isArray(activeResult.value && activeResult.value.items)
+        ? activeResult.value.items
+        : [];
+      const finishedItems = finishedResult.status === "fulfilled"
+        && Array.isArray(finishedResult.value && finishedResult.value.items)
+        ? finishedResult.value.items
+        : [];
+      const seenProjectIds = new Set();
+      const combinedItems = [];
+      for (const project of [...activeItems, ...finishedItems]) {
+        const projectId = Number(project && project.id ? project.id : 0);
+        if (projectId > 0 && seenProjectIds.has(projectId)) continue;
+        if (projectId > 0) seenProjectIds.add(projectId);
+        combinedItems.push(project);
+      }
+
+      state.printReadyProjects = combinedItems;
       showStatus(els.printReadyStatus, "");
     } catch (err) {
       state.printReadyProjects = [];
@@ -12722,6 +12747,7 @@
     { key: "unprinted", label: "Ikke printet" },
     { key: "partial", label: "Delvist printet" },
     { key: "all_printed", label: "Alle printet" },
+    { key: "completed", label: "Færdige" },
     { key: "missing_project_files", label: "Mangler projektfiler" },
     { key: "cancelled", label: "Annulleret" },
   ];
@@ -12768,6 +12794,7 @@
     if (key === "unprinted") return !metrics.isFinal && metrics.printedQuantity <= 0;
     if (key === "partial") return !metrics.isFinal && metrics.printedQuantity > 0 && metrics.printedQuantity < totalToPrint;
     if (key === "all_printed") return !metrics.isFinal && totalToPrint > 0 && metrics.printedQuantity >= totalToPrint;
+    if (key === "completed") return metrics.isCompleted;
     if (key === "missing_project_files") return !metrics.isFinal && metrics.projectFileCount <= 0;
     if (key === "cancelled") return metrics.isCancelled;
     return true;
@@ -12830,6 +12857,7 @@
   function printReadyUserGroupHtml(username, items, options = {}) {
     const stats = printReadyUserStats(items);
     const finishedMode = !!(options && options.finished);
+    const mixedFinishedMode = !!(options && options.mixedFinished);
     return `
       <section class="print-ready-user-group">
         <div class="print-ready-user-head">
@@ -12842,7 +12870,10 @@
           ${state.role === "admin" && stats.missingProjectFiles ? `<span class="print-ready-user-warning">${stats.missingProjectFiles} mangler projektfil(er)</span>` : ""}
         </div>
         <div class="print-ready-projects">
-          ${items.map((project) => renderPrintReadyProjectCard(project, { finished: finishedMode })).join("")}
+          ${items.map((project) => {
+            const projectIsCompleted = normalizePrintReadyProjectStatus(project && project.status) === "completed";
+            return renderPrintReadyProjectCard(project, { finished: finishedMode || (mixedFinishedMode && projectIsCompleted) });
+          }).join("")}
         </div>
       </section>
     `;
@@ -12959,7 +12990,7 @@
 
     if (!isAdmin) {
       els.printReadyAdminList.innerHTML = `
-        ${printReadyUserGroupHtml(state.username || "Dine projekter", projects)}
+        ${printReadyUserGroupHtml(state.username || "Dine projekter", projects, { mixedFinished: true })}
       `;
       return;
     }
@@ -12978,7 +13009,7 @@
     }
 
     els.printReadyAdminList.innerHTML = Array.from(groups.entries())
-      .map(([username, items]) => printReadyUserGroupHtml(username, items))
+      .map(([username, items]) => printReadyUserGroupHtml(username, items, { mixedFinished: true }))
       .join("");
   }
 
