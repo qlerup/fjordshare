@@ -18637,6 +18637,7 @@
     }
     if (els.finishedProjectsFilters) {
       els.finishedProjectsFilters.addEventListener("click", (event) => {
+        if (state.role !== "admin") return;
         const btn = event.target && event.target.closest
           ? event.target.closest("[data-finished-user-filter]")
           : null;
