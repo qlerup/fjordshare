@@ -1789,6 +1789,17 @@ def _supports_thumbnail_for_ext(ext: str) -> bool:
     return str(ext or "").lower() in THUMBABLE_3D_EXTENSIONS
 
 
+def _effective_file_ext(ext: str, filename: str = "") -> str:
+    raw_ext = str(ext or "").strip().lower()
+    if raw_ext and not raw_ext.startswith("."):
+        raw_ext = f".{raw_ext}"
+    name_ext = str(Path(str(filename or "")).suffix or "").strip().lower()
+    if raw_ext and name_ext and raw_ext != name_ext:
+        # Prefer filename extension if DB ext is stale/mismatched.
+        return name_ext
+    return raw_ext or name_ext
+
+
 def _supports_slicing_for_ext(ext: str) -> bool:
     return str(ext or "").lower() in SLICABLE_3D_EXTENSIONS
 
@@ -8023,7 +8034,7 @@ def _process_slice_job_payload(payload: Dict[str, Any]) -> None:
         },
     )
 
-    ext = str(row["ext"] or "").lower()
+    ext = _effective_file_ext(row["ext"], row["filename"])
     if not _supports_slicing_for_ext(ext):
         _record_slice_debug_event(
             slice_debug_trace,
@@ -12298,7 +12309,7 @@ def _slice_output_name_matches_source(source_filename: str, output_filename: str
 
 
 def _slice_output_rows_for_source_row(source_row: sqlite3.Row, candidate_rows: list[sqlite3.Row]) -> list[sqlite3.Row]:
-    source_ext = str(source_row["ext"] or "").lower()
+    source_ext = _effective_file_ext(source_row["ext"], source_row["filename"])
     if not _supports_slicing_for_ext(source_ext):
         return []
 
@@ -12559,7 +12570,7 @@ def serialize_file_row(
     ext = str(row["ext"] or "").lower()
     is_3d = ext in THREE_D_EXTENSIONS
     is_3d_openable = ext in THREE_D_VIEWER_EXTENSIONS
-    can_slice = _supports_slicing_for_ext(ext)
+    can_slice = _supports_slicing_for_ext(_effective_file_ext(ext, str(row["filename"] or "")))
     slice_status = str(row["slice_status"] or "none").strip().lower() or "none"
     # Allow 3D preview via model-viewer for GLB/GLTF natively and for STL/OBJ/STEP via GLB preview.
     # .lys/.lyt/.pwscene thumbnails are extracted from embedded preview images, not rendered as 3D preview models.
@@ -17259,7 +17270,7 @@ def api_file_slice(file_id: int):
     if not user_can_access_file(current_user, row, "upload"):
         return jsonify({"ok": False, "error": "Ingen rettighed til at slice filen"}), 403
 
-    ext = str(row["ext"] or "").lower()
+    ext = _effective_file_ext(row["ext"], row["filename"])
     if not _supports_slicing_for_ext(ext):
         return jsonify({"ok": False, "error": "Kun STL filer kan slices"}), 400
 

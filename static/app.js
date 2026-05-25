@@ -796,6 +796,21 @@
     return idx >= 0 ? name.slice(idx) : "";
   }
 
+  function fileNormalizedExt(file) {
+    const raw = String((file && file.ext) || "").trim().toLowerCase();
+    if (raw) return raw.startsWith(".") ? raw : `.${raw}`;
+    return fileExt(file && file.filename);
+  }
+
+  function isStlSliceFile(file) {
+    if (!file || file.is_external_link) return false;
+    return fileNormalizedExt(file) === ".stl";
+  }
+
+  function canUseSlicerForFile(file) {
+    return !!(file && file.can_slice && isStlSliceFile(file));
+  }
+
   function isSupportedPrimaryUpload(file) {
     return !!file && PRIMARY_UPLOAD_ALLOWED_EXTS.has(fileExt(file.name));
   }
@@ -4544,7 +4559,7 @@
   }
 
   function normalizedSliceStatus(file) {
-    if (!file || !file.can_slice) return "none";
+    if (!canUseSlicerForFile(file)) return "none";
     const status = String(file.slice_status || "none").trim().toLowerCase();
     if (status === "queued" || status === "processing" || status === "ready" || status === "error") {
       return status;
@@ -4553,7 +4568,7 @@
   }
 
   function sliceBadgeHtml(file) {
-    if (!file || !file.can_slice) return "";
+    if (!canUseSlicerForFile(file)) return "";
     const status = normalizedSliceStatus(file);
     if (status === "none") return "";
 
@@ -9968,7 +9983,7 @@
       return;
     }
     const file = fileById(fileId);
-    if (!file || !file.can_slice || state.role !== "admin") return;
+    if (!file || !canUseSlicerForFile(file) || state.role !== "admin") return;
 
     state.currentSliceFileId = Number(file.id || 0);
     stopSliceResultWatch();
@@ -10359,7 +10374,7 @@
   }
 
   function fileInfoSliceOutputsEnabledForFile(file) {
-    return !!(file && file.can_slice && !file.is_external_link);
+    return canUseSlicerForFile(file);
   }
 
   function renderFileInfoSliceOutputs(file, items = [], options = {}) {
@@ -10501,7 +10516,7 @@
     const sliceStatus = normalizedSliceStatus(file);
     const sliceErrorMessage = String(file.slice_error || "").trim();
     const canInspectSliceError = state.role === "admin"
-      && !!file.can_slice
+      && canUseSlicerForFile(file)
       && sliceStatus === "error"
       && !!sliceErrorMessage;
 
@@ -10588,7 +10603,7 @@
     }
     clearFileInfoSliceDebug();
     if (els.fileInfoSliceBtn) {
-      const canSlice = state.role === "admin" && !!file.can_slice;
+      const canSlice = state.role === "admin" && canUseSlicerForFile(file);
       const isQueued = sliceStatus === "queued";
       els.fileInfoSliceBtn.classList.toggle("hidden", !canSlice);
       els.fileInfoSliceBtn.disabled = !canSlice || isQueued || SLICE_ACTIONS_DISABLED;
@@ -11066,7 +11081,7 @@
     let error = 0;
 
     for (const file of Array.isArray(state.files) ? state.files : []) {
-      if (!file || !file.can_slice) continue;
+      if (!canUseSlicerForFile(file)) continue;
       const status = normalizedSliceStatus(file);
       if (status === "none") continue;
       total += 1;
@@ -16832,7 +16847,7 @@
       const id = Number(sliceBtn.dataset.fileId || 0);
       const file = fileById(id);
       if (!file) return;
-      if (state.role === "admin" && !!file.can_slice && !sliceBtn.disabled) {
+      if (state.role === "admin" && canUseSlicerForFile(file) && !sliceBtn.disabled) {
         await openSliceModal(id);
       } else {
         openFileInfoDrawer(id);
