@@ -45,6 +45,7 @@
     printReadyFilter: "all",
     printReadyExpandedProjectIds: new Set(),
     finishedProjects: [],
+    finishedProjectsUserFilter: "all",
     rejectedFileTypes: [],
     tracking: [],
     users: [],
@@ -512,6 +513,7 @@
     printReadyAdminList: document.getElementById("printReadyAdminList"),
     finishedProjectsRefreshBtn: document.getElementById("finishedProjectsRefreshBtn"),
     finishedProjectsStatus: document.getElementById("finishedProjectsStatus"),
+    finishedProjectsFilters: document.getElementById("finishedProjectsFilters"),
     finishedProjectsList: document.getElementById("finishedProjectsList"),
     rejectedFileTypesRefreshBtn: document.getElementById("rejectedFileTypesRefreshBtn"),
     rejectedFileTypesClearBtn: document.getElementById("rejectedFileTypesClearBtn"),
@@ -12805,6 +12807,63 @@
     `;
   }
 
+  function finishedProjectOwnerUsername(project) {
+    return String((project && project.owner_username) || "Ukendt bruger");
+  }
+
+  function projectMatchesFinishedUserFilter(project, filterUser) {
+    const activeUser = String(filterUser || "all");
+    if (activeUser === "all") return true;
+    return finishedProjectOwnerUsername(project) === activeUser;
+  }
+
+  function renderFinishedProjectsFilters(projects) {
+    if (!els.finishedProjectsFilters) return;
+    const list = Array.isArray(projects) ? projects : [];
+    if (state.role !== "admin" || !list.length) {
+      state.finishedProjectsUserFilter = "all";
+      els.finishedProjectsFilters.classList.add("hidden");
+      els.finishedProjectsFilters.innerHTML = "";
+      return;
+    }
+
+    const userCounts = new Map();
+    for (const project of list) {
+      const username = finishedProjectOwnerUsername(project);
+      userCounts.set(username, Number(userCounts.get(username) || 0) + 1);
+    }
+
+    const options = [
+      { key: "all", label: "Alle brugere", count: list.length },
+      ...Array.from(userCounts.entries())
+        .sort((a, b) => a[0].localeCompare(b[0], "da", { sensitivity: "base" }))
+        .map(([username, count]) => ({ key: username, label: username, count })),
+    ];
+
+    const active = options.some((option) => option.key === state.finishedProjectsUserFilter)
+      ? state.finishedProjectsUserFilter
+      : "all";
+    state.finishedProjectsUserFilter = active;
+
+    const visibleCount = list.filter((project) => projectMatchesFinishedUserFilter(project, active)).length;
+
+    els.finishedProjectsFilters.classList.remove("hidden");
+    els.finishedProjectsFilters.innerHTML = `
+      <div class="print-ready-filter-row" role="toolbar" aria-label="Filtrer færdige projekter efter bruger">
+        ${options.map((option) => {
+          const isActive = option.key === active;
+          return `
+            <button class="print-ready-filter-btn ${isActive ? "active" : ""}" type="button" data-finished-user-filter="${esc(option.key)}" aria-pressed="${isActive ? "true" : "false"}">
+              <span>${esc(option.label)}</span>
+              <strong>${option.count}</strong>
+            </button>
+          `;
+        }).join("")}
+      </div>
+      <div class="print-ready-filter-summary">Viser ${visibleCount} af ${list.length} projekt(er)</div>
+    `;
+  }
+
   function printReadyUserStats(projects) {
     return Array.from(projects || []).reduce((stats, project) => {
       const metrics = printReadyProjectMetrics(project);
@@ -12986,21 +13045,31 @@
     if (!els.finishedProjectsList) return;
     const isAdmin = state.role === "admin";
     const projects = Array.isArray(state.finishedProjects) ? state.finishedProjects : [];
+    renderFinishedProjectsFilters(projects);
     if (!projects.length) {
       els.finishedProjectsList.innerHTML = `<div class="hint">${isAdmin ? "Ingen færdige projekter endnu." : "Du har ingen færdige projekter endnu."}</div>`;
       return;
     }
 
+    const filteredProjects = isAdmin
+      ? projects.filter((project) => projectMatchesFinishedUserFilter(project, state.finishedProjectsUserFilter))
+      : projects;
+
+    if (!filteredProjects.length) {
+      els.finishedProjectsList.innerHTML = `<div class="hint">Ingen færdige projekter matcher filteret.</div>`;
+      return;
+    }
+
     if (!isAdmin) {
       els.finishedProjectsList.innerHTML = `
-        ${printReadyUserGroupHtml(state.username || "Dine projekter", projects, { finished: true })}
+        ${printReadyUserGroupHtml(state.username || "Dine projekter", filteredProjects, { finished: true })}
       `;
       return;
     }
 
     const groups = new Map();
-    for (const project of projects) {
-      const user = String(project.owner_username || "Ukendt bruger");
+    for (const project of filteredProjects) {
+      const user = finishedProjectOwnerUsername(project);
       if (!groups.has(user)) groups.set(user, []);
       groups.get(user).push(project);
     }
@@ -18564,6 +18633,17 @@
         event.preventDefault();
         state.printReadyFilter = String(btn.dataset.printReadyFilter || "all") || "all";
         renderPrintReadyProjects();
+      });
+    }
+    if (els.finishedProjectsFilters) {
+      els.finishedProjectsFilters.addEventListener("click", (event) => {
+        const btn = event.target && event.target.closest
+          ? event.target.closest("[data-finished-user-filter]")
+          : null;
+        if (!btn) return;
+        event.preventDefault();
+        state.finishedProjectsUserFilter = String(btn.dataset.finishedUserFilter || "all") || "all";
+        renderFinishedProjects();
       });
     }
     if (els.finishedProjectsRefreshBtn) {
