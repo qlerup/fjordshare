@@ -2879,10 +2879,10 @@ input[type="checkbox"] {
 .tracking-status {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--border);
+  border: 1px solid #2fc489;
   border-radius: 999px;
-  background: var(--panel-2);
-  color: var(--text);
+  background: #147a57;
+  color: #f4fff9;
   padding: 2px 9px;
   min-height: 22px;
   font-size: 12px;
