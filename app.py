@@ -178,6 +178,11 @@ PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS = {".step", ".3mf", ".stl", ".obj", ".lys",
 PRIMARY_3D_UPLOAD_ALLOWED_EXTS = {*PRIMARY_3D_MODEL_UPLOAD_ALLOWED_EXTS, ".zip"}
 PRIMARY_3D_MODEL_UPLOAD_ALLOWED_LABEL = ".stl, .step, .3mf, .obj, .lys, .lyt og .pwscene"
 PRIMARY_3D_UPLOAD_ALLOWED_LABEL = ".stl, .step, .zip, .3mf, .obj, .lys, .lyt og .pwscene"
+PRESUPPORTED_SORT_FOLDER_NAME = "Presupported"
+PRESUPPORTED_SORT_NAME_RE = re.compile(
+    r"(?:^|\s)(?:pre\s*support(?:ed|s|et|eret)?|presupport(?:ed|s|et|eret)?|support(?:ed|s|et|eret|er)?)(?:\s|$)",
+    re.IGNORECASE,
+)
 THUMB_RENDER_FACE_LIMIT = 200_000
 THUMB_SIZE_PX = int(str(os.getenv("THUMB_SIZE_PX", "320")) or "320")
 THUMB_FAST_SIZE_PX = int(str(os.getenv("THUMB_FAST_SIZE_PX", "220")) or "220")
@@ -11963,6 +11968,41 @@ def allocate_unique_record_filename(folder_path: str, preferred_filename: str) -
     return sanitize_filename(f"{stem}-{secrets.token_hex(4)}{suffix}")
 
 
+def _presupported_sort_match_text(filename: str) -> str:
+    stem = str(Path(str(filename or "")).stem or filename or "").lower()
+    stem = re.sub(r"[^a-z0-9]+", " ", stem)
+    return re.sub(r"\s+", " ", stem).strip()
+
+
+def filename_suggests_presupported(filename: str) -> bool:
+    return bool(PRESUPPORTED_SORT_NAME_RE.search(_presupported_sort_match_text(filename)))
+
+
+def _allocate_unique_move_filename(
+    conn: sqlite3.Connection,
+    target_folder: str,
+    preferred_filename: str,
+    current_file_id: int,
+) -> str:
+    folder = normalize_folder_path(target_folder)
+    _, abs_folder = folder_abs_path(folder)
+    preferred = sanitize_filename(preferred_filename)
+    stem = str(Path(preferred).stem or "fil").strip() or "fil"
+    suffix = str(Path(preferred).suffix or "").strip()
+
+    for counter in range(5000):
+        candidate = sanitize_filename(f"{stem}{'' if counter == 0 else f'_{counter}'}{suffix}")
+        rel_path = upload_relative_path(folder, candidate)
+        row = conn.execute("SELECT id FROM files WHERE rel_path=? LIMIT 1", (rel_path,)).fetchone()
+        if row is not None and int(row["id"] or 0) != int(current_file_id):
+            continue
+        if (abs_folder / candidate).exists():
+            continue
+        return candidate
+
+    return sanitize_filename(f"{stem}-{secrets.token_hex(4)}{suffix}")
+
+
 def upsert_file_record(
     folder_path: str,
     filename: str,
@@ -18693,6 +18733,163 @@ def api_file_by_upload_client(client_id: str):
         return jsonify({"ok": False, "error": "Ingen adgang"}), 403
 
     return jsonify({"ok": True, "item": serialize_file_row(row)})
+
+
+@app.route("/api/files/auto-sort-presupported", methods=["POST"])
+@login_required
+def api_files_auto_sort_presupported():
+    body = request.get_json(silent=True) or {}
+    raw_file_ids = body.get("file_ids")
+    file_ids = _normalize_unique_positive_ids(raw_file_ids if isinstance(raw_file_ids, list) else [])
+    if not file_ids:
+        return jsonify({"ok": True, "moved_count": 0, "moved_ids": [], "items": [], "skipped_count": 0})
+
+    rows_by_id: dict[int, sqlite3.Row] = {}
+    with closing(get_conn()) as conn:
+        chunk_size = 800
+        for idx in range(0, len(file_ids), chunk_size):
+            chunk = file_ids[idx : idx + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"SELECT * FROM files WHERE id IN ({placeholders})",
+                tuple(chunk),
+            ).fetchall()
+            for row in rows:
+                rows_by_id[int(row["id"] or 0)] = row
+
+    moved_ids: list[int] = []
+    moved_items: list[dict[str, Any]] = []
+    target_folders: set[str] = set()
+    skipped_count = 0
+
+    for file_id in file_ids:
+        row = rows_by_id.get(int(file_id))
+        if row is None:
+            skipped_count += 1
+            continue
+
+        try:
+            filename = str(row["filename"] or "").strip()
+            source_folder = normalize_folder_path(str(row["folder_path"] or ""))
+            source_parts = [part for part in source_folder.split("/") if part]
+            if not filename_suggests_presupported(filename):
+                continue
+            if not source_folder or (source_parts and source_parts[-1].lower() == PRESUPPORTED_SORT_FOLDER_NAME.lower()):
+                continue
+            if not user_can_access_file(current_user, row, "view"):
+                skipped_count += 1
+                continue
+            if not current_user.is_admin and not _same_actor_identity(row["uploaded_by"], current_user.username):
+                skipped_count += 1
+                continue
+            if not permission_allows(permission_for_user_folder(current_user, source_folder), "upload"):
+                skipped_count += 1
+                continue
+
+            target_folder = normalize_folder_path(f"{source_folder}/{PRESUPPORTED_SORT_FOLDER_NAME}")
+            if not folder_allows_upload_target(target_folder, allow_users_subfolders=current_user.is_admin):
+                skipped_count += 1
+                continue
+            if not current_user.is_admin and not user_daily_folder_allows_writes(current_user, target_folder):
+                skipped_count += 1
+                continue
+            if not permission_allows(permission_for_user_folder(current_user, target_folder), "upload"):
+                skipped_count += 1
+                continue
+
+            ensure_upload_folder_hierarchy(target_folder, owner_user_id=int(current_user.id))
+            _, target_abs = folder_abs_path(target_folder)
+
+            with closing(get_conn()) as conn:
+                fresh = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+                if fresh is None:
+                    skipped_count += 1
+                    continue
+
+                fresh_folder = normalize_folder_path(str(fresh["folder_path"] or ""))
+                if fresh_folder != source_folder or not filename_suggests_presupported(str(fresh["filename"] or "")):
+                    skipped_count += 1
+                    continue
+                if not user_can_access_file(current_user, fresh, "view"):
+                    skipped_count += 1
+                    continue
+
+                source_path = file_disk_path(fresh)
+                if not source_path.exists() or not source_path.is_file():
+                    skipped_count += 1
+                    continue
+
+                target_name = _allocate_unique_move_filename(conn, target_folder, str(fresh["filename"] or ""), int(file_id))
+                target_path = (target_abs / target_name).resolve()
+                if not _is_relative_to(UPLOAD_ROOT, target_path):
+                    skipped_count += 1
+                    continue
+
+                moved_disk = False
+                try:
+                    shutil.move(str(source_path), str(target_path))
+                    moved_disk = True
+                    try:
+                        file_size = int(target_path.stat().st_size)
+                    except Exception:
+                        file_size = int(fresh["file_size"] or 0)
+                    ext = Path(target_name).suffix.lower()
+                    rel_path = upload_relative_path(target_folder, target_name)
+                    conn.execute(
+                        """
+                        UPDATE files
+                        SET folder_path=?, rel_path=?, filename=?, ext=?, mime_type=?, file_size=?
+                        WHERE id=?
+                        """,
+                        (
+                            target_folder,
+                            rel_path,
+                            target_name,
+                            ext,
+                            guess_mime(target_name, ext),
+                            file_size,
+                            int(file_id),
+                        ),
+                    )
+                    updated = conn.execute("SELECT * FROM files WHERE id=?", (int(file_id),)).fetchone()
+                    conn.commit()
+                except Exception:
+                    if moved_disk:
+                        try:
+                            if target_path.exists() and not source_path.exists():
+                                shutil.move(str(target_path), str(source_path))
+                        except Exception:
+                            pass
+                    raise
+
+            if updated is not None:
+                moved_ids.append(int(file_id))
+                moved_items.append(serialize_file_row(updated))
+                target_folders.add(target_folder)
+                try:
+                    log_activity(
+                        kind="upload",
+                        action="auto-sort-presupported",
+                        message="Fil flyttet til Presupported",
+                        level="info",
+                        folder_path=target_folder,
+                        target=target_name,
+                        actor=str(current_user.username or ""),
+                        file_id=int(file_id),
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            skipped_count += 1
+
+    return jsonify({
+        "ok": True,
+        "moved_count": len(moved_ids),
+        "moved_ids": moved_ids,
+        "items": moved_items,
+        "target_folders": sorted(target_folders),
+        "skipped_count": skipped_count,
+    })
 
 
 @app.route("/api/files/batch-delete", methods=["POST"])

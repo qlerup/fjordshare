@@ -14,6 +14,7 @@
   const UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY = "fjordshare.unseenUploadsOverlayExpanded.v1";
   const UNSEEN_UPLOADS_PAGE_SIZE = 24;
   const MAPPER_SEARCH_DEBOUNCE_MS = 1000;
+  const PRESUPPORTED_SORT_FOLDER_NAME = "Presupported";
 
   function readPersistedUnseenUploadsOverlayExpanded() {
     try {
@@ -11531,6 +11532,63 @@
     return resolved;
   }
 
+  function presupportedSortMatchText(filename) {
+    const base = String(filename || "").replace(/\.[^.]+$/, "");
+    let text = base.toLowerCase();
+    try {
+      text = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    } catch (_err) {
+      // Keep the original text if normalization is unavailable.
+    }
+    return text.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  }
+
+  function filenameSuggestsPresupported(filename) {
+    const text = presupportedSortMatchText(filename);
+    return /(?:^|\s)(?:pre\s*support(?:ed|s|et|eret)?|presupport(?:ed|s|et|eret)?|support(?:ed|s|et|eret|er)?)(?:\s|$)/i.test(text);
+  }
+
+  async function autoSortPresupportedUploads(uploadedFiles) {
+    const items = Array.isArray(uploadedFiles) ? uploadedFiles : [];
+    const candidateIds = Array.from(new Set(
+      items
+        .filter((item) => item && Number(item.id || 0) > 0)
+        .filter((item) => filenameSuggestsPresupported(item.filename || item.name || ""))
+        .map((item) => Number(item.id || 0))
+    ));
+    if (!candidateIds.length) {
+      return { movedCount: 0, movedIds: [], items: [], targetFolders: [], error: "" };
+    }
+
+    try {
+      const data = await api("/api/files/auto-sort-presupported", {
+        method: "POST",
+        body: { file_ids: candidateIds },
+      });
+      const movedItems = Array.isArray(data && data.items) ? data.items : [];
+      movedItems.forEach((item) => {
+        const id = Number(item && item.id ? item.id : 0);
+        const idx = state.files.findIndex((file) => Number(file && file.id ? file.id : 0) === id);
+        if (idx >= 0) state.files[idx] = item;
+      });
+      return {
+        movedCount: Math.max(0, Number(data && data.moved_count ? data.moved_count : 0)),
+        movedIds: Array.isArray(data && data.moved_ids) ? data.moved_ids : [],
+        items: movedItems,
+        targetFolders: Array.isArray(data && data.target_folders) ? data.target_folders : [],
+        error: "",
+      };
+    } catch (err) {
+      return {
+        movedCount: 0,
+        movedIds: [],
+        items: [],
+        targetFolders: [],
+        error: err && err.message ? err.message : "Automatisk sortering fejlede",
+      };
+    }
+  }
+
   function getMetadataCurrentItem() {
     if (!Array.isArray(state.pendingMetadata) || !state.pendingMetadata.length) return null;
     const lastIndex = state.pendingMetadata.length - 1;
@@ -12203,10 +12261,23 @@
       const doneLabel = uploadWasStopped ? "Upload stoppet" : "Upload færdig";
       showStatus(els.uploadStatus, `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}.`, uploadUiState.failedFiles ? "error" : "ok");
       let resolved = [];
+      let presupportedSortResult = { movedCount: 0, movedIds: [], items: [], targetFolders: [], error: "" };
       showUploadInterimOverlay("Indlæser filer...");
       try {
         resolved = await resolveUploadedItems(uploaded);
         const firstFolder = resolved.length ? String(resolved[0].folder_path || "").trim() : "";
+        if (resolved.length) {
+          showUploadInterimOverlay(`Sorterer ${PRESUPPORTED_SORT_FOLDER_NAME} filer...`);
+          presupportedSortResult = await autoSortPresupportedUploads(resolved);
+          const movedById = new Map(
+            Array.from(presupportedSortResult.items || [])
+              .map((item) => [Number(item && item.id ? item.id : 0), item])
+              .filter(([id]) => id > 0)
+          );
+          if (movedById.size) {
+            resolved = resolved.map((item) => movedById.get(Number(item && item.id ? item.id : 0)) || item);
+          }
+        }
         await loadFolders();
         if (firstFolder && els.folderSelect) {
           els.folderSelect.value = firstFolder;
@@ -12221,12 +12292,19 @@
           .map((item) => fileById(Number(item && item.id ? item.id : 0)) || item)
           .filter((item) => item && Number(item.id || 0) && !item.is_external_link);
         const openedLinkModal = openUploadModelLinksModal(uploadedFilesForLinks);
+        const sortPart = presupportedSortResult.movedCount
+          ? ` ${presupportedSortResult.movedCount} fil(er) flyttet til ${PRESUPPORTED_SORT_FOLDER_NAME}.`
+          : "";
+        const sortErrorPart = presupportedSortResult.error
+          ? ` Automatisk sortering fejlede: ${presupportedSortResult.error}.`
+          : "";
+        const finalKind = uploadUiState.failedFiles || presupportedSortResult.error ? "error" : "ok";
         showStatus(
           els.uploadStatus,
           openedLinkModal
-            ? `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}. Tilføj eventuelt model-link pr. fil i popuppen.`
-            : `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}. Tilføj eventuelt model-link via fil-info på den enkelte fil.`,
-          uploadUiState.failedFiles ? "error" : "ok"
+            ? `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}.${sortPart}${sortErrorPart} Tilføj eventuelt model-link pr. fil i popuppen.`
+            : `${doneLabel}: ${uploaded.length}/${attemptedCount} filer${failedPart}.${sortPart}${sortErrorPart} Tilføj eventuelt model-link via fil-info på den enkelte fil.`,
+          finalKind
         );
       }
     } else {
