@@ -2368,6 +2368,17 @@ input[type="checkbox"] {
   gap: 8px;
 }
 
+.upload-model-links-skip-all {
+  max-width: min(100%, 300px);
+  white-space: normal;
+  text-align: left;
+  line-height: 1.2;
+}
+
+.upload-model-links-skip-all.confirming {
+  border-color: rgba(245, 158, 11, 0.7);
+}
+
 .upload-model-current-file-title {
   font-size: 1.02rem;
   font-weight: 700;

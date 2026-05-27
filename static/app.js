@@ -15,6 +15,7 @@
   const UNSEEN_UPLOADS_PAGE_SIZE = 24;
   const MAPPER_SEARCH_DEBOUNCE_MS = 1000;
   const PRESUPPORTED_SORT_FOLDER_NAME = "Presupported";
+  const UPLOAD_MODEL_LINK_SKIP_ALL_THRESHOLD = 10;
 
   function readPersistedUnseenUploadsOverlayExpanded() {
     try {
@@ -142,6 +143,9 @@
     newUploadsDwellTimer: null,
     modelPreviewLoadToken: 0,
     modelModalCloseGuardUntil: 0,
+    uploadModelLinkSkipConfirming: false,
+    uploadModelLinkSkipCountdown: 0,
+    uploadModelLinkSkipTimer: null,
     currentPrintReadyProjectId: 0,
     currentPrintReadyProject: null,
     printReadyNameResolver: null,
@@ -10734,16 +10738,85 @@
     return state.uploadModelLinkFiles[idx] || null;
   }
 
+  function clearUploadModelLinkSkipTimer() {
+    if (state.uploadModelLinkSkipTimer) {
+      window.clearInterval(state.uploadModelLinkSkipTimer);
+      state.uploadModelLinkSkipTimer = null;
+    }
+  }
+
+  function uploadModelLinkSkipAllVisible() {
+    const total = Array.isArray(state.uploadModelLinkFiles) ? state.uploadModelLinkFiles.length : 0;
+    return total > UPLOAD_MODEL_LINK_SKIP_ALL_THRESHOLD;
+  }
+
+  function renderUploadModelLinkSkipAllButton() {
+    if (!els.uploadModelLinksSkipBtn) return;
+    const visible = uploadModelLinkSkipAllVisible();
+    els.uploadModelLinksSkipBtn.classList.toggle("hidden", !visible);
+    els.uploadModelLinksSkipBtn.classList.toggle("confirming", visible && state.uploadModelLinkSkipConfirming);
+    if (!visible) {
+      els.uploadModelLinksSkipBtn.textContent = "Jeg har ingen links til modellerne";
+      els.uploadModelLinksSkipBtn.disabled = true;
+      return;
+    }
+
+    if (state.uploadModelLinkSkipConfirming) {
+      const remaining = Math.max(0, Math.floor(Number(state.uploadModelLinkSkipCountdown || 0)));
+      els.uploadModelLinksSkipBtn.textContent = remaining > 0
+        ? `Er du sikker? Ja (${remaining})`
+        : "Er du sikker? Ja";
+      els.uploadModelLinksSkipBtn.disabled = !!state.uploadModelLinkSaving || remaining > 0;
+      return;
+    }
+
+    els.uploadModelLinksSkipBtn.textContent = "Jeg har ingen links til modellerne";
+    els.uploadModelLinksSkipBtn.disabled = !!state.uploadModelLinkSaving;
+  }
+
+  function resetUploadModelLinkSkipAllConfirm() {
+    clearUploadModelLinkSkipTimer();
+    state.uploadModelLinkSkipConfirming = false;
+    state.uploadModelLinkSkipCountdown = 0;
+    renderUploadModelLinkSkipAllButton();
+  }
+
+  function startUploadModelLinkSkipAllConfirm() {
+    if (!uploadModelLinkSkipAllVisible()) return;
+    clearUploadModelLinkSkipTimer();
+    state.uploadModelLinkSkipConfirming = true;
+    state.uploadModelLinkSkipCountdown = 5;
+    renderUploadModelLinkSkipAllButton();
+    state.uploadModelLinkSkipTimer = window.setInterval(() => {
+      state.uploadModelLinkSkipCountdown = Math.max(0, Number(state.uploadModelLinkSkipCountdown || 0) - 1);
+      if (state.uploadModelLinkSkipCountdown <= 0) {
+        clearUploadModelLinkSkipTimer();
+      }
+      renderUploadModelLinkSkipAllButton();
+    }, 1000);
+  }
+
+  function skipAllUploadModelLinks() {
+    if (!uploadModelLinkSkipAllVisible() || state.uploadModelLinkSaving) return;
+    if (!state.uploadModelLinkSkipConfirming) {
+      startUploadModelLinkSkipAllConfirm();
+      return;
+    }
+    if (Number(state.uploadModelLinkSkipCountdown || 0) > 0) return;
+    closeUploadModelLinksModal();
+    showStatus(els.uploadStatus, "Model-link popuppen blev lukket uden links.", "ok");
+  }
+
   function setUploadModelLinkBusy(busy) {
     state.uploadModelLinkSaving = !!busy;
     const total = Array.isArray(state.uploadModelLinkFiles) ? state.uploadModelLinkFiles.length : 0;
     const idx = Math.max(0, Math.min(Math.max(0, total - 1), Number(state.uploadModelLinkIndex || 0)));
     const isLast = total > 0 && idx >= total - 1;
     if (els.uploadModelLinksInput) els.uploadModelLinksInput.disabled = !!busy;
-    if (els.uploadModelLinksSkipBtn) els.uploadModelLinksSkipBtn.disabled = !!busy;
     if (els.uploadModelLinksPrevBtn) els.uploadModelLinksPrevBtn.disabled = !!busy || idx <= 0;
     if (els.uploadModelLinksNextBtn) els.uploadModelLinksNextBtn.disabled = !!busy || isLast;
     if (els.uploadModelLinksDoneBtn) els.uploadModelLinksDoneBtn.disabled = !!busy;
+    renderUploadModelLinkSkipAllButton();
   }
 
   function persistUploadModelLinkStepInput() {
@@ -10809,6 +10882,7 @@
     if (!items.length || !els.uploadModelLinksModal) return false;
     state.uploadModelLinkFiles = items;
     state.uploadModelLinkIndex = 0;
+    resetUploadModelLinkSkipAllConfirm();
     renderUploadModelLinkStep();
     els.uploadModelLinksModal.classList.remove("hidden");
     window.setTimeout(() => {
@@ -10821,6 +10895,7 @@
     state.uploadModelLinkFiles = [];
     state.uploadModelLinkIndex = 0;
     state.uploadModelLinkSaving = false;
+    resetUploadModelLinkSkipAllConfirm();
     showStatus(els.uploadModelLinksStatus, "");
     if (els.uploadModelLinksModal) els.uploadModelLinksModal.classList.add("hidden");
     if (els.uploadModelLinksInput) els.uploadModelLinksInput.value = "";
@@ -17677,7 +17752,7 @@
       });
     }
     if (els.uploadModelLinksSkipBtn) {
-      els.uploadModelLinksSkipBtn.addEventListener("click", closeUploadModelLinksModal);
+      els.uploadModelLinksSkipBtn.addEventListener("click", skipAllUploadModelLinks);
     }
     if (els.uploadModelLinksPrevBtn) {
       els.uploadModelLinksPrevBtn.addEventListener("click", () => {
@@ -17703,6 +17778,9 @@
     if (els.uploadModelLinksInput) {
       els.uploadModelLinksInput.addEventListener("input", () => {
         persistUploadModelLinkStepInput();
+        if (state.uploadModelLinkSkipConfirming) {
+          resetUploadModelLinkSkipAllConfirm();
+        }
         showStatus(els.uploadModelLinksStatus, "");
       });
       els.uploadModelLinksInput.addEventListener("keydown", (event) => {
