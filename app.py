@@ -13296,6 +13296,78 @@ def _print_ready_owner_for_selection(actor: User, rows: list[sqlite3.Row]) -> Us
     def owner_can_view_all(owner: User) -> bool:
         return all(user_can_access_file(owner, row, "view") for row in rows)
 
+    with closing(get_conn()) as conn:
+        user_rows = conn.execute(
+            "SELECT id, username, first_name, last_initial, role, home_folder FROM users"
+        ).fetchall()
+
+    def user_from_row(user_row: sqlite3.Row) -> Optional[User]:
+        return row_to_user(user_row)
+
+    def owner_from_folder_path(folder_path: str) -> Optional[User]:
+        folder = normalize_folder_path(folder_path)
+        if not folder:
+            return None
+
+        home_matches: list[tuple[int, User]] = []
+        for user_row in user_rows:
+            owner = user_from_row(user_row)
+            if owner is None:
+                continue
+            home = normalize_folder_path(str(user_row["home_folder"] or ""))
+            if home and (folder == home or folder.startswith(home + "/")):
+                home_matches.append((len(home), owner))
+        if home_matches:
+            return max(home_matches, key=lambda item: item[0])[1]
+
+        parts = [part for part in folder.split("/") if part]
+        if len(parts) < 2 or parts[0].lower() != "users":
+            return None
+
+        folder_user_segment = str(parts[1] or "").strip()
+        if not folder_user_segment:
+            return None
+
+        candidate_names = {
+            folder_user_segment.casefold(),
+            re.sub(r"\s*\(.*\)\s*$", "", folder_user_segment).strip().casefold(),
+        }
+        candidate_names = {name for name in candidate_names if name}
+
+        for user_row in user_rows:
+            owner = user_from_row(user_row)
+            if owner is None:
+                continue
+            username = str(user_row["username"] or "").strip()
+            first_name = str(_row_value(user_row, "first_name", "") or "")
+            last_initial = str(_row_value(user_row, "last_initial", "") or "")
+            user_id = int(user_row["id"] or 0)
+            known_names = {
+                username.casefold(),
+                username_to_folder_slug(username, user_id).casefold(),
+                user_profile_folder_segment(username, first_name, last_initial, user_id).casefold(),
+            }
+            if candidate_names.intersection(known_names):
+                return owner
+
+        return None
+
+    folder_owner_ids: set[int] = set()
+    folder_owner_by_id: dict[int, User] = {}
+    for row in rows:
+        owner = owner_from_folder_path(str(row["folder_path"] or ""))
+        if owner is None:
+            folder_owner_ids.clear()
+            folder_owner_by_id.clear()
+            break
+        folder_owner_ids.add(int(owner.id))
+        folder_owner_by_id[int(owner.id)] = owner
+
+    if len(folder_owner_ids) == 1:
+        owner = folder_owner_by_id[next(iter(folder_owner_ids))]
+        if owner_can_view_all(owner):
+            return owner
+
     uploaded_by_values: dict[str, str] = {}
     for row in rows:
         raw_name = str(row["uploaded_by"] or "").strip()
@@ -13309,34 +13381,6 @@ def _print_ready_owner_for_selection(actor: User, rows: list[sqlite3.Row]) -> Us
         candidate_name = next(iter(uploaded_by_values.values()))
         owner = fetch_user_by_username_casefold(candidate_name)
         if owner is not None and owner_can_view_all(owner):
-            return owner
-
-    with closing(get_conn()) as conn:
-        user_rows = conn.execute(
-            "SELECT id, username, first_name, last_initial, role, home_folder FROM users WHERE TRIM(COALESCE(home_folder, ''))<>''"
-        ).fetchall()
-
-    folder_owner_ids: set[int] = set()
-    folder_owner_by_id: dict[int, User] = {}
-    for row in rows:
-        folder = normalize_folder_path(str(row["folder_path"] or ""))
-        matches: list[tuple[int, sqlite3.Row]] = []
-        for user_row in user_rows:
-            home = normalize_folder_path(str(user_row["home_folder"] or ""))
-            if home and (folder == home or folder.startswith(home + "/")):
-                matches.append((len(home), user_row))
-        if not matches:
-            return actor
-        _length, best_row = max(matches, key=lambda item: item[0])
-        owner = row_to_user(best_row)
-        if owner is None:
-            return actor
-        folder_owner_ids.add(int(owner.id))
-        folder_owner_by_id[int(owner.id)] = owner
-
-    if len(folder_owner_ids) == 1:
-        owner = folder_owner_by_id[next(iter(folder_owner_ids))]
-        if owner_can_view_all(owner):
             return owner
 
     return actor
