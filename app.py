@@ -11636,6 +11636,18 @@ def fetch_user_by_username(username: str) -> Optional[User]:
     return row_to_user(row)
 
 
+def fetch_user_by_username_casefold(username: str) -> Optional[User]:
+    name = str(username or "").strip()
+    if not name:
+        return None
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT id, username, first_name, last_initial, role, home_folder FROM users WHERE lower(username)=lower(?) LIMIT 1",
+            (name,),
+        ).fetchone()
+    return row_to_user(row)
+
+
 def get_user_by_id(user_id: int) -> Optional[User]:
     with closing(get_conn()) as conn:
         row = conn.execute(
@@ -13275,6 +13287,61 @@ def _print_ready_selected_summary(folder_paths: list[str], file_ids: list[int]) 
     return " | ".join(parts)
 
 
+def _print_ready_owner_for_selection(actor: User, rows: list[sqlite3.Row]) -> User:
+    if not actor.is_admin:
+        return actor
+    if not rows:
+        return actor
+
+    def owner_can_view_all(owner: User) -> bool:
+        return all(user_can_access_file(owner, row, "view") for row in rows)
+
+    uploaded_by_values: dict[str, str] = {}
+    for row in rows:
+        raw_name = str(row["uploaded_by"] or "").strip()
+        normalized = _normalize_actor_identity(raw_name)
+        if not normalized:
+            uploaded_by_values = {}
+            break
+        uploaded_by_values.setdefault(normalized, raw_name)
+
+    if len(uploaded_by_values) == 1:
+        candidate_name = next(iter(uploaded_by_values.values()))
+        owner = fetch_user_by_username_casefold(candidate_name)
+        if owner is not None and owner_can_view_all(owner):
+            return owner
+
+    with closing(get_conn()) as conn:
+        user_rows = conn.execute(
+            "SELECT id, username, first_name, last_initial, role, home_folder FROM users WHERE TRIM(COALESCE(home_folder, ''))<>''"
+        ).fetchall()
+
+    folder_owner_ids: set[int] = set()
+    folder_owner_by_id: dict[int, User] = {}
+    for row in rows:
+        folder = normalize_folder_path(str(row["folder_path"] or ""))
+        matches: list[tuple[int, sqlite3.Row]] = []
+        for user_row in user_rows:
+            home = normalize_folder_path(str(user_row["home_folder"] or ""))
+            if home and (folder == home or folder.startswith(home + "/")):
+                matches.append((len(home), user_row))
+        if not matches:
+            return actor
+        _length, best_row = max(matches, key=lambda item: item[0])
+        owner = row_to_user(best_row)
+        if owner is None:
+            return actor
+        folder_owner_ids.add(int(owner.id))
+        folder_owner_by_id[int(owner.id)] = owner
+
+    if len(folder_owner_ids) == 1:
+        owner = folder_owner_by_id[next(iter(folder_owner_ids))]
+        if owner_can_view_all(owner):
+            return owner
+
+    return actor
+
+
 def normalize_print_ready_project_name(raw: Any) -> str:
     clean = sanitize_folder_segment(str(raw or ""), fallback="")
     clean = re.sub(r"\s+", " ", clean).strip()
@@ -13378,10 +13445,12 @@ def create_print_ready_project(
     rows: list[sqlite3.Row],
     folder_paths: list[str],
     file_ids: list[int],
+    actor_username: Optional[str] = None,
 ) -> int:
     home_folder = ensure_user_storage_ready(user)
     title = _print_ready_title(folder_paths, file_ids)
     summary = _print_ready_selected_summary(folder_paths, file_ids)
+    actor = str(actor_username or user.username or "").strip()
     with closing(get_conn()) as conn:
         cur = conn.execute(
             """
@@ -13435,11 +13504,15 @@ def create_print_ready_project(
     log_activity(
         kind="print-ready",
         action="create",
-        message=f"Klar til print oprettet med {len(rows)} filer.",
+        message=(
+            f"Klar til print oprettet for {user.username} med {len(rows)} filer."
+            if actor and not _same_actor_identity(actor, user.username)
+            else f"Klar til print oprettet med {len(rows)} filer."
+        ),
         level="info",
         folder_path=folder_paths[0] if folder_paths else str(rows[0]["folder_path"] or ""),
         target=title,
-        actor=str(user.username or ""),
+        actor=actor or str(user.username or ""),
     )
     return project_id
 
@@ -17544,7 +17617,14 @@ def api_print_ready_create():
             body.get("excluded_file_ids"),
             body.get("excluded_folder_paths"),
         )
-        project_id = create_print_ready_project(current_user, rows, folder_paths, file_ids)
+        owner_user = _print_ready_owner_for_selection(current_user, rows)
+        project_id = create_print_ready_project(
+            owner_user,
+            rows,
+            folder_paths,
+            file_ids,
+            actor_username=str(current_user.username or ""),
+        )
         project, err = get_print_ready_project_payload(project_id)
         if err is not None:
             return jsonify({"ok": False, "error": str(err.get("error") or "Projektet kunne ikke læses")}), int(err.get("status") or 500)
