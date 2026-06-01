@@ -14,6 +14,7 @@
   const UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY = "fjordshare.unseenUploadsOverlayExpanded.v1";
   const UNSEEN_UPLOADS_PAGE_SIZE = 24;
   const MAPPER_SEARCH_DEBOUNCE_MS = 1000;
+  const MAPPER_FILE_SORT_STORAGE_KEY = "fjordshare.mapperFileSort.v1";
   const PRESUPPORTED_SORT_FOLDER_NAME = "Presupported";
   const UPLOAD_MODEL_LINK_SKIP_ALL_THRESHOLD = 10;
 
@@ -28,6 +29,26 @@
   function persistUnseenUploadsOverlayExpanded(expanded) {
     try {
       window.localStorage.setItem(UNSEEN_UPLOADS_OVERLAY_EXPANDED_STORAGE_KEY, expanded ? "1" : "0");
+    } catch (_err) {
+      // Ignore storage access errors (e.g. privacy mode restrictions).
+    }
+  }
+
+  function normalizeMapperFileSort(value) {
+    return String(value || "").trim().toLowerCase() === "oldest" ? "oldest" : "newest";
+  }
+
+  function readPersistedMapperFileSort() {
+    try {
+      return normalizeMapperFileSort(window.localStorage.getItem(MAPPER_FILE_SORT_STORAGE_KEY));
+    } catch (_err) {
+      return "newest";
+    }
+  }
+
+  function persistMapperFileSort(sortMode) {
+    try {
+      window.localStorage.setItem(MAPPER_FILE_SORT_STORAGE_KEY, normalizeMapperFileSort(sortMode));
     } catch (_err) {
       // Ignore storage access errors (e.g. privacy mode restrictions).
     }
@@ -186,6 +207,7 @@
     mapperSearchQuery: "",
     mapperSearchTimer: null,
     mapperSearchRequestToken: 0,
+    mapperFileSort: readPersistedMapperFileSort(),
   };
 
   const els = {
@@ -294,6 +316,8 @@
     mapperMenuAddLink: document.getElementById("mapperMenuAddLink"),
     mapperMenuCreateFolder: document.getElementById("mapperMenuCreateFolder"),
     mapperMenuRenameFolder: document.getElementById("mapperMenuRenameFolder"),
+    mapperMenuSortNewest: document.getElementById("mapperMenuSortNewest"),
+    mapperMenuSortOldest: document.getElementById("mapperMenuSortOldest"),
     mapperSelectSummary: document.getElementById("mapperSelectSummary"),
     mapperSelectPrintReadyBtn: document.getElementById("mapperSelectPrintReadyBtn"),
     mapperSelectClearBtn: document.getElementById("mapperSelectClearBtn"),
@@ -2242,6 +2266,72 @@
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return "-";
     return d.toLocaleString("da-DK");
+  }
+
+  function mapperFileUploadedAtMs(file) {
+    const raw = String((file && file.uploaded_at) || "").trim();
+    if (!raw) return NaN;
+    const direct = Date.parse(raw);
+    if (Number.isFinite(direct)) return direct;
+    const fallback = Date.parse(raw.replace(" ", "T"));
+    return Number.isFinite(fallback) ? fallback : NaN;
+  }
+
+  function sortMapperFiles(files) {
+    const mode = normalizeMapperFileSort(state.mapperFileSort);
+    const direction = mode === "oldest" ? 1 : -1;
+    const list = Array.isArray(files) ? Array.from(files) : [];
+    list.sort((a, b) => {
+      const aTs = mapperFileUploadedAtMs(a);
+      const bTs = mapperFileUploadedAtMs(b);
+      const aHasTs = Number.isFinite(aTs);
+      const bHasTs = Number.isFinite(bTs);
+
+      if (aHasTs && bHasTs && aTs !== bTs) {
+        return direction * (aTs - bTs);
+      }
+      if (aHasTs !== bHasTs) {
+        return aHasTs ? -1 : 1;
+      }
+
+      const aId = Number(a && a.id ? a.id : 0);
+      const bId = Number(b && b.id ? b.id : 0);
+      if (aId !== bId) {
+        return direction * (aId - bId);
+      }
+
+      const aName = String((a && a.filename) || "");
+      const bName = String((b && b.filename) || "");
+      return aName.localeCompare(bName, "da");
+    });
+    return list;
+  }
+
+  function syncMapperFileSortUi() {
+    const newestActive = normalizeMapperFileSort(state.mapperFileSort) === "newest";
+    if (els.mapperMenuSortNewest) {
+      els.mapperMenuSortNewest.setAttribute("aria-checked", newestActive ? "true" : "false");
+      els.mapperMenuSortNewest.classList.toggle("is-active-sort", newestActive);
+      els.mapperMenuSortNewest.disabled = newestActive;
+    }
+    if (els.mapperMenuSortOldest) {
+      els.mapperMenuSortOldest.setAttribute("aria-checked", newestActive ? "false" : "true");
+      els.mapperMenuSortOldest.classList.toggle("is-active-sort", !newestActive);
+      els.mapperMenuSortOldest.disabled = !newestActive;
+    }
+  }
+
+  function setMapperFileSort(sortMode) {
+    const nextMode = normalizeMapperFileSort(sortMode);
+    const changed = nextMode !== normalizeMapperFileSort(state.mapperFileSort);
+    state.mapperFileSort = nextMode;
+    persistMapperFileSort(nextMode);
+    syncMapperFileSortUi();
+    if (changed) {
+      state.files = sortMapperFiles(state.files);
+      renderFiles();
+    }
+    return changed;
   }
 
   function formatImportNumber(value) {
@@ -11403,7 +11493,7 @@
       els.folderSelect.value = folder;
     }
     const data = await api(`/api/files?folder=${encodeURIComponent(folder)}`);
-    state.files = Array.isArray(data.items) ? data.items : [];
+    state.files = sortMapperFiles(Array.isArray(data.items) ? data.items : []);
     state.zipJobs = Array.isArray(data.zip_jobs) ? data.zip_jobs : [];
     const folderKey = String(folder || "");
     const currentFolderPreview = buildFolderPreviewEntry(state.files);
@@ -11497,7 +11587,7 @@
     }
 
     const items = Array.isArray(data && data.items) ? data.items : [];
-    state.files = items;
+  state.files = sortMapperFiles(items);
     state.zipJobs = [];
     renderFolderBrowser();
     renderFiles();
@@ -17050,6 +17140,9 @@
   function setMapperMenuOpen(open) {
     if (!els.mapperMenu || !els.mapperMenuBtn) return;
     const isOpen = !!open;
+    if (isOpen) {
+      syncMapperFileSortUi();
+    }
     els.mapperMenu.classList.toggle("hidden", !isOpen);
     els.mapperMenuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
   }
@@ -17069,6 +17162,16 @@
 
     if (cmd === "select") {
       toggleSelectMode();
+      return;
+    }
+
+    if (cmd === "sort-newest" || cmd === "sort-oldest") {
+      const nextSort = cmd === "sort-oldest" ? "oldest" : "newest";
+      const changed = setMapperFileSort(nextSort);
+      const label = nextSort === "oldest" ? "Ældste først" : "Nyeste først";
+      if (changed) {
+        showStatus(els.uploadStatus, `Sortering sat til ${label}.`, "ok");
+      }
       return;
     }
 
@@ -19344,6 +19447,7 @@
   async function init() {
     applyRoleVisibility();
     updateSelectModeUi();
+    syncMapperFileSortUi();
     bindEvents();
     // Ensure bottom nav + drawer work on mobile
     bindMobileNav();
