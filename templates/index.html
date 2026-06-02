@@ -614,7 +614,7 @@
       <div class="profile-language-section">
         <h4>Sprog</h4>
         <label for="profileLanguageSelect">Vælg sprog</label>
-        <select id="profileLanguageSelect" class="select" autocomplete="language">
+        <select id="profileLanguageSelect" class="select" autocomplete="language" data-i18n-ignore>
           {% for code, label in language_options %}
             <option value="{{ code }}">{{ label }}</option>
           {% endfor %}
@@ -824,7 +824,7 @@
         </div>
         <div class="create-user-wide">
           <label for="createUserLanguage">Sprog</label>
-          <select id="createUserLanguage" class="select" autocomplete="language">
+          <select id="createUserLanguage" class="select" autocomplete="language" data-i18n-ignore>
             {% for code, label in language_options %}
               <option value="{{ code }}">{{ label }}</option>
             {% endfor %}
@@ -870,7 +870,7 @@
         </div>
         <div class="create-user-wide">
           <label for="editUserLanguage">Sprog</label>
-          <select id="editUserLanguage" class="select" autocomplete="language">
+          <select id="editUserLanguage" class="select" autocomplete="language" data-i18n-ignore>
             {% for code, label in language_options %}
               <option value="{{ code }}">{{ label }}</option>
             {% endfor %}

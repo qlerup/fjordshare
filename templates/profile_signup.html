@@ -33,7 +33,7 @@
         <input id="username" name="username" type="text" autocomplete="username" required>
 
         <label for="language">Sprog</label>
-        <select id="language" name="language" class="select" autocomplete="language">
+        <select id="language" name="language" class="select" autocomplete="language" data-i18n-ignore>
           {% set selected_lang = selected_language|default(default_language) %}
           {% for code, label in language_options %}
             <option value="{{ code }}" {% if code == selected_lang %}selected{% endif %}>{{ label }}</option>

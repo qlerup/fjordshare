@@ -171,8 +171,8 @@ TRACKING_SHARE_TRANSLATE_CACHE: dict[tuple[str, str], str] = {}
 TRACKING_SHARE_TRANSLATE_CACHE_LOCK = threading.Lock()
 USER_LANGUAGE_OPTIONS = (
     ("da", "Dansk"),
-    ("en", "Engelsk"),
-    ("fr", "Fransk"),
+    ("en", "English"),
+    ("fr", "Français"),
 )
 USER_LANGUAGE_CODES = {code for code, _label in USER_LANGUAGE_OPTIONS}
 DEFAULT_USER_LANGUAGE = "da"

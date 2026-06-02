@@ -18,8 +18,8 @@
   const UPLOAD_MODEL_LINK_SKIP_ALL_THRESHOLD = 10;
   const USER_LANGUAGE_OPTIONS = [
     { value: "da", label: "Dansk" },
-    { value: "en", label: "Engelsk" },
-    { value: "fr", label: "Fransk" },
+    { value: "en", label: "English" },
+    { value: "fr", label: "Français" },
   ];
   const USER_LANGUAGE_VALUES = new Set(USER_LANGUAGE_OPTIONS.map((entry) => entry.value));
 
@@ -31,11 +31,7 @@
   function userLanguageLabel(value) {
     const lang = normalizeUserLanguage(value);
     const found = USER_LANGUAGE_OPTIONS.find((entry) => entry.value === lang);
-    const label = found ? found.label : lang.toUpperCase();
-    if (window.FjordShareI18n && typeof window.FjordShareI18n.translateText === "function") {
-      return window.FjordShareI18n.translateText(label, window.FjordShareI18n.getLanguage());
-    }
-    return label;
+    return found ? found.label : lang.toUpperCase();
   }
 
   function readPersistedUnseenUploadsOverlayExpanded() {
