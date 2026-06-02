@@ -21,6 +21,11 @@
 </head>
 <body style="margin:0;padding:0;">
   {% block body %}{% endblock %}
+  <script
+    src="{{ url_for('static', filename='i18n.js', v=app_build) }}"
+    data-current-language="{{ app_lang|default('da') }}"
+    data-user-language="{% if current_user.is_authenticated %}1{% else %}0{% endif %}"
+  ></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

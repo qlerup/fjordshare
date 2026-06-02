@@ -31,7 +31,11 @@
   function userLanguageLabel(value) {
     const lang = normalizeUserLanguage(value);
     const found = USER_LANGUAGE_OPTIONS.find((entry) => entry.value === lang);
-    return found ? found.label : lang.toUpperCase();
+    const label = found ? found.label : lang.toUpperCase();
+    if (window.FjordShareI18n && typeof window.FjordShareI18n.translateText === "function") {
+      return window.FjordShareI18n.translateText(label, window.FjordShareI18n.getLanguage());
+    }
+    return label;
   }
 
   function readPersistedUnseenUploadsOverlayExpanded() {
@@ -984,6 +988,9 @@
         document.documentElement.lang = language;
       } catch (_err) {
         // Ignore DOM update errors.
+      }
+      if (window.FjordShareI18n && typeof window.FjordShareI18n.setLanguage === "function") {
+        window.FjordShareI18n.setLanguage(language);
       }
     }
 
