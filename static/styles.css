@@ -4736,10 +4736,12 @@ input[type="checkbox"] {
 }
 
 .profile-modal-head h3,
+.profile-language-section h4,
 .profile-password-section h4 {
   margin: 0;
 }
 
+.profile-language-section,
 .profile-password-section {
   display: grid;
   gap: 10px;
@@ -5793,15 +5795,17 @@ input[type="checkbox"] {
   #usersTableBody td:nth-child(2)::before { content: "Navn"; }
   #usersTableBody td:nth-child(3)::before { content: "Brugernavn"; }
   #usersTableBody td:nth-child(4)::before { content: "Rolle"; }
-  #usersTableBody td:nth-child(5)::before { content: "Hjem"; }
-  #usersTableBody td:nth-child(6)::before { content: "Handling"; }
+  #usersTableBody td:nth-child(5)::before { content: "Sprog"; }
+  #usersTableBody td:nth-child(6)::before { content: "Hjem"; }
+  #usersTableBody td:nth-child(7)::before { content: "Handling"; }
 
   #signupRequestsTableBody td:nth-child(1)::before { content: "ID"; }
   #signupRequestsTableBody td:nth-child(2)::before { content: "Navn"; }
   #signupRequestsTableBody td:nth-child(3)::before { content: "Initial"; }
   #signupRequestsTableBody td:nth-child(4)::before { content: "Brugernavn"; }
-  #signupRequestsTableBody td:nth-child(5)::before { content: "Sendt"; }
-  #signupRequestsTableBody td:nth-child(6)::before { content: "Handling"; }
+  #signupRequestsTableBody td:nth-child(5)::before { content: "Sprog"; }
+  #signupRequestsTableBody td:nth-child(6)::before { content: "Sendt"; }
+  #signupRequestsTableBody td:nth-child(7)::before { content: "Handling"; }
 
   #signupLinksTableBody td:nth-child(1)::before { content: "ID"; }
   #signupLinksTableBody td:nth-child(2)::before { content: "Status"; }

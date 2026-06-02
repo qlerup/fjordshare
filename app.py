@@ -169,6 +169,13 @@ TRACKING_SHARE_TRANSLATE_MAX_TOTAL_CHARS = 8000
 TRACKING_SHARE_TRANSLATE_CACHE_MAX_ITEMS = 5000
 TRACKING_SHARE_TRANSLATE_CACHE: dict[tuple[str, str], str] = {}
 TRACKING_SHARE_TRANSLATE_CACHE_LOCK = threading.Lock()
+USER_LANGUAGE_OPTIONS = (
+    ("da", "Dansk"),
+    ("en", "Engelsk"),
+    ("fr", "Fransk"),
+)
+USER_LANGUAGE_CODES = {code for code, _label in USER_LANGUAGE_OPTIONS}
+DEFAULT_USER_LANGUAGE = "da"
 
 THREE_D_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj", ".ply", ".3mf", ".fbx", ".step", ".stp", ".lys", ".lyt", ".pwscene"}
 THREE_D_VIEWER_EXTENSIONS = {".glb", ".gltf", ".stl", ".obj"}
@@ -931,6 +938,22 @@ def normalize_last_initial(raw: str, required: bool = True) -> str:
         if ch.isalpha():
             return ch.upper()[0]
     raise ValueError("Efternavn skal indeholde mindst et bogstav.")
+
+
+def normalize_user_language(value: Any, default: str = DEFAULT_USER_LANGUAGE) -> str:
+    lang = str(value or "").strip().lower()
+    if lang in USER_LANGUAGE_CODES:
+        return lang
+    default_lang = str(default or DEFAULT_USER_LANGUAGE).strip().lower()
+    if default_lang in USER_LANGUAGE_CODES:
+        return default_lang
+    return DEFAULT_USER_LANGUAGE
+
+
+def user_language_label(value: Any) -> str:
+    lang = normalize_user_language(value)
+    labels = {code: label for code, label in USER_LANGUAGE_OPTIONS}
+    return labels.get(lang, lang.upper())
 
 
 def user_display_name(first_name: str, last_initial: str, fallback: str = "") -> str:
@@ -9554,6 +9577,7 @@ def init_db() -> None:
                 username TEXT UNIQUE NOT NULL,
                 first_name TEXT NOT NULL DEFAULT '',
                 last_initial TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT 'da',
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 home_folder TEXT UNIQUE NOT NULL,
@@ -9569,7 +9593,8 @@ def init_db() -> None:
                 app_onboarding_seen_v1 INTEGER NOT NULL DEFAULT 0,
                 app_onboarding_enabled INTEGER NOT NULL DEFAULT 1,
                 slice_last_selection_json TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                updated_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS user_folder_access (
@@ -9601,6 +9626,7 @@ def init_db() -> None:
                 username TEXT NOT NULL,
                 first_name TEXT NOT NULL,
                 last_initial TEXT NOT NULL DEFAULT '',
+                language TEXT NOT NULL DEFAULT 'da',
                 password_hash TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL,
@@ -9936,6 +9962,12 @@ def init_db() -> None:
         if "last_initial" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN last_initial TEXT NOT NULL DEFAULT ''")
             user_cols.append("last_initial")
+        if "language" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'da'")
+            user_cols.append("language")
+        if "updated_at" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN updated_at TEXT")
+            user_cols.append("updated_at")
         if "sms_enabled" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN sms_enabled INTEGER NOT NULL DEFAULT 0")
         if "sms_phone_country_code" not in user_cols:
@@ -9963,6 +9995,15 @@ def init_db() -> None:
             (_normalize_sms_country_code(DEFAULT_SMS_COUNTRY_CODE, default="+45", strict=False),),
         )
         conn.execute("UPDATE users SET sms_phone_number='' WHERE sms_phone_number IS NULL")
+        conn.execute(
+            """
+            UPDATE users
+            SET language='da'
+            WHERE language IS NULL
+               OR TRIM(language)=''
+               OR lower(language) NOT IN ('da', 'en', 'fr')
+            """
+        )
 
         tracking_cols = [r[1] for r in conn.execute("PRAGMA table_info(tracking_shipments)").fetchall()]
         if "target_username" not in tracking_cols:
@@ -9993,6 +10034,18 @@ def init_db() -> None:
         if "last_initial" not in signup_request_cols:
             conn.execute("ALTER TABLE profile_signup_requests ADD COLUMN last_initial TEXT NOT NULL DEFAULT ''")
             signup_request_cols.append("last_initial")
+        if "language" not in signup_request_cols:
+            conn.execute("ALTER TABLE profile_signup_requests ADD COLUMN language TEXT NOT NULL DEFAULT 'da'")
+            signup_request_cols.append("language")
+        conn.execute(
+            """
+            UPDATE profile_signup_requests
+            SET language='da'
+            WHERE language IS NULL
+               OR TRIM(language)=''
+               OR lower(language) NOT IN ('da', 'en', 'fr')
+            """
+        )
         if "last_name" in signup_request_cols:
             conn.execute("UPDATE profile_signup_requests SET last_name='' WHERE last_name IS NOT NULL AND TRIM(last_name)<>''")
 
@@ -10074,6 +10127,7 @@ class User(UserMixin):
     username: str
     first_name: str
     last_initial: str
+    language: str
     role: str
     home_folder: str
 
@@ -10088,11 +10142,13 @@ def row_to_user(row: Optional[sqlite3.Row]) -> Optional[User]:
     keys = set(row.keys())
     first_name = str(row["first_name"] or "") if "first_name" in keys else ""
     last_initial = str(row["last_initial"] or "") if "last_initial" in keys else ""
+    language = normalize_user_language(row["language"] if "language" in keys else DEFAULT_USER_LANGUAGE)
     return User(
         id=int(row["id"]),
         username=str(row["username"]),
         first_name=first_name,
         last_initial=last_initial,
+        language=language,
         role=str(row["role"] or "user"),
         home_folder=normalize_folder_path(str(row["home_folder"] or "")),
     )
@@ -11576,6 +11632,7 @@ def create_user_with_password_hash(
     role: str = "user",
     first_name: str = "",
     last_initial: str = "",
+    language: str = DEFAULT_USER_LANGUAGE,
     require_name: bool = False,
 ) -> int:
     clean_username = normalize_username(username)
@@ -11586,6 +11643,7 @@ def create_user_with_password_hash(
         raise ValueError("Password mangler.")
 
     role_norm = "admin" if str(role or "").strip().lower() == "admin" else "user"
+    lang = normalize_user_language(language)
 
     with closing(get_conn()) as conn:
         base_segment = user_profile_folder_segment(clean_username, clean_first_name, clean_last_initial)
@@ -11596,8 +11654,8 @@ def create_user_with_password_hash(
             home_folder = normalize_folder_path(f"users/{base_segment}-{suffix}")
 
         cur = conn.execute(
-            "INSERT INTO users(username, first_name, last_initial, password_hash, role, home_folder, created_at) VALUES(?,?,?,?,?,?,?)",
-            (clean_username, clean_first_name, clean_last_initial, pwd_hash, role_norm, home_folder, now_iso()),
+            "INSERT INTO users(username, first_name, last_initial, language, password_hash, role, home_folder, created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (clean_username, clean_first_name, clean_last_initial, lang, pwd_hash, role_norm, home_folder, now_iso()),
         )
         conn.commit()
         user_id = int(cur.lastrowid)
@@ -11612,6 +11670,7 @@ def create_user(
     role: str = "user",
     first_name: str = "",
     last_name: str = "",
+    language: str = DEFAULT_USER_LANGUAGE,
     require_name: bool = False,
 ) -> int:
     clean_last_initial = last_name_to_initial(last_name, required=require_name, forbid_email=True)
@@ -11623,6 +11682,7 @@ def create_user(
         role=role,
         first_name=first_name,
         last_initial=clean_last_initial,
+        language=language,
         require_name=require_name,
     )
 
@@ -11630,7 +11690,7 @@ def create_user(
 def fetch_user_by_username(username: str) -> Optional[User]:
     with closing(get_conn()) as conn:
         row = conn.execute(
-            "SELECT id, username, first_name, last_initial, role, home_folder FROM users WHERE username=?",
+            "SELECT id, username, first_name, last_initial, language, role, home_folder FROM users WHERE username=?",
             (str(username or "").strip(),),
         ).fetchone()
     return row_to_user(row)
@@ -11642,7 +11702,7 @@ def fetch_user_by_username_casefold(username: str) -> Optional[User]:
         return None
     with closing(get_conn()) as conn:
         row = conn.execute(
-            "SELECT id, username, first_name, last_initial, role, home_folder FROM users WHERE lower(username)=lower(?) LIMIT 1",
+            "SELECT id, username, first_name, last_initial, language, role, home_folder FROM users WHERE lower(username)=lower(?) LIMIT 1",
             (name,),
         ).fetchone()
     return row_to_user(row)
@@ -11651,7 +11711,7 @@ def fetch_user_by_username_casefold(username: str) -> Optional[User]:
 def get_user_by_id(user_id: int) -> Optional[User]:
     with closing(get_conn()) as conn:
         row = conn.execute(
-            "SELECT id, username, first_name, last_initial, role, home_folder FROM users WHERE id=?",
+            "SELECT id, username, first_name, last_initial, language, role, home_folder FROM users WHERE id=?",
             (int(user_id),),
         ).fetchone()
     return row_to_user(row)
@@ -13298,7 +13358,7 @@ def _print_ready_owner_for_selection(actor: User, rows: list[sqlite3.Row]) -> Us
 
     with closing(get_conn()) as conn:
         user_rows = conn.execute(
-            "SELECT id, username, first_name, last_initial, role, home_folder FROM users"
+            "SELECT id, username, first_name, last_initial, language, role, home_folder FROM users"
         ).fetchall()
 
     def user_from_row(user_row: sqlite3.Row) -> Optional[User]:
@@ -15640,12 +15700,15 @@ def _profile_signup_link_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 
 def _profile_signup_request_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    language = normalize_user_language(_row_value(row, "language", DEFAULT_USER_LANGUAGE))
     return {
         "id": int(row["id"]),
         "link_id": int(row["link_id"] or 0),
         "username": str(row["username"] or ""),
         "first_name": str(row["first_name"] or ""),
         "last_initial": str(row["last_initial"] or ""),
+        "language": language,
+        "language_label": user_language_label(language),
         "display_name": user_display_name(row["first_name"], row["last_initial"], row["username"]),
         "status": str(row["status"] or "pending"),
         "created_at": str(row["created_at"] or ""),
@@ -15733,7 +15796,19 @@ login_manager.login_view = "login"
 
 @app.context_processor
 def inject_template_globals():
-    return {"app_build": APP_BUILD, "ui_version_marker": UI_VERSION_MARKER}
+    app_lang = DEFAULT_USER_LANGUAGE
+    try:
+        if current_user.is_authenticated:
+            app_lang = normalize_user_language(getattr(current_user, "language", DEFAULT_USER_LANGUAGE))
+    except Exception:
+        app_lang = DEFAULT_USER_LANGUAGE
+    return {
+        "app_build": APP_BUILD,
+        "ui_version_marker": UI_VERSION_MARKER,
+        "app_lang": app_lang,
+        "language_options": USER_LANGUAGE_OPTIONS,
+        "default_language": DEFAULT_USER_LANGUAGE,
+    }
 
 
 @login_manager.user_loader
@@ -15823,13 +15898,22 @@ def setup():
         username = str(request.form.get("username") or "").strip()
         password = str(request.form.get("password") or "")
         password2 = str(request.form.get("password2") or "")
+        language = normalize_user_language(request.form.get("language"))
         if not first_name or not last_name or not username or not password:
             error = "Navn, efternavn, brugernavn og adgangskode er påkrævet."
         elif password != password2:
             error = "Adgangskoderne matcher ikke."
         else:
             try:
-                create_user(username, password, role="admin", first_name=first_name, last_name=last_name, require_name=True)
+                create_user(
+                    username,
+                    password,
+                    role="admin",
+                    first_name=first_name,
+                    last_name=last_name,
+                    language=language,
+                    require_name=True,
+                )
                 return redirect(url_for("login", created="1"))
             except sqlite3.IntegrityError:
                 error = "Brugernavnet findes allerede."
@@ -15838,7 +15922,8 @@ def setup():
             except Exception as exc:
                 error = f"Kunne ikke oprette bruger: {exc}"
 
-    return render_template("setup.html", error=error)
+    selected_language = normalize_user_language(request.form.get("language") if request.method == "POST" else DEFAULT_USER_LANGUAGE)
+    return render_template("setup.html", error=error, selected_language=selected_language)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -15900,6 +15985,7 @@ def profile_signup(token: str):
         username = str(request.form.get("username") or "").strip()
         password = str(request.form.get("password") or "")
         password2 = str(request.form.get("password2") or "")
+        language = normalize_user_language(request.form.get("language"))
 
         if password != password2:
             error = "Adgangskoderne matcher ikke."
@@ -15949,14 +16035,15 @@ def profile_signup(token: str):
                         """
                         INSERT INTO profile_signup_requests(
                             link_id, username, first_name, last_initial,
-                            password_hash, status, created_at
-                        ) VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                            language, password_hash, status, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
                         """,
                         (
                             int(link_row["id"]),
                             clean_username,
                             clean_first_name,
                             clean_last_initial,
+                            language,
                             pwd_hash,
                             now,
                         ),
@@ -15988,7 +16075,8 @@ def profile_signup(token: str):
             except Exception as exc:
                 error = f"Kunne ikke sende oprettelsen: {exc}"
 
-    return render_template("profile_signup.html", valid=True, submitted=False, error=error)
+    selected_language = normalize_user_language(request.form.get("language") if request.method == "POST" else DEFAULT_USER_LANGUAGE)
+    return render_template("profile_signup.html", valid=True, submitted=False, error=error, selected_language=selected_language)
 
 
 @app.route("/logout")
@@ -16017,6 +16105,7 @@ def index():
         role=current_user.role,
         home_folder=default_folder,
         daily_folder=daily_folder,
+        language=normalize_user_language(getattr(current_user, "language", DEFAULT_USER_LANGUAGE)),
         slicing_disabled="1" if SLICING_DISABLED else "0",
     )
 
@@ -16105,6 +16194,8 @@ def api_me():
                 "username": str(current_user.username),
                 "first_name": str(current_user.first_name or ""),
                 "last_initial": str(current_user.last_initial or ""),
+                "language": normalize_user_language(getattr(current_user, "language", DEFAULT_USER_LANGUAGE)),
+                "language_label": user_language_label(getattr(current_user, "language", DEFAULT_USER_LANGUAGE)),
                 "display_name": user_display_name(current_user.first_name, current_user.last_initial, current_user.username),
                 "role": str(current_user.role),
                 "home_folder": normalize_folder_path(str(current_user.home_folder or "")),
@@ -16128,6 +16219,8 @@ def api_me_profile():
     if request.method == "GET":
         profile = _load_user_sms_profile(int(current_user.id))
         profile.update(_load_user_onboarding_profile(int(current_user.id)))
+        profile["language"] = normalize_user_language(getattr(current_user, "language", DEFAULT_USER_LANGUAGE))
+        profile["language_label"] = user_language_label(profile["language"])
         profile["sms_onboarding_required"] = (
             SMS_ONBOARDING_ENABLED
             and str(current_user.role or "").lower() != "admin"
@@ -16136,6 +16229,34 @@ def api_me_profile():
         return jsonify({"ok": True, "profile": profile})
 
     body = request.get_json(silent=True) or {}
+    language_present = "language" in body
+    language = normalize_user_language(body.get("language")) if language_present else normalize_user_language(getattr(current_user, "language", DEFAULT_USER_LANGUAGE))
+    sms_present = any(key in body for key in ("sms_enabled", "sms_phone_country_code", "sms_phone_number"))
+    if language_present and not sms_present:
+        with closing(get_conn()) as conn:
+            conn.execute(
+                "UPDATE users SET language=? WHERE id=?",
+                (language, int(current_user.id)),
+            )
+            conn.commit()
+        try:
+            current_user.language = language
+        except Exception:
+            pass
+        profile = _load_user_sms_profile(int(current_user.id))
+        profile.update(_load_user_onboarding_profile(int(current_user.id)))
+        profile["language"] = language
+        profile["language_label"] = user_language_label(language)
+        log_activity(
+            kind="user",
+            action="profile-language-update",
+            message=f"Sprog opdateret til {user_language_label(language)}",
+            level="info",
+            actor=str(current_user.username or ""),
+            target=str(current_user.username or ""),
+        )
+        return jsonify({"ok": True, "profile": profile})
+
     sms_enabled = bool(parse_bool(body.get("sms_enabled")))
     try:
         country_code = _normalize_sms_country_code(
@@ -16157,6 +16278,7 @@ def api_me_profile():
             """
             UPDATE users
             SET sms_enabled=?,
+                language=?,
                 sms_phone_country_code=?,
                 sms_phone_number=?,
                 sms_setup_prompted=1,
@@ -16165,6 +16287,7 @@ def api_me_profile():
             """,
             (
                 1 if sms_enabled else 0,
+                language,
                 country_code,
                 phone_number,
                 1 if sms_enabled else 0,
@@ -16173,6 +16296,10 @@ def api_me_profile():
         )
         _clear_sms_verification_conn(conn, int(current_user.id))
         conn.commit()
+    try:
+        current_user.language = language
+    except Exception:
+        pass
 
     log_activity(
         kind="user",
@@ -16182,7 +16309,10 @@ def api_me_profile():
         actor=str(current_user.username or ""),
         target=str(current_user.username or ""),
     )
-    return jsonify({"ok": True, "profile": _load_user_sms_profile(int(current_user.id))})
+    profile = _load_user_sms_profile(int(current_user.id))
+    profile["language"] = language
+    profile["language_label"] = user_language_label(language)
+    return jsonify({"ok": True, "profile": profile})
 
 
 @app.route("/api/me/sms-onboarding/skip", methods=["POST"])
@@ -20490,6 +20620,7 @@ def api_admin_profile_signup_request_approve(request_id: int):
             role="user",
             first_name=str(row["first_name"] or ""),
             last_initial=str(row["last_initial"] or ""),
+            language=normalize_user_language(_row_value(row, "language", DEFAULT_USER_LANGUAGE)),
             require_name=True,
         )
     except sqlite3.IntegrityError:
@@ -20533,6 +20664,8 @@ def api_admin_profile_signup_request_approve(request_id: int):
                 "username": str(user.username if user else username),
                 "first_name": str(user.first_name if user else row["first_name"]),
                 "last_initial": str(user.last_initial if user else row["last_initial"]),
+                "language": normalize_user_language(user.language if user else _row_value(row, "language", DEFAULT_USER_LANGUAGE)),
+                "language_label": user_language_label(user.language if user else _row_value(row, "language", DEFAULT_USER_LANGUAGE)),
                 "display_name": user_display_name(
                     user.first_name if user else row["first_name"],
                     user.last_initial if user else row["last_initial"],
@@ -20590,6 +20723,8 @@ def serialize_admin_user_row(row: sqlite3.Row) -> dict[str, Any]:
         "username": str(row["username"]),
         "first_name": str(row["first_name"] or ""),
         "last_initial": str(row["last_initial"] or ""),
+        "language": normalize_user_language(_row_value(row, "language", DEFAULT_USER_LANGUAGE)),
+        "language_label": user_language_label(_row_value(row, "language", DEFAULT_USER_LANGUAGE)),
         "display_name": user_display_name(row["first_name"], row["last_initial"], row["username"]),
         "role": str(row["role"] or "user"),
         "home_folder": str(row["home_folder"] or ""),
@@ -20611,7 +20746,7 @@ def api_admin_users():
         with closing(get_conn()) as conn:
             rows = conn.execute(
                 """
-                SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+                SELECT id, username, first_name, last_initial, language, role, home_folder, created_at,
                        app_onboarding_seen_v1, app_onboarding_enabled
                 FROM users
                 ORDER BY id
@@ -20631,16 +20766,25 @@ def api_admin_users():
     password = str(body.get("password") or "")
     password2 = str(body.get("password2") or "")
     role = str(body.get("role") or "user").strip().lower()
+    language = normalize_user_language(body.get("language"))
 
     if password != password2:
         return jsonify({"ok": False, "error": "Adgangskoderne matcher ikke"}), 400
 
     try:
-        user_id = create_user(username, password, role, first_name=first_name, last_name=last_name, require_name=True)
+        user_id = create_user(
+            username,
+            password,
+            role,
+            first_name=first_name,
+            last_name=last_name,
+            language=language,
+            require_name=True,
+        )
         with closing(get_conn()) as conn:
             user_row = conn.execute(
                 """
-                SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+                SELECT id, username, first_name, last_initial, language, role, home_folder, created_at,
                        app_onboarding_seen_v1, app_onboarding_enabled
                 FROM users
                 WHERE id=?
@@ -20676,6 +20820,7 @@ def api_admin_users_update(user_id: int):
         return jsonify({"ok": False, "error": str(exc)}), 400
 
     role = "admin" if str(body.get("role") or "user").strip().lower() == "admin" else "user"
+    language = normalize_user_language(body.get("language"))
     if int(user_id) == int(current_user.id) and role != "admin":
         return jsonify({"ok": False, "error": "Du kan ikke fjerne admin-rollen fra dig selv"}), 400
 
@@ -20697,8 +20842,8 @@ def api_admin_users_update(user_id: int):
         old_username = str(row["username"] or "").strip()
         username_changed = old_username.lower() != username.lower()
         conn.execute(
-            "UPDATE users SET username=?, first_name=?, last_initial=?, role=? WHERE id=?",
-            (username, first_name, last_initial, role, int(user_id)),
+            "UPDATE users SET username=?, first_name=?, last_initial=?, language=?, role=? WHERE id=?",
+            (username, first_name, last_initial, language, role, int(user_id)),
         )
 
         if username_changed and old_username:
@@ -20758,7 +20903,7 @@ def api_admin_users_update(user_id: int):
 
         updated = conn.execute(
             """
-            SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+            SELECT id, username, first_name, last_initial, language, role, home_folder, created_at,
                    app_onboarding_seen_v1, app_onboarding_enabled
             FROM users
             WHERE id=?
@@ -20787,7 +20932,7 @@ def api_admin_users_force_guide(user_id: int):
     with closing(get_conn()) as conn:
         row = conn.execute(
             """
-            SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+            SELECT id, username, first_name, last_initial, language, role, home_folder, created_at,
                    app_onboarding_seen_v1, app_onboarding_enabled
             FROM users
             WHERE id=?
@@ -20808,7 +20953,7 @@ def api_admin_users_force_guide(user_id: int):
         )
         updated = conn.execute(
             """
-            SELECT id, username, first_name, last_initial, role, home_folder, created_at,
+            SELECT id, username, first_name, last_initial, language, role, home_folder, created_at,
                    app_onboarding_seen_v1, app_onboarding_enabled
             FROM users
             WHERE id=?

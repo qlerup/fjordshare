@@ -16,6 +16,23 @@
   const MAPPER_SEARCH_DEBOUNCE_MS = 1000;
   const PRESUPPORTED_SORT_FOLDER_NAME = "Presupported";
   const UPLOAD_MODEL_LINK_SKIP_ALL_THRESHOLD = 10;
+  const USER_LANGUAGE_OPTIONS = [
+    { value: "da", label: "Dansk" },
+    { value: "en", label: "Engelsk" },
+    { value: "fr", label: "Fransk" },
+  ];
+  const USER_LANGUAGE_VALUES = new Set(USER_LANGUAGE_OPTIONS.map((entry) => entry.value));
+
+  function normalizeUserLanguage(value) {
+    const lang = String(value || "").trim().toLowerCase();
+    return USER_LANGUAGE_VALUES.has(lang) ? lang : "da";
+  }
+
+  function userLanguageLabel(value) {
+    const lang = normalizeUserLanguage(value);
+    const found = USER_LANGUAGE_OPTIONS.find((entry) => entry.value === lang);
+    return found ? found.label : lang.toUpperCase();
+  }
 
   function readPersistedUnseenUploadsOverlayExpanded() {
     try {
@@ -38,6 +55,7 @@
     role: ((boot && boot.dataset.role) || "user").toLowerCase(),
     homeFolder: (boot && boot.dataset.homeFolder) || "",
     dailyFolder: (boot && boot.dataset.dailyFolder) || "",
+    language: normalizeUserLanguage((boot && boot.dataset.language) || "da"),
     currentFolder: "",
     folders: [],
     files: [],
@@ -220,6 +238,8 @@
     profileNewPwdInput: document.getElementById("profileNewPwdInput"),
     profileSaveBtn: document.getElementById("profileSaveBtn"),
     profilePwdStatus: document.getElementById("profilePwdStatus"),
+    profileLanguageSelect: document.getElementById("profileLanguageSelect"),
+    profileLanguageStatus: document.getElementById("profileLanguageStatus"),
     profileGuideEnabledChk: document.getElementById("profileGuideEnabledChk"),
     profileShowGuideBtn: document.getElementById("profileShowGuideBtn"),
     profileGuideStatus: document.getElementById("profileGuideStatus"),
@@ -548,6 +568,7 @@
     createUserPassword: document.getElementById("createUserPassword"),
     createUserPassword2: document.getElementById("createUserPassword2"),
     createUserRole: document.getElementById("createUserRole"),
+    createUserLanguage: document.getElementById("createUserLanguage"),
     createUserBtn: document.getElementById("createUserBtn"),
     createUserModalStatus: document.getElementById("createUserModalStatus"),
     editUserModal: document.getElementById("editUserModal"),
@@ -557,6 +578,7 @@
     editUserLastName: document.getElementById("editUserLastName"),
     editUserUsername: document.getElementById("editUserUsername"),
     editUserRole: document.getElementById("editUserRole"),
+    editUserLanguage: document.getElementById("editUserLanguage"),
     editUserHomeFolderHint: document.getElementById("editUserHomeFolderHint"),
     editUserSaveBtn: document.getElementById("editUserSaveBtn"),
     editUserModalStatus: document.getElementById("editUserModalStatus"),
@@ -952,6 +974,19 @@
   }
 
   function applyMyProfile(profile) {
+    if (profile && Object.prototype.hasOwnProperty.call(profile, "language")) {
+      const language = normalizeUserLanguage(profile.language);
+      state.language = language;
+      if (els.profileLanguageSelect) {
+        els.profileLanguageSelect.value = language;
+      }
+      try {
+        document.documentElement.lang = language;
+      } catch (_err) {
+        // Ignore DOM update errors.
+      }
+    }
+
     const smsEnabled = !!(profile && profile.sms_enabled);
     const countryCode = normalizeSmsCountryCodeClient(
       (profile && profile.sms_phone_country_code) || SMS_DEFAULT_COUNTRY_CODE,
@@ -1015,6 +1050,9 @@
       els.profileSaveBtn.disabled = busy;
       els.profileSaveBtn.textContent = busy ? "Gemmer..." : "Gem";
     }
+    if (els.profileLanguageSelect) {
+      els.profileLanguageSelect.disabled = busy;
+    }
     if (els.profileShowGuideBtn) {
       els.profileShowGuideBtn.classList.toggle("hidden", !enabled);
       els.profileShowGuideBtn.disabled = busy || !enabled;
@@ -1024,6 +1062,9 @@
   function applyAppOnboardingPreference(payload = {}) {
     state.appOnboardingSeenPersisted = !!(payload && payload.app_onboarding_seen_v1);
     state.appOnboardingEnabled = !(payload && payload.app_onboarding_enabled === false);
+    if (payload && payload.language) {
+      applyMyProfile({ language: payload.language });
+    }
     if (els.profileGuideEnabledChk) {
       els.profileGuideEnabledChk.checked = !!state.appOnboardingEnabled;
     }
@@ -1068,6 +1109,16 @@
     }
   }
 
+  async function saveProfileLanguagePreference(language) {
+    const selected = normalizeUserLanguage(language);
+    const data = await api("/api/me/profile", {
+      method: "POST",
+      body: { language: selected },
+    });
+    applyMyProfile((data && data.profile) || { language: selected });
+    showStatus(els.profileLanguageStatus, `Sprog gemt: ${userLanguageLabel(selected)}.`, "ok");
+  }
+
   async function saveProfileChanges() {
     const currentPwd = (els.profileCurrentPwdInput && els.profileCurrentPwdInput.value) || "";
     const newPwd = (els.profileNewPwdInput && els.profileNewPwdInput.value) || "";
@@ -1075,15 +1126,18 @@
     const passwordReady = !!currentPwd && !!newPwd;
     const enabled = !!(els.profileGuideEnabledChk && els.profileGuideEnabledChk.checked);
     const guideChanged = enabled !== !!state.appOnboardingEnabled;
+    const selectedLanguage = normalizeUserLanguage((els.profileLanguageSelect && els.profileLanguageSelect.value) || state.language);
+    const languageChanged = selectedLanguage !== normalizeUserLanguage(state.language);
 
     showStatus(els.profilePwdStatus, "");
     showStatus(els.profileGuideStatus, "");
+    showStatus(els.profileLanguageStatus, "");
 
-    if (!guideChanged && hasPasswordInput && !passwordReady) {
+    if (!guideChanged && !languageChanged && hasPasswordInput && !passwordReady) {
       showStatus(els.profilePwdStatus, "Udfyld nuværende og ny kode for at gemme adgangskode.", "error");
       return;
     }
-    if (!guideChanged && !hasPasswordInput) {
+    if (!guideChanged && !languageChanged && !hasPasswordInput) {
       showStatus(els.profilePwdStatus, "Ingen ændringer at gemme.", "");
       return;
     }
@@ -1093,9 +1147,12 @@
       if (guideChanged) {
         await saveProfileGuidePreference();
       }
+      if (languageChanged) {
+        await saveProfileLanguagePreference(selectedLanguage);
+      }
       if (hasPasswordInput) {
         if (!passwordReady) {
-          showStatus(els.profilePwdStatus, "Guideindstillinger gemt. Udfyld begge kodefelter for at gemme adgangskode.", "error");
+          showStatus(els.profilePwdStatus, "Ændringer gemt. Udfyld begge kodefelter for at gemme adgangskode.", "error");
           return;
         }
         await changeMyPassword();
@@ -1517,6 +1574,10 @@
     resetProfilePasswordForm(true);
     setProfileGuideFormState({ busy: false });
     showStatus(els.profileGuideStatus, "");
+    showStatus(els.profileLanguageStatus, "");
+    if (els.profileLanguageSelect) {
+      els.profileLanguageSelect.value = normalizeUserLanguage(state.language);
+    }
     els.profileModal.classList.remove("hidden");
     setMobileNavActive("profile");
     loadAppOnboardingPreference().catch(() => {
@@ -1533,6 +1594,7 @@
     if (els.profileFooterBtn) els.profileFooterBtn.classList.remove("active");
     resetProfilePasswordForm(true);
     showStatus(els.profileGuideStatus, "");
+    showStatus(els.profileLanguageStatus, "");
     if (!document.body.classList.contains("mobile-drawer-open")) {
       setMobileNavActive(mobileActionForTab(state.currentTab));
     }
@@ -1626,6 +1688,7 @@
       (els.profileSmsCountrySelect && els.profileSmsCountrySelect.value) || SMS_DEFAULT_COUNTRY_CODE,
     );
     const phoneNumber = normalizeSmsPhoneNumberClient((els.profileSmsPhoneInput && els.profileSmsPhoneInput.value) || "");
+    const language = normalizeUserLanguage((els.profileLanguageSelect && els.profileLanguageSelect.value) || state.language);
 
     setProfileSmsFormState({ busy: true });
     try {
@@ -1635,6 +1698,7 @@
           sms_enabled: smsEnabled,
           sms_phone_country_code: countryCode,
           sms_phone_number: phoneNumber,
+          language,
         },
       });
       applyMyProfile(data.profile || {});
@@ -13883,6 +13947,7 @@
     const currentUser = state.users.find((user) => !!(user && user.is_current_user));
     if (currentUser && currentUser.username) {
       state.username = String(currentUser.username);
+      state.language = normalizeUserLanguage(currentUser.language || state.language);
       if (els.sidebarUsername) els.sidebarUsername.textContent = state.username;
     }
     renderUsers();
@@ -13893,7 +13958,7 @@
   function renderUsers() {
     if (!els.usersTableBody) return;
     if (!state.users.length) {
-      els.usersTableBody.innerHTML = `<tr><td colspan="6" class="hint">Ingen brugere.</td></tr>`;
+      els.usersTableBody.innerHTML = `<tr><td colspan="7" class="hint">Ingen brugere.</td></tr>`;
       return;
     }
     els.usersTableBody.innerHTML = state.users
@@ -13912,6 +13977,7 @@
             <td>${esc(name)}</td>
             <td>${esc(u.username)}</td>
             <td>${esc(u.role)}</td>
+            <td>${esc(u.language_label || userLanguageLabel(u.language))}</td>
             <td>${esc(u.home_folder || "-")}</td>
             <td>
               <div class="toolbar">
@@ -13936,7 +14002,7 @@
   function renderSignupRequests() {
     if (!els.signupRequestsTableBody) return;
     if (!state.signupRequests.length) {
-      els.signupRequestsTableBody.innerHTML = `<tr><td colspan="6" class="hint">Ingen oprettelser afventer godkendelse.</td></tr>`;
+      els.signupRequestsTableBody.innerHTML = `<tr><td colspan="7" class="hint">Ingen oprettelser afventer godkendelse.</td></tr>`;
       return;
     }
     els.signupRequestsTableBody.innerHTML = state.signupRequests
@@ -13950,6 +14016,7 @@
             <td>${esc(firstName)}</td>
             <td>${esc(lastInitial)}</td>
             <td>${esc(item.username || "")}</td>
+            <td>${esc(item.language_label || userLanguageLabel(item.language))}</td>
             <td>${esc(formatDate(item.created_at))}</td>
             <td>
               <div class="toolbar">
@@ -14081,6 +14148,7 @@
     if (els.createUserPassword) els.createUserPassword.value = "";
     if (els.createUserPassword2) els.createUserPassword2.value = "";
     if (els.createUserRole) els.createUserRole.value = "user";
+    if (els.createUserLanguage) els.createUserLanguage.value = "da";
     showStatus(els.createUserModalStatus, "");
   }
 
@@ -14110,6 +14178,7 @@
     if (els.editUserLastName) els.editUserLastName.value = "";
     if (els.editUserUsername) els.editUserUsername.value = "";
     if (els.editUserRole) els.editUserRole.value = "user";
+    if (els.editUserLanguage) els.editUserLanguage.value = "da";
     if (els.editUserHomeFolderHint) els.editUserHomeFolderHint.textContent = "";
     showStatus(els.editUserModalStatus, "");
   }
@@ -14122,6 +14191,7 @@
     if (els.editUserLastName) els.editUserLastName.value = String(user.last_initial || "");
     if (els.editUserUsername) els.editUserUsername.value = String(user.username || "");
     if (els.editUserRole) els.editUserRole.value = String(user.role || "user").toLowerCase() === "admin" ? "admin" : "user";
+    if (els.editUserLanguage) els.editUserLanguage.value = normalizeUserLanguage(user.language);
     if (els.editUserHomeFolderHint) {
       els.editUserHomeFolderHint.textContent = `Hjemmemappe: ${String(user.home_folder || "-")}`;
     }
@@ -14144,6 +14214,7 @@
     const password = String((els.createUserPassword && els.createUserPassword.value) || "");
     const password2 = String((els.createUserPassword2 && els.createUserPassword2.value) || "");
     const role = String((els.createUserRole && els.createUserRole.value) || "user");
+    const language = normalizeUserLanguage((els.createUserLanguage && els.createUserLanguage.value) || "da");
     if (!firstName || !lastName || !username || !password || !password2) {
       showStatus(els.createUserModalStatus, "Udfyld navn, efternavn, brugernavn og kodefelter.", "error");
       return;
@@ -14152,7 +14223,7 @@
       showStatus(els.createUserModalStatus, "Adgangskoderne matcher ikke.", "error");
       return;
     }
-    await api("/api/admin/users", { method: "POST", body: { first_name: firstName, last_name: lastName, username, password, password2, role } });
+    await api("/api/admin/users", { method: "POST", body: { first_name: firstName, last_name: lastName, username, password, password2, role, language } });
     closeCreateUserModal();
     showStatus(els.userStatus, "Bruger oprettet.", "ok");
     await loadUsers();
@@ -14166,6 +14237,7 @@
     const lastName = String((els.editUserLastName && els.editUserLastName.value) || "").trim();
     const username = String((els.editUserUsername && els.editUserUsername.value) || "").trim();
     const role = String((els.editUserRole && els.editUserRole.value) || "user");
+    const language = normalizeUserLanguage((els.editUserLanguage && els.editUserLanguage.value) || "da");
     if (!firstName || !lastName || !username) {
       showStatus(els.editUserModalStatus, "Udfyld navn, efternavn/initial og brugernavn.", "error");
       return;
@@ -14177,7 +14249,7 @@
     try {
       await api(`/api/admin/users/${id}`, {
         method: "PATCH",
-        body: { first_name: firstName, last_name: lastName, username, role },
+        body: { first_name: firstName, last_name: lastName, username, role, language },
       });
       closeEditUserModal();
       showStatus(els.userStatus, "Bruger opdateret.", "ok");
@@ -17212,6 +17284,11 @@
         saveProfileChanges().catch((err) => {
           showStatus(els.profilePwdStatus, err.message || "Kunne ikke gemme profil", "error");
         });
+      });
+    }
+    if (els.profileLanguageSelect) {
+      els.profileLanguageSelect.addEventListener("change", () => {
+        showStatus(els.profileLanguageStatus, "");
       });
     }
     if (els.profileModalCancelBtn) {

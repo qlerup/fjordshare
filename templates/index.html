@@ -6,6 +6,7 @@
      data-role="{{ role }}"
      data-home-folder="{{ home_folder }}"
      data-daily-folder="{{ daily_folder }}"
+     data-language="{{ language|default(default_language) }}"
      data-slicing-disabled="{{ slicing_disabled }}"></div>
 
 <div class="app-shell">
@@ -313,6 +314,7 @@
                 <th>Navn</th>
                 <th>Brugernavn</th>
                 <th>Rolle</th>
+                <th>Sprog</th>
                 <th>Hjemmemappe</th>
                 <th>Handling</th>
               </tr>
@@ -331,6 +333,7 @@
                 <th>Navn</th>
                 <th>Initial</th>
                 <th>Brugernavn</th>
+                <th>Sprog</th>
                 <th>Sendt</th>
                 <th>Handling</th>
               </tr>
@@ -608,6 +611,17 @@
         <h3>Profil</h3>
         <div class="hint">Bruger: <strong>{{ username }}</strong></div>
       </div>
+      <div class="profile-language-section">
+        <h4>Sprog</h4>
+        <label for="profileLanguageSelect">Vælg sprog</label>
+        <select id="profileLanguageSelect" class="select" autocomplete="language">
+          {% for code, label in language_options %}
+            <option value="{{ code }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+        <p class="hint">Oversættelserne kommer i fase 2. Valget gemmes allerede nu.</p>
+        <div id="profileLanguageStatus" class="status hidden"></div>
+      </div>
       <div class="profile-password-section">
         <h4>Skift adgangskode</h4>
         <div class="profile-password-grid">
@@ -808,6 +822,14 @@
             <option value="admin">Admin</option>
           </select>
         </div>
+        <div class="create-user-wide">
+          <label for="createUserLanguage">Sprog</label>
+          <select id="createUserLanguage" class="select" autocomplete="language">
+            {% for code, label in language_options %}
+              <option value="{{ code }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
       </div>
       <div id="createUserModalStatus" class="status hidden"></div>
       <div class="toolbar end">
@@ -844,6 +866,14 @@
           <select id="editUserRole" class="select">
             <option value="user">Bruger</option>
             <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="create-user-wide">
+          <label for="editUserLanguage">Sprog</label>
+          <select id="editUserLanguage" class="select" autocomplete="language">
+            {% for code, label in language_options %}
+              <option value="{{ code }}">{{ label }}</option>
+            {% endfor %}
           </select>
         </div>
       </div>
