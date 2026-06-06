@@ -317,8 +317,8 @@
     mapperSelectSummary: document.getElementById("mapperSelectSummary"),
     mapperSelectPrintReadyBtn: document.getElementById("mapperSelectPrintReadyBtn"),
     mapperSelectClearBtn: document.getElementById("mapperSelectClearBtn"),
+    mapperSelectDownloadBtn: document.getElementById("mapperSelectDownloadBtn"),
     mapperSelectDeleteBtn: document.getElementById("mapperSelectDeleteBtn"),
-    mapperSelectPrintedBtn: document.getElementById("mapperSelectPrintedBtn"),
     mapperSelectExitBtn: document.getElementById("mapperSelectExitBtn"),
     fileInfoBackdrop: document.getElementById("fileInfoBackdrop"),
     fileInfoDrawer: document.getElementById("fileInfoDrawer"),
@@ -746,6 +746,43 @@
       iframe.remove();
     }, 60000);
     return true;
+  }
+
+  function downloadFilenameFromDisposition(disposition) {
+    const header = String(disposition || "");
+    if (!header) return "";
+
+    const utfMatch = header.match(/filename\*\s*=\s*(?:UTF-8''|utf-8'')?([^;]+)/i);
+    if (utfMatch) {
+      const raw = String(utfMatch[1] || "").trim().replace(/^"|"$/g, "");
+      try {
+        return decodeURIComponent(raw);
+      } catch (_err) {
+        return raw;
+      }
+    }
+
+    const quotedMatch = header.match(/filename\s*=\s*"([^"]+)"/i);
+    if (quotedMatch) return String(quotedMatch[1] || "").trim();
+
+    const plainMatch = header.match(/filename\s*=\s*([^;]+)/i);
+    if (plainMatch) return String(plainMatch[1] || "").trim().replace(/^"|"$/g, "");
+
+    return "";
+  }
+
+  function saveBlobDownload(blob, filename) {
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename || "download";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    window.setTimeout(() => {
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    }, 1000);
   }
 
   function bindHoverMarqueeCards(rootEl, cardSelector, lineSelector) {
@@ -2994,10 +3031,6 @@
     return state.selectedFolderPaths.size + state.selectedFileIds.size;
   }
 
-  function selectedFileCount() {
-    return state.selectedFileIds.size;
-  }
-
   function printReadySelectionCount() {
     const directlySelected = state.selectedFolderPaths.size + state.selectedFileIds.size;
     const excluded = state.excludedFolderPaths.size + state.excludedFileIds.size;
@@ -3050,25 +3083,57 @@
     await loadFiles();
   }
 
-  async function setPrintedForSelectedFiles(printed = true) {
+  async function downloadSelectedInSelectMode() {
     const fileIds = Array.from(state.selectedFileIds).map((v) => Number(v || 0)).filter((v) => v > 0);
-    if (!fileIds.length) {
-      showStatus(els.uploadStatus, "Vælg mindst én fil for at markere som printet.", "error");
+    const folderPaths = Array.from(state.selectedFolderPaths).map((v) => String(v || "").trim()).filter(Boolean);
+    const total = fileIds.length + folderPaths.length;
+    if (!total) {
+      showStatus(els.uploadStatus, "Vælg mindst én fil eller mappe at downloade.", "error");
       return;
     }
 
-    await api("/api/files/printed-batch", {
+    if (fileIds.length === 1 && folderPaths.length === 0) {
+      const file = fileById(fileIds[0]);
+      const url = String((file && file.download_url) || "").trim();
+      if (triggerHiddenDownload(url)) {
+        showStatus(els.uploadStatus, "Downloader fil...", "ok");
+        return;
+      }
+    }
+
+    showStatus(els.uploadStatus, "Forbereder download...", "ok");
+    const res = await fetch("/api/files/download-selected", {
       method: "POST",
-      body: {
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         file_ids: fileIds,
-        printed: !!printed,
-      },
+        folder_paths: folderPaths,
+        current_folder: currentFolder(),
+      }),
     });
 
-    state.selectedFileIds.clear();
-    const label = printed ? "printet" : "ikke printet";
-    showStatus(els.uploadStatus, `${fileIds.length} fil(er) markeret som ${label}.`, "ok");
-    await loadFiles();
+    if (!res.ok) {
+      let errorText = `HTTP ${res.status}`;
+      const contentType = String(res.headers.get("Content-Type") || "").toLowerCase();
+      if (contentType.includes("application/json")) {
+        try {
+          const data = await res.json();
+          errorText = String((data && data.error) || errorText);
+        } catch (_err) {}
+      } else {
+        try {
+          errorText = (await res.text()) || errorText;
+        } catch (_err) {}
+      }
+      throw new Error(errorText);
+    }
+
+    const blob = await res.blob();
+    const filename = downloadFilenameFromDisposition(res.headers.get("Content-Disposition"))
+      || (fileIds.length + folderPaths.length > 1 ? "valgte-filer.zip" : "download");
+    saveBlobDownload(blob, filename);
+    showStatus(els.uploadStatus, "Download starter...", "ok");
   }
 
   function closePrintReadyModal() {
@@ -3775,7 +3840,6 @@
     if (els.mapperShell) els.mapperShell.classList.toggle("print-ready-select-mode", printReadyMode);
 
     const count = selectedCount();
-    const fileCount = selectedFileCount();
     if (els.mapperSelectSummary) {
       if (printReadyMode) {
         const stats = printReadySelectionCount();
@@ -3802,18 +3866,16 @@
       els.mapperSelectClearBtn.classList.toggle("hidden", !printReadyMode);
       els.mapperSelectClearBtn.disabled = count <= 0 && state.excludedFolderPaths.size <= 0 && state.excludedFileIds.size <= 0;
     }
+    if (els.mapperSelectDownloadBtn) {
+      els.mapperSelectDownloadBtn.classList.toggle("hidden", !on || printReadyMode);
+      els.mapperSelectDownloadBtn.disabled = count <= 0;
+      els.mapperSelectDownloadBtn.textContent = count > 0 ? `Download (${count})` : "Download";
+    }
     if (els.mapperSelectDeleteBtn) {
       els.mapperSelectDeleteBtn.classList.toggle("hidden", !on || printReadyMode);
       els.mapperSelectDeleteBtn.disabled = count <= 0;
       els.mapperSelectDeleteBtn.textContent = count > 0 ? `Slet (${count})` : "Slet";
     }
-    if (els.mapperSelectPrintedBtn) {
-      const allowPrinted = on && !printReadyMode && state.role === "admin";
-      els.mapperSelectPrintedBtn.classList.toggle("hidden", !allowPrinted);
-      els.mapperSelectPrintedBtn.disabled = fileCount <= 0;
-      els.mapperSelectPrintedBtn.textContent = fileCount > 0 ? `Printet (${fileCount})` : "Printet";
-    }
-
     if (els.mapperMenuSelect) {
       els.mapperMenuSelect.textContent = on ? "Afslut vælg mode" : "Vælg mode";
     }
@@ -17388,6 +17450,13 @@
         });
       });
     }
+    if (els.mapperSelectDownloadBtn) {
+      els.mapperSelectDownloadBtn.addEventListener("click", () => {
+        downloadSelectedInSelectMode().catch((err) => {
+          showStatus(els.uploadStatus, err.message || "Kunne ikke downloade valgte elementer", "error");
+        });
+      });
+    }
     if (els.mapperSelectPrintReadyBtn) {
       els.mapperSelectPrintReadyBtn.addEventListener("click", () => {
         if (!isPrintReadySelectMode()) {
@@ -17399,14 +17468,6 @@
         });
       });
     }
-    if (els.mapperSelectPrintedBtn) {
-      els.mapperSelectPrintedBtn.addEventListener("click", () => {
-        setPrintedForSelectedFiles(true).catch((err) => {
-          showStatus(els.uploadStatus, err.message || "Kunne ikke markere filer som printet", "error");
-        });
-      });
-    }
-
     if (els.folderUpBtn) {
       els.folderUpBtn.addEventListener("click", async () => {
         const current = currentFolder();

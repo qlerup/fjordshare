@@ -13260,6 +13260,134 @@ def _print_ready_download_filename(file_row: sqlite3.Row) -> str:
     return prefixed or f"{quantity}x {base_name}"
 
 
+def _selected_download_rows(
+    user: User,
+    raw_file_ids: Any,
+    raw_folder_paths: Any,
+) -> tuple[list[sqlite3.Row], list[str], list[int]]:
+    file_ids = _parse_positive_int_list(raw_file_ids)
+    folder_paths = _collapse_folder_prefixes(raw_folder_paths if isinstance(raw_folder_paths, list) else [])
+
+    if not file_ids and not folder_paths:
+        raise ValueError("Vælg mindst én fil eller mappe")
+
+    for folder in folder_paths:
+        if not permission_allows(permission_for_user_folder(user, folder), "view"):
+            raise PermissionError(f"Ingen adgang til mappe: {folder}")
+
+    selected_rows: list[sqlite3.Row] = []
+    with closing(get_conn()) as conn:
+        if folder_paths:
+            folder_where, folder_params = _folder_clauses(folder_paths)
+            selected_rows.extend(
+                conn.execute(
+                    f"SELECT * FROM files WHERE {folder_where}",
+                    tuple(folder_params),
+                ).fetchall()
+            )
+        if file_ids:
+            placeholders = ",".join("?" for _ in file_ids)
+            selected_rows.extend(
+                conn.execute(
+                    f"SELECT * FROM files WHERE id IN ({placeholders})",
+                    tuple(file_ids),
+                ).fetchall()
+            )
+
+    rows_by_id: dict[int, sqlite3.Row] = {}
+    for row in selected_rows:
+        fid = int(row["id"])
+        if fid in rows_by_id:
+            continue
+        if not user_can_access_file(user, row, "view"):
+            raise PermissionError("Ingen adgang til en eller flere filer")
+        rows_by_id[fid] = row
+
+    rows = sorted(
+        rows_by_id.values(),
+        key=lambda r: (str(r["folder_path"] or "").lower(), str(r["filename"] or "").lower(), int(r["id"])),
+    )
+    if not rows:
+        raise ValueError("Der blev ikke fundet nogen filer i det valgte")
+    return rows, folder_paths, file_ids
+
+
+def _selected_download_zip_name(folder_paths: list[str], file_ids: list[int], rows: list[sqlite3.Row]) -> str:
+    stamp = now_local().strftime("%Y%m%d-%H%M")
+    if len(folder_paths) == 1 and not file_ids:
+        folder_name = sanitize_filename(Path(folder_paths[0]).name or "mappe")
+        return sanitize_filename(f"{folder_name}-{stamp}.zip")
+    if len(file_ids) == 1 and not folder_paths and len(rows) > 1:
+        file_name = sanitize_filename(Path(str(rows[0]["filename"] or "filer")).stem or "filer")
+        return sanitize_filename(f"{file_name}-{stamp}.zip")
+    return sanitize_filename(f"valgte-filer-{stamp}.zip")
+
+
+def build_selected_files_zip(rows: list[sqlite3.Row], base_folder: str = "") -> bytes:
+    out = io.BytesIO()
+    used_names: set[str] = set()
+    wrote_count = 0
+    link_summary_lines: list[str] = []
+    normalized_base = normalize_folder_path(base_folder)
+
+    def unique_name(name: str) -> str:
+        base = name
+        stem = str(Path(base).with_suffix(""))
+        suffix = Path(base).suffix
+        idx = 1
+        while base in used_names:
+            idx += 1
+            base = f"{stem}_{idx}{suffix}"
+        used_names.add(base)
+        return base
+
+    def relative_folder(folder_path: str) -> str:
+        folder = normalize_folder_path(folder_path)
+        if normalized_base and folder == normalized_base:
+            return ""
+        if normalized_base and folder.startswith(normalized_base + "/"):
+            return folder[len(normalized_base) + 1 :]
+        return folder
+
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for row in rows:
+            folder = relative_folder(str(row["folder_path"] or ""))
+            filename = sanitize_filename(str(row["filename"] or "fil"))
+            arcname = unique_name(_safe_zip_arcname(folder, filename))
+            wrote_file = False
+            try:
+                path = file_disk_path(row)
+                if path.exists() and path.is_file():
+                    zf.write(path, arcname)
+                    wrote_file = True
+                    wrote_count += 1
+            except Exception:
+                pass
+
+            external_url = _external_link_url_from_row(row)
+            if external_url:
+                if not wrote_file:
+                    shortcut_name = sanitize_filename(f"{Path(filename).stem or 'link'}.url")
+                    shortcut_arc = unique_name(_safe_zip_arcname(folder, shortcut_name))
+                    zf.writestr(shortcut_arc, f"[InternetShortcut]\nURL={external_url}\n")
+                    wrote_count += 1
+                link_summary_lines.extend(
+                    [
+                        f"Fil: {filename}",
+                        f"Mappe: {folder or '.'}",
+                        f"URL: {external_url}",
+                        "",
+                    ]
+                )
+
+        if link_summary_lines:
+            zf.writestr(unique_name(_safe_zip_arcname("links.txt")), "\n".join(link_summary_lines).rstrip() + "\n")
+
+    if wrote_count <= 0:
+        raise FileNotFoundError("Ingen downloadbare filer blev fundet")
+    return out.getvalue()
+
+
 def _selected_print_ready_rows(
     user: User,
     raw_file_ids: Any,
@@ -16799,6 +16927,53 @@ def api_file_download(file_id: int):
         return jsonify({"ok": False, "error": "Filen findes ikke på disk"}), 404
 
     return send_file(path, as_attachment=True, download_name=str(row["filename"] or path.name))
+
+
+@app.route("/api/files/download-selected", methods=["POST"])
+@login_required
+def api_files_download_selected():
+    body = request.get_json(silent=True) or {}
+    try:
+        rows, folder_paths, file_ids = _selected_download_rows(
+            current_user,
+            body.get("file_ids"),
+            body.get("folder_paths"),
+        )
+        if len(rows) == 1:
+            row = rows[0]
+            external_url = _external_link_url_from_row(row)
+            try:
+                path = file_disk_path(row)
+            except Exception:
+                path = None
+            if path is not None and path.exists() and path.is_file():
+                return send_file(path, as_attachment=True, download_name=str(row["filename"] or path.name))
+            if external_url:
+                shortcut_name = sanitize_filename(f"{Path(str(row['filename'] or 'link')).stem or 'link'}.url")
+                return send_file(
+                    io.BytesIO(f"[InternetShortcut]\nURL={external_url}\n".encode("utf-8")),
+                    mimetype="application/octet-stream",
+                    as_attachment=True,
+                    download_name=shortcut_name,
+                )
+            raise FileNotFoundError("Filen findes ikke på disk")
+
+        current_folder = normalize_folder_path(str(body.get("current_folder") or ""))
+        zip_bytes = build_selected_files_zip(rows, base_folder=current_folder)
+        return send_file(
+            io.BytesIO(zip_bytes),
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=_selected_download_zip_name(folder_paths, file_ids, rows),
+        )
+    except PermissionError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 403
+    except FileNotFoundError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"Kunne ikke downloade valgte filer: {exc}"}), 500
 
 
 @app.route("/api/files/<int:file_id>/slice-outputs", methods=["GET"])
