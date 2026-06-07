@@ -362,37 +362,54 @@ backup_database() {
 	backup_database_from_host
 }
 
-repair_data_permissions() {
-	data_dir="${DATA_DIR:-$(read_env_value DATA_DIR || printf '%s' '/opt/fjordshare-data/appdata')}"
-	case "$data_dir" in
+read_host_dir() {
+	key="$1"
+	default_value="$2"
+	current_value=""
+	case "$key" in
+		DATA_DIR) current_value="${DATA_DIR:-}" ;;
+		UPLOADS_HOST_DIR) current_value="${UPLOADS_HOST_DIR:-}" ;;
+		THUMBS_HOST_DIR) current_value="${THUMBS_HOST_DIR:-}" ;;
+	esac
+	if [ -n "$current_value" ]; then
+		printf '%s' "$current_value"
+		return 0
+	fi
+	read_env_value "$key" || printf '%s' "$default_value"
+}
+
+repair_host_dir_permissions() {
+	label="$1"
+	host_dir="$2"
+	case "$host_dir" in
 		/*) ;;
 		*)
-			echo "Fejl: DATA_DIR skal vaere en absolut sti: $data_dir"
+			echo "Fejl: $label skal vaere en absolut sti: $host_dir"
 			exit 1
 			;;
 	esac
 
-	echo "==> Sikrer skriveadgang til appdata: $data_dir"
-	mkdir -p "$data_dir"
+	echo "==> Sikrer skriveadgang til $label: $host_dir"
+	mkdir -p "$host_dir"
 
 	if [ "$(id -u)" -eq 0 ]; then
-		chown -R "${APP_UID}:${APP_GID}" "$data_dir" 2>/dev/null || {
-			echo "Advarsel: kunne ikke chown $data_dir til ${APP_UID}:${APP_GID}."
-			echo "Advarsel: hvis databasen ligger paa NFS/CIFS, skal sharet tillade UID/GID ${APP_UID}:${APP_GID} at skrive."
+		chown -R "${APP_UID}:${APP_GID}" "$host_dir" 2>/dev/null || {
+			echo "Advarsel: kunne ikke chown $host_dir til ${APP_UID}:${APP_GID}."
+			echo "Advarsel: hvis mappen ligger paa NFS/CIFS, skal sharet tillade UID/GID ${APP_UID}:${APP_GID} at skrive."
 		}
-		chmod -R u+rwX "$data_dir" 2>/dev/null || true
+		chmod -R u+rwX "$host_dir" 2>/dev/null || true
 	else
 		if command -v sudo >/dev/null 2>&1; then
-			sudo chown -R "${APP_UID}:${APP_GID}" "$data_dir" 2>/dev/null || true
-			sudo chmod -R u+rwX "$data_dir" 2>/dev/null || true
+			sudo chown -R "${APP_UID}:${APP_GID}" "$host_dir" 2>/dev/null || true
+			sudo chmod -R u+rwX "$host_dir" 2>/dev/null || true
 		fi
 	fi
+}
 
-	if [ -f "$data_dir/fjordshare.db" ] && ! docker_cmd run --rm -u "${APP_UID}:${APP_GID}" -v "$data_dir:/data" busybox sh -c ': >> /data/fjordshare.db' >/dev/null 2>&1; then
-		echo "Fejl: container-bruger ${APP_UID}:${APP_GID} kan stadig ikke skrive til $data_dir/fjordshare.db"
-		echo "Tip: koer: chown -R ${APP_UID}:${APP_GID} \"$data_dir\""
-		exit 1
-	fi
+repair_data_permissions() {
+	repair_host_dir_permissions "appdata" "$(read_host_dir DATA_DIR '/opt/fjordshare-data/appdata')"
+	repair_host_dir_permissions "uploads" "$(read_host_dir UPLOADS_HOST_DIR '/opt/fjordshare-data/uploads')"
+	repair_host_dir_permissions "thumbs" "$(read_host_dir THUMBS_HOST_DIR '/opt/fjordshare-data/thumbs')"
 }
 
 wait_for_fjordshare() {
