@@ -421,7 +421,7 @@ wait_for_fjordshare() {
 			state="$(docker_cmd inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null || true)"
 			case "$state" in
 				healthy|running)
-					if docker_compose exec -T "$SERVICE_NAME" sh -lc "curl -fsS http://127.0.0.1:8080/api/health >/dev/null"; then
+					if docker_compose exec -T "$SERVICE_NAME" python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health')"; then
 						echo "==> FjordShare er klar"
 						return 0
 					fi
