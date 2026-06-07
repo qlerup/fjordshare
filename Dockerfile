@@ -281,6 +281,7 @@ RUN set -eux; \
     ln -sf /usr/local/bin/bambu-studio-cli /usr/local/bin/bambu-studio-console; \
     ln -sf /usr/local/bin/bambu-studio-cli /usr/local/bin/BambuStudio-console; \
     rm -f /opt/bambu-studio/BambuStudio.AppImage; \
+    apt-get purge -y --autoremove curl; \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -290,9 +291,17 @@ RUN pip install --no-cache-dir -U pip setuptools wheel \
 COPY . .
 
 RUN mkdir -p /app/static/vendor \
-    && curl -fsSL "https://cdn.jsdelivr.net/npm/tus-js-client@${TUS_JS_VERSION}/dist/tus.min.js" \
-       -o /app/static/vendor/tus.min.js
+    && python3 -c "import urllib.request; urllib.request.urlretrieve('https://cdn.jsdelivr.net/npm/tus-js-client@${TUS_JS_VERSION}/dist/tus.min.js', '/app/static/vendor/tus.min.js')"
+
+RUN groupadd --gid 1001 fjordshare \
+    && useradd --uid 1001 --gid fjordshare --shell /bin/sh --no-create-home fjordshare \
+    && chown -R fjordshare:fjordshare /app
+
+USER fjordshare
 
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python3 -c "import urllib.request, sys; urllib.request.urlopen('http://localhost:8080/api/health')" || exit 1
 
 CMD ["gunicorn", "--workers", "1", "--worker-class", "gthread", "--threads", "8", "--timeout", "120", "--graceful-timeout", "30", "--keep-alive", "5", "--max-requests", "1000", "--max-requests-jitter", "100", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "--bind", "0.0.0.0:8080", "wsgi:application"]

@@ -1,12 +1,12 @@
 Flask>=3.0,<4.0
 Flask-Login>=0.6,<0.7
-gunicorn>=21.2,<22.0
+gunicorn>=22.0,<23.0
 numpy>=1.26,<3.0
 matplotlib>=3.8,<4.0
 trimesh>=4.4,<5.0
-Pillow>=10.3,<12.0
+Pillow>=12.2.0,<13.0
 pillow-heif>=0.16,<1.0
-pypdf>=5.0,<6.0
-cryptography>=42.0,<45.0
+pypdf>=6.10.2,<7.0
+cryptography>=46.0.6,<47.0
 pygltflib>=1.16,<2.0
 cloudscraper>=1.2.71,<2.0
