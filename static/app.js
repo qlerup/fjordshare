@@ -14740,18 +14740,12 @@
     if (!items.length) return;
     const toRefresh = items.filter(trackingNeedsRefresh);
     const skipped = items.length - toRefresh.length;
-    if (!toRefresh.length) {
-      showStatus(els.trackingStatus, `Alle tracking-numre er opdateret for nylig (indenfor ${TRACKING_SKIP_MINUTES} min).`, "ok");
-      setTimeout(() => { if (token === _autoRefreshTrackingToken) showStatus(els.trackingStatus, ""); }, 3000);
-      return;
-    }
+    if (!toRefresh.length) return;
     for (let i = 0; i < toRefresh.length; i++) {
       if (token !== _autoRefreshTrackingToken) return;
       if (i > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
       if (token !== _autoRefreshTrackingToken) return;
       const id = Number(toRefresh[i].id);
-      const skipText = skipped > 0 ? ` (${skipped} sprunget over)` : "";
-      showStatus(els.trackingStatus, `Opdaterer tracking ${i + 1}/${toRefresh.length}${skipText}...`, "ok");
       try {
         const data = await api(`/api/admin/tracking/${id}/refresh`, { method: "POST" });
         if (token !== _autoRefreshTrackingToken) return;
@@ -14765,10 +14759,6 @@
         // fortsæt med næste selv ved fejl
       }
     }
-    if (token !== _autoRefreshTrackingToken) return;
-    const doneText = skipped > 0 ? `${toRefresh.length} opdateret, ${skipped} sprunget over (opdateret for nylig).` : "Alle tracking-hændelser opdateret.";
-    showStatus(els.trackingStatus, doneText, "ok");
-    setTimeout(() => { if (token === _autoRefreshTrackingToken) showStatus(els.trackingStatus, ""); }, 3000);
   }
 
   async function deleteTracking(id) {
