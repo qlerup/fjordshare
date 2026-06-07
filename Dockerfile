@@ -97,17 +97,6 @@ RUN set -eux; \
         done; \
         return 1; \
     }; \
-    avcodec_pkg="$(pick_first_available libavcodec61 libavcodec60 libavcodec59 || true)"; \
-    avutil_pkg="$(pick_first_available libavutil59 libavutil58 libavutil57 || true)"; \
-    swscale_pkg="$(pick_first_available libswscale8 libswscale7 libswscale6 || true)"; \
-    media_pkgs=""; \
-    [ -n "$avcodec_pkg" ] && media_pkgs="$media_pkgs $avcodec_pkg" || true; \
-    [ -n "$avutil_pkg" ] && media_pkgs="$media_pkgs $avutil_pkg" || true; \
-    [ -n "$swscale_pkg" ] && media_pkgs="$media_pkgs $swscale_pkg" || true; \
-    media_pkgs="$(printf '%s' "$media_pkgs" | sed 's/^ *//;s/ *$//')"; \
-    if [ -n "$media_pkgs" ]; then \
-        apt-get install -y --no-install-recommends $media_pkgs; \
-    fi; \
     js40_pkg="$(pick_first_available libjavascriptcoregtk-4.0-18t64 libjavascriptcoregtk-4.0-18 || true)"; \
     wk40_pkg="$(pick_first_available libwebkit2gtk-4.0-37t64 libwebkit2gtk-4.0-37 || true)"; \
     js41_pkg="$(pick_first_available libjavascriptcoregtk-4.1-0t64 libjavascriptcoregtk-4.1-0 || true)"; \
