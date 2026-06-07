@@ -1968,8 +1968,15 @@
     return filesVisible && !state.selectMode && folderAllowsUserWrites(folder);
   }
 
+  function hasLocalDropzone() {
+    if (els.tabTracking && !els.tabTracking.classList.contains("hidden")) return true;
+    if (els.smsConfirmDropZone && !els.smsConfirmDropZone.closest(".hidden")) return true;
+    return false;
+  }
+
   function showGlobalDropOverlay() {
     if (uploadInterimOverlayActive) return;
+    if (hasLocalDropzone()) return;
     ensureUploadOverlayRefs();
     if (!els.uploadOverlay) return;
     const canUploadHere = canUploadFromCurrentView();
@@ -2781,6 +2788,7 @@
 
   function setTab(tab) {
     const target = String(tab || "files");
+    if (target !== "tracking") _autoRefreshTrackingToken++;
     state.currentTab = target;
     const map = {
       files: els.tabFiles,
@@ -14714,6 +14722,55 @@
     );
   }
 
+  let _autoRefreshTrackingToken = 0;
+  const TRACKING_SKIP_MINUTES = 30;
+
+  function trackingNeedsRefresh(item) {
+    const raw = String(item.last_checked_at || item.updated_at || "").trim();
+    if (!raw) return true;
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return true;
+    return (Date.now() - d.getTime()) > TRACKING_SKIP_MINUTES * 60 * 1000;
+  }
+
+  async function autoRefreshAllTracking() {
+    if (state.role !== "admin") return;
+    const token = ++_autoRefreshTrackingToken;
+    const items = state.tracking.filter((item) => Number(item.id || 0) > 0);
+    if (!items.length) return;
+    const toRefresh = items.filter(trackingNeedsRefresh);
+    const skipped = items.length - toRefresh.length;
+    if (!toRefresh.length) {
+      showStatus(els.trackingStatus, `Alle tracking-numre er opdateret for nylig (indenfor ${TRACKING_SKIP_MINUTES} min).`, "ok");
+      setTimeout(() => { if (token === _autoRefreshTrackingToken) showStatus(els.trackingStatus, ""); }, 3000);
+      return;
+    }
+    for (let i = 0; i < toRefresh.length; i++) {
+      if (token !== _autoRefreshTrackingToken) return;
+      if (i > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (token !== _autoRefreshTrackingToken) return;
+      const id = Number(toRefresh[i].id);
+      const skipText = skipped > 0 ? ` (${skipped} sprunget over)` : "";
+      showStatus(els.trackingStatus, `Opdaterer tracking ${i + 1}/${toRefresh.length}${skipText}...`, "ok");
+      try {
+        const data = await api(`/api/admin/tracking/${id}/refresh`, { method: "POST" });
+        if (token !== _autoRefreshTrackingToken) return;
+        const item = data && data.item ? data.item : null;
+        if (item) {
+          const idx = state.tracking.findIndex((entry) => Number(entry.id || 0) === id);
+          if (idx >= 0) state.tracking[idx] = item;
+          renderTracking();
+        }
+      } catch (_) {
+        // fortsæt med næste selv ved fejl
+      }
+    }
+    if (token !== _autoRefreshTrackingToken) return;
+    const doneText = skipped > 0 ? `${toRefresh.length} opdateret, ${skipped} sprunget over (opdateret for nylig).` : "Alle tracking-hændelser opdateret.";
+    showStatus(els.trackingStatus, doneText, "ok");
+    setTimeout(() => { if (token === _autoRefreshTrackingToken) showStatus(els.trackingStatus, ""); }, 3000);
+  }
+
   async function deleteTracking(id) {
     if (state.role !== "admin" || !id) return;
     if (!window.confirm("Vil du slette dette trackingnummer?")) return;
@@ -17259,6 +17316,7 @@
         }
         if (tab === "tracking") {
           await loadTracking();
+          autoRefreshAllTracking();
         }
         if (tab === "rejected-file-types" && state.role === "admin") {
           await loadRejectedFileTypes();
@@ -19190,18 +19248,22 @@
       });
       els.trackingLabelDropZone.addEventListener("dragenter", (event) => {
         event.preventDefault();
+        event.stopPropagation();
         setTrackingLabelDropzoneDragState(true);
       });
       els.trackingLabelDropZone.addEventListener("dragover", (event) => {
         event.preventDefault();
+        event.stopPropagation();
         if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
         setTrackingLabelDropzoneDragState(true);
       });
-      els.trackingLabelDropZone.addEventListener("dragleave", () => {
+      els.trackingLabelDropZone.addEventListener("dragleave", (event) => {
+        event.stopPropagation();
         setTrackingLabelDropzoneDragState(false);
       });
       els.trackingLabelDropZone.addEventListener("drop", (event) => {
         event.preventDefault();
+        event.stopPropagation();
         setTrackingLabelDropzoneDragState(false);
         const files = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files : null;
         const droppedFile = files && files.length ? files[0] : null;
