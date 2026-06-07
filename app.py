@@ -15865,6 +15865,59 @@ _run_startup_preflight()
 app = Flask(__name__)
 app.secret_key = _load_or_create_secret()
 
+_SESSION_COOKIE_SAMESITE = str(os.getenv("SESSION_COOKIE_SAMESITE", "Lax") or "Lax").strip().capitalize()
+if _SESSION_COOKIE_SAMESITE not in {"Lax", "Strict", "None"}:
+    _SESSION_COOKIE_SAMESITE = "Lax"
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE=_SESSION_COOKIE_SAMESITE,
+    SESSION_COOKIE_SECURE=parse_bool(os.getenv("SESSION_COOKIE_SECURE", "1")),
+    REMEMBER_COOKIE_HTTPONLY=True,
+    REMEMBER_COOKIE_SAMESITE=_SESSION_COOKIE_SAMESITE,
+    REMEMBER_COOKIE_SECURE=parse_bool(os.getenv("REMEMBER_COOKIE_SECURE", "1")),
+)
+
+SECURITY_CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net https://esm.sh",
+        "script-src-elem 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net https://esm.sh",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob: https:",
+        "font-src 'self' data:",
+        "connect-src 'self' https: wss:",
+        "media-src 'self' blob: data: https:",
+        "worker-src 'self' blob:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    )
+)
+
+
+def _apply_no_store_cache_headers(response: Any) -> None:
+    if request.endpoint == "static":
+        return
+    response.headers.setdefault("Cache-Control", "no-store, max-age=0")
+    response.headers.setdefault("Pragma", "no-cache")
+    response.headers.setdefault("Expires", "0")
+
+
+@app.after_request
+def add_security_headers(response: Any) -> Any:
+    response.headers.setdefault("Content-Security-Policy", SECURITY_CONTENT_SECURITY_POLICY)
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+    if parse_bool(os.getenv("HSTS_ENABLED", "1")):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    _apply_no_store_cache_headers(response)
+    return response
+
 # Serve common browser icon endpoints explicitly to ensure favicon shows
 @app.route("/favicon.ico")
 def _serve_favicon() -> Any:

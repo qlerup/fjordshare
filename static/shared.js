@@ -31,7 +31,7 @@
 
   function esc(value) {
     htmlEscapeEl.textContent = String(value == null ? "" : value);
-    return htmlEscapeEl.innerHTML.replace(/"/g, "&quot;");
+    return htmlEscapeEl.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#039;");
   }
 
   function showStatus(el, message, kind = "ok") {

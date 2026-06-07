@@ -179,13 +179,11 @@
     }
   }
 
+  const htmlEscapeEl = document.createElement("span");
+
   function esc(value) {
-    return String(value == null ? "" : value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/\"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+    htmlEscapeEl.textContent = String(value == null ? "" : value);
+    return htmlEscapeEl.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#039;");
   }
 
   function textFor(key, vars) {
