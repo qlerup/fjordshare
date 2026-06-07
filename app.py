@@ -15939,6 +15939,26 @@ def _serve_apple_touch_icon() -> Any:
     return send_file(str(path), mimetype="image/png")
 
 
+@app.route("/robots.txt")
+def robots_txt() -> Any:
+    body = "\n".join(
+        (
+            "User-agent: *",
+            "Disallow: /api/",
+            "Disallow: /login",
+            "Disallow: /setup",
+            "Disallow: /logout",
+            "Allow: /static/",
+            "Content-Signal: search=yes,ai-train=no",
+            "",
+        )
+    )
+    response = make_response(body)
+    response.mimetype = "text/plain"
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
+
+
 @app.get("/api/file/<int:file_id>/preview_model")
 def api_file_preview_model(file_id: int):
     with closing(get_conn()) as conn:
@@ -16031,7 +16051,7 @@ def setup_guard():
     if request.endpoint == "static":
         return None
 
-    if users_count() == 0 and request.endpoint not in {"setup", "api_health"}:
+    if users_count() == 0 and request.endpoint not in {"setup", "api_health", "robots_txt"}:
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Konto skal oprettes først."}), 503
         return redirect(url_for("setup"))
