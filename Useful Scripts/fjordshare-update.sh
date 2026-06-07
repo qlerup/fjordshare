@@ -18,6 +18,8 @@ SERVICE_NAME="${SERVICE_NAME:-fjordshare}"
 REPO_BRANCH="${REPO_BRANCH:-}"
 WAIT_TIMEOUT_SEC="${WAIT_TIMEOUT_SEC:-180}"
 WAIT_INTERVAL_SEC="${WAIT_INTERVAL_SEC:-2}"
+APP_UID="${APP_UID:-1001}"
+APP_GID="${APP_GID:-1001}"
 DO_BUILD=1
 NO_CACHE=0
 SKIP_DB_BACKUP=0
@@ -47,7 +49,7 @@ Options:
   -h, --help          Show this help
 
 Environment:
-  APP_DIR, REPO_BRANCH, SERVICE_NAME, WAIT_TIMEOUT_SEC, WAIT_INTERVAL_SEC, CLEANUP_DOCKER
+  APP_DIR, REPO_BRANCH, SERVICE_NAME, WAIT_TIMEOUT_SEC, WAIT_INTERVAL_SEC, CLEANUP_DOCKER, APP_UID, APP_GID
 EOF
 }
 
@@ -360,6 +362,39 @@ backup_database() {
 	backup_database_from_host
 }
 
+repair_data_permissions() {
+	data_dir="${DATA_DIR:-$(read_env_value DATA_DIR || printf '%s' '/opt/fjordshare-data/appdata')}"
+	case "$data_dir" in
+		/*) ;;
+		*)
+			echo "Fejl: DATA_DIR skal vaere en absolut sti: $data_dir"
+			exit 1
+			;;
+	esac
+
+	echo "==> Sikrer skriveadgang til appdata: $data_dir"
+	mkdir -p "$data_dir"
+
+	if [ "$(id -u)" -eq 0 ]; then
+		chown -R "${APP_UID}:${APP_GID}" "$data_dir" 2>/dev/null || {
+			echo "Advarsel: kunne ikke chown $data_dir til ${APP_UID}:${APP_GID}."
+			echo "Advarsel: hvis databasen ligger paa NFS/CIFS, skal sharet tillade UID/GID ${APP_UID}:${APP_GID} at skrive."
+		}
+		chmod -R u+rwX "$data_dir" 2>/dev/null || true
+	else
+		if command -v sudo >/dev/null 2>&1; then
+			sudo chown -R "${APP_UID}:${APP_GID}" "$data_dir" 2>/dev/null || true
+			sudo chmod -R u+rwX "$data_dir" 2>/dev/null || true
+		fi
+	fi
+
+	if [ -f "$data_dir/fjordshare.db" ] && ! docker_cmd run --rm -u "${APP_UID}:${APP_GID}" -v "$data_dir:/data" busybox sh -c ': >> /data/fjordshare.db' >/dev/null 2>&1; then
+		echo "Fejl: container-bruger ${APP_UID}:${APP_GID} kan stadig ikke skrive til $data_dir/fjordshare.db"
+		echo "Tip: koer: chown -R ${APP_UID}:${APP_GID} \"$data_dir\""
+		exit 1
+	fi
+}
+
 wait_for_fjordshare() {
 	elapsed=0
 	echo "==> Venter paa FjordShare health (timeout ${WAIT_TIMEOUT_SEC}s)"
@@ -445,6 +480,7 @@ backup_env_file
 ensure_sms_token_encryption_key
 ensure_makerworld_credentials_encryption_key
 backup_database
+repair_data_permissions
 
 echo "==> Henter seneste kode fra origin/$REPO_BRANCH"
 git fetch origin "$REPO_BRANCH"
