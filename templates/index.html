@@ -48,7 +48,7 @@
                 <div id="thumbTopStatusLabel" class="upload-top-status-label">Thumbnails: Klar</div>
                 <button id="thumbTopStatusCancelBtn" class="upload-top-status-cancel hidden" type="button" aria-label="Annuller thumbnail-generering">&#10005; Annuller</button>
               </div>
-              <div class="upload-top-status-progress"><span id="thumbTopStatusBar" class="upload-top-status-bar" style="width:0%"></span></div>
+              <div class="upload-top-status-progress"><span id="thumbTopStatusBar" class="upload-top-status-bar"></span></div>
             </div>
             <div id="mapperSearchWrap" class="mapper-search" role="search">
               <div class="mapper-search-field">
@@ -103,7 +103,7 @@
           <button id="createFolderBtn" class="btn" type="button">Opret mappe</button>
         </div>
 
-        <input id="fileInput" type="file" multiple style="display:none;">
+        <input id="fileInput" class="hidden" type="file" multiple>
 
         <div id="uploadStatus" class="status hidden"></div>
 
@@ -1368,7 +1368,7 @@
         <div class="metadata-attachments-title">Billeder til filen</div>
         <button id="metadataAttachUploadBtn" class="btn" type="button">Upload billede</button>
       </div>
-      <input id="metadataAttachInput" type="file" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.avif,.heic,.heif" multiple style="display:none;">
+      <input id="metadataAttachInput" class="hidden" type="file" accept="image/*,.jpg,.jpeg,.png,.gif,.webp,.bmp,.avif,.heic,.heif" multiple>
       <div id="metadataAttachDropZone" class="file-info-attach-dropzone">Slip billeder her for at uploade</div>
       <div id="metadataAttachStatus" class="status hidden"></div>
       <div id="metadataAttachList" class="file-info-attach-list"></div>
@@ -1438,7 +1438,7 @@
       <button id="closeModelModalBtn" class="btn">Luk</button>
     </div>
     <div id="modelViewerPane" class="viewer-pane">
-      <model-viewer id="modelViewer" camera-controls auto-rotate disable-pan interaction-prompt="none" shadow-intensity="1" style="width:100%;height:100%;"></model-viewer>
+      <model-viewer id="modelViewer" camera-controls auto-rotate disable-pan interaction-prompt="none" shadow-intensity="1"></model-viewer>
     </div>
     <div id="threePane" class="viewer-pane hidden">
       <canvas id="threeCanvas"></canvas>
@@ -1710,12 +1710,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='vendor/tus.min.js', v=app_build) }}"></script>
-<script>
-  if (!(window.tus && typeof window.tus.Upload === 'function')) {
-    document.write('<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.2.3/dist/tus.min.js"><\\/script>');
-  }
-</script>
+<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.2.3/dist/tus.min.js" crossorigin="anonymous"></script>
 <script type="module" src="https://unpkg.com/@google/model-viewer@4.3.1/dist/model-viewer.min.js" integrity="sha384-cprcVQt7wbUl0xngF3PGP6yBB7n4/t+4AoAMG9biiMCGFiWOdzUH10Ie2COTqFNW" crossorigin="anonymous"></script>
 <script src="{{ url_for('static', filename='app.js', v=app_build) }}"></script>
 {% endblock %}

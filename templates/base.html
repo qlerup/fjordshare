@@ -19,7 +19,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v=app_build) }}">
   {% block head %}{% endblock %}
 </head>
-<body style="margin:0;padding:0;">
+<body>
   {% block body %}{% endblock %}
   <script
     src="{{ url_for('static', filename='i18n.js', v=app_build) }}"

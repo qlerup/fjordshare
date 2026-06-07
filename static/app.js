@@ -2249,14 +2249,18 @@
         <span class="upload-monitor-item-name" title="${esc(safeName)}">${esc(safeName)}</span>
         <span class="upload-monitor-item-status ${statusClass}">${esc(detail || statusText)}</span>
       </div>
-      <div class="upload-monitor-item-progress"><span class="upload-monitor-item-progress-bar" style="width:${Math.max(0, Math.min(100, Number(progressPct || 0)))}%"></span></div>
+      <div class="upload-monitor-item-progress"><span class="upload-monitor-item-progress-bar"></span></div>
     `;
+
+    const initialProgressPct = Math.max(0, Math.min(100, Number(progressPct || 0)));
+    const progressBar = li.querySelector(".upload-monitor-item-progress-bar");
+    if (progressBar) progressBar.style.width = `${initialProgressPct}%`;
 
     els.uploadMonitorList.insertBefore(li, els.uploadMonitorList.firstChild || null);
     uploadMonitorItemsByKey.set(itemKey, {
       el: li,
       statusEl: li.querySelector(".upload-monitor-item-status"),
-      progressBar: li.querySelector(".upload-monitor-item-progress-bar"),
+      progressBar,
     });
 
     while (els.uploadMonitorList.children.length > 8) {
