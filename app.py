@@ -15974,6 +15974,24 @@ def api_share_file_preview_model(token: str, file_id: int):
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 
+STATIC_CACHE_BUSTER_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+
+
+def _static_asset_query_is_valid() -> bool:
+    if request.endpoint != "static" or not request.args:
+        return True
+    if set(request.args.keys()) != {"v"}:
+        return False
+    values = request.args.getlist("v")
+    return len(values) == 1 and bool(STATIC_CACHE_BUSTER_RE.fullmatch(str(values[0] or "")))
+
+
+@app.before_request
+def static_asset_query_guard():
+    if request.endpoint == "static" and not _static_asset_query_is_valid():
+        return ("", 404)
+    return None
+
 
 @app.context_processor
 def inject_template_globals():
