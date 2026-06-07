@@ -17,6 +17,7 @@ WORKDIR /app
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
+    apt-get upgrade -y; \
     apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
@@ -74,7 +75,6 @@ RUN set -eux; \
         libxkbcommon0 \
         libxrandr2 \
         libxrender1 \
-        assimp-utils \
         xvfb \
         xauth; \
     pick_first_available() { \
@@ -107,23 +107,20 @@ RUN set -eux; \
     runtime_js_major=""; \
     runtime_js_pkg=""; \
     runtime_wk_pkg=""; \
-    if [ -n "$wk40_pkg" ]; then \
-        runtime_wk_major="4.0"; \
-        runtime_wk_pkg="$wk40_pkg"; \
-    elif [ -n "$wk41_pkg" ]; then \
+    if [ -n "$wk41_pkg" ]; then \
         runtime_wk_major="4.1"; \
         runtime_wk_pkg="$wk41_pkg"; \
     elif [ -n "$wk60_pkg" ]; then \
         runtime_wk_major="6.0"; \
         runtime_wk_pkg="$wk60_pkg"; \
+    elif [ -n "$wk40_pkg" ]; then \
+        runtime_wk_major="4.0"; \
+        runtime_wk_pkg="$wk40_pkg"; \
     else \
         echo "Fejl: Ingen kompatibel WebKit runtime fundet i apt repo." >&2; \
         exit 1; \
     fi; \
-    if [ -n "$js40_pkg" ]; then \
-        runtime_js_major="4.0"; \
-        runtime_js_pkg="$js40_pkg"; \
-    elif [ "$runtime_wk_major" = "4.1" ] && [ -n "$js41_pkg" ]; then \
+    if [ "$runtime_wk_major" = "4.1" ] && [ -n "$js41_pkg" ]; then \
         runtime_js_major="4.1"; \
         runtime_js_pkg="$js41_pkg"; \
     elif [ "$runtime_wk_major" = "6.0" ] && [ -n "$js60_pkg" ]; then \
@@ -135,6 +132,9 @@ RUN set -eux; \
     elif [ -n "$js60_pkg" ]; then \
         runtime_js_major="6.0"; \
         runtime_js_pkg="$js60_pkg"; \
+    elif [ -n "$js40_pkg" ]; then \
+        runtime_js_major="4.0"; \
+        runtime_js_pkg="$js40_pkg"; \
     else \
         echo "Fejl: Ingen kompatibel JavaScriptCore runtime fundet i apt repo." >&2; \
         exit 1; \
@@ -220,13 +220,20 @@ RUN set -eux; \
     cd /opt/bambu-studio; \
     ./BambuStudio.AppImage --appimage-extract >/dev/null; \
     mv squashfs-root appdir; \
+    find /opt/bambu-studio/appdir -type f \( -name package.json -o -name package-lock.json -o -name npm-shrinkwrap.json -o -name yarn.lock -o -name pnpm-lock.yaml \) -delete; \
     check_targets=""; \
     if [ -f /opt/bambu-studio/appdir/AppRun ]; then \
-        check_targets="/opt/bambu-studio/appdir/AppRun"; \
+        check_targets="$check_targets /opt/bambu-studio/appdir/AppRun"; \
+    fi; \
+    if [ -f /opt/bambu-studio/appdir/bin/bambu-studio-console ]; then \
+        check_targets="$check_targets /opt/bambu-studio/appdir/bin/bambu-studio-console"; \
+    fi; \
+    if [ -f /opt/bambu-studio/appdir/bin/bambu-studio ]; then \
+        check_targets="$check_targets /opt/bambu-studio/appdir/bin/bambu-studio"; \
     fi; \
     missing_libs=""; \
     if [ -n "$check_targets" ]; then \
-        missing_libs="$(for target in $check_targets; do ldd "$target" 2>/dev/null | awk '/not found/{print $1}'; done | sort -u)"; \
+        missing_libs="$(for target in $check_targets; do LD_LIBRARY_PATH="/opt/bambu-studio/appdir/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$target" 2>/dev/null | awk '/not found/{print $1}'; done | sort -u)"; \
     fi; \
     if [ -n "$missing_libs" ]; then \
         echo "BambuStudio core-binary mangler delte biblioteker:" >&2; \
