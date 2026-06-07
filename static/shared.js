@@ -27,12 +27,11 @@
     shareFileGrid: document.getElementById("shareFileGrid"),
   };
 
+  const htmlEscapeEl = document.createElement("span");
+
   function esc(value) {
-    return String(value == null ? "" : value)
-      .replaceAll("&", "&amp;")
-      .replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;")
-      .replaceAll('"', "&quot;");
+    htmlEscapeEl.textContent = String(value == null ? "" : value);
+    return htmlEscapeEl.innerHTML.replace(/"/g, "&quot;");
   }
 
   function showStatus(el, message, kind = "ok") {

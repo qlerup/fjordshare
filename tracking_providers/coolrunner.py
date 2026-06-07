@@ -4,9 +4,9 @@ import json
 import os
 import re
 from typing import Any, Optional
-from urllib import error as urllib_error
 from urllib import parse as urllib_parse
-from urllib import request as urllib_request
+
+import requests
 
 from .bring import TrackingLookupResult, normalize_tracking_number
 
@@ -40,12 +40,7 @@ def _tracking_url(number: str) -> str:
     return COOLRUNNER_PUBLIC_TRACKING_URL.format(tracking_number=urllib_parse.quote(number, safe=""))
 
 
-def _error_message_from_http_error(exc: urllib_error.HTTPError) -> str:
-    try:
-        raw = exc.read().decode("utf-8", errors="replace")
-    except Exception:
-        return ""
-
+def _error_message_from_response_body(raw: str) -> str:
     body = _text(raw)
     if not body:
         return ""
@@ -141,21 +136,29 @@ def fetch_coolrunner_tracking(
     number = normalize_tracking_number(tracking_number)
     timeout_seconds = int(timeout or DEFAULT_TIMEOUT_SECONDS or 20)
 
-    req = urllib_request.Request(
-        COOLRUNNER_API_URL.format(tracking_number=urllib_parse.quote(number, safe="")),
-        method="GET",
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "fjordshare-tracking/1.0",
-        },
-    )
-
     try:
-        with urllib_request.urlopen(req, timeout=timeout_seconds) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib_error.HTTPError as exc:
-        message = _error_message_from_http_error(exc)
-        code = int(exc.code or 0)
+        resp = requests.get(
+            COOLRUNNER_API_URL.format(tracking_number=urllib_parse.quote(number, safe="")),
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "fjordshare-tracking/1.0",
+            },
+            timeout=timeout_seconds,
+        )
+        raw = resp.text
+        code = int(resp.status_code or 0)
+    except requests.RequestException as exc:
+        return TrackingLookupResult(
+            carrier="coolrunner",
+            tracking_number=number,
+            status="Fejl ved opdatering",
+            tracking_url=_tracking_url(number),
+            source="coolrunner-api",
+            error=str(exc)[:260],
+        )
+
+    if code >= 400:
+        message = _error_message_from_response_body(raw)
         if code == 404:
             return TrackingLookupResult(
                 carrier="coolrunner",
@@ -181,15 +184,6 @@ def fetch_coolrunner_tracking(
             tracking_url=_tracking_url(number),
             source="coolrunner-api",
             error=(message or f"CoolRunner API svarede HTTP {code}")[:260],
-        )
-    except Exception as exc:
-        return TrackingLookupResult(
-            carrier="coolrunner",
-            tracking_number=number,
-            status="Fejl ved opdatering",
-            tracking_url=_tracking_url(number),
-            source="coolrunner-api",
-            error=str(exc)[:260],
         )
 
     try:

@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 from html import unescape as html_unescape
 from html.parser import HTMLParser
 from typing import Any, Optional
-from urllib import error as urllib_error
 from urllib import parse as urllib_parse
-from urllib import request as urllib_request
+
+import requests
 
 BRING_API_URL = "https://api.bring.com/tracking/api/v2/tracking.json"
 BRING_PUBLIC_TRACKING_URL = "https://tracking.bring.com/tracking/{tracking_number}?lang=da"
@@ -153,36 +153,38 @@ def _fetch_bring_api_tracking(
     client_url: str,
     timeout: int,
 ) -> TrackingLookupResult:
-    query = urllib_parse.urlencode({"q": number, "lang": "da"})
-    req = urllib_request.Request(
-        f"{BRING_API_URL}?{query}",
-        method="GET",
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "fjordshare-tracking/1.0",
-            "api-version": "2",
-            "X-Mybring-API-Uid": uid,
-            "X-Mybring-API-Key": api_key,
-            "X-Bring-Client-URL": _client_url(client_url),
-        },
-    )
     try:
-        with urllib_request.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib_error.HTTPError as exc:
-        body = _http_error_body(exc)
-        if int(exc.code or 0) == 404:
-            return TrackingLookupResult(
-                carrier="bring",
-                tracking_number=number,
-                status="Ikke fundet",
-                tracking_url=_tracking_url(number),
-                source="bring-api",
-                error=body or "Bring fandt ingen forsendelse på dette nummer.",
-            )
-        raise RuntimeError(body or f"Bring API svarede HTTP {int(exc.code or 0)}") from exc
+        resp = requests.get(
+            BRING_API_URL,
+            params={"q": number, "lang": "da"},
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "fjordshare-tracking/1.0",
+                "api-version": "2",
+                "X-Mybring-API-Uid": uid,
+                "X-Mybring-API-Key": api_key,
+                "X-Bring-Client-URL": _client_url(client_url),
+            },
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Bring API kunne ikke kontaktes: {exc}") from exc
 
-    payload = json.loads(raw or "{}")
+    body = _text(resp.text)
+    status_code = int(resp.status_code or 0)
+    if status_code == 404:
+        return TrackingLookupResult(
+            carrier="bring",
+            tracking_number=number,
+            status="Ikke fundet",
+            tracking_url=_tracking_url(number),
+            source="bring-api",
+            error=body or "Bring fandt ingen forsendelse på dette nummer.",
+        )
+    if status_code >= 400:
+        raise RuntimeError(body or f"Bring API svarede HTTP {status_code}")
+
+    payload = json.loads(resp.text or "{}")
     result = _parse_bring_api_payload(payload, number)
     result.source = "bring-api"
     result.tracking_url = _tracking_url(number)
@@ -194,15 +196,6 @@ def _client_url(client_url: str) -> str:
     if value:
         return value
     return "https://fjordshare.local/"
-
-
-def _http_error_body(exc: urllib_error.HTTPError) -> str:
-    try:
-        raw = exc.read().decode("utf-8", errors="ignore")
-    except Exception:
-        raw = ""
-    msg = _text(raw)
-    return msg[:260]
 
 
 def _parse_bring_api_payload(payload: dict[str, Any], number: str) -> TrackingLookupResult:
@@ -368,23 +361,19 @@ class _BringTrackingHtmlParser(HTMLParser):
 
 
 def _fetch_bring_public_tracking(number: str, timeout: int) -> TrackingLookupResult:
-    req = urllib_request.Request(
-        _tracking_url(number),
-        method="GET",
-        headers={
-            "Accept": "text/html,application/xhtml+xml",
-            "User-Agent": "fjordshare-tracking/1.0",
-        },
-    )
     status_code = 200
     try:
-        with urllib_request.urlopen(req, timeout=timeout) as resp:
-            status_code = int(getattr(resp, "status", 200) or 200)
-            html = resp.read().decode("utf-8", errors="replace")
-    except urllib_error.HTTPError as exc:
-        status_code = int(exc.code or 0)
-        html = exc.read().decode("utf-8", errors="replace")
-    except Exception as exc:
+        resp = requests.get(
+            _tracking_url(number),
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "fjordshare-tracking/1.0",
+            },
+            timeout=timeout,
+        )
+        status_code = int(resp.status_code or 0)
+        html = resp.text
+    except requests.RequestException as exc:
         return TrackingLookupResult(
             carrier="bring",
             tracking_number=number,

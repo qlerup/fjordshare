@@ -16054,6 +16054,27 @@ def setup():
     return render_template("setup.html", error=error, selected_language=selected_language)
 
 
+LOGIN_CSRF_SESSION_KEY = "_login_csrf_token"
+
+
+def _new_login_csrf_token() -> str:
+    token = secrets.token_urlsafe(32)
+    session[LOGIN_CSRF_SESSION_KEY] = token
+    return token
+
+
+def _login_csrf_token() -> str:
+    token = str(session.get(LOGIN_CSRF_SESSION_KEY) or "")
+    if token:
+        return token
+    return _new_login_csrf_token()
+
+
+def _login_csrf_token_valid(token: str) -> bool:
+    expected = str(session.get(LOGIN_CSRF_SESSION_KEY) or "")
+    return bool(expected and token and secrets.compare_digest(expected, token))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if users_count() == 0:
@@ -16064,32 +16085,38 @@ def login():
 
     error = ""
     created = str(request.args.get("created") or "") == "1"
+    csrf_token = _login_csrf_token()
 
     if request.method == "POST":
-        username = str(request.form.get("username") or "").strip()
-        password = str(request.form.get("password") or "")
-        user = fetch_user_by_username(username)
-        if user is None:
-            error = "Forkert brugernavn eller kode."
+        if not _login_csrf_token_valid(str(request.form.get("csrf_token") or "")):
+            error = "Sessionen er udløbet. Prøv igen."
+            csrf_token = _new_login_csrf_token()
         else:
-            with closing(get_conn()) as conn:
-                row = conn.execute(
-                    "SELECT password_hash FROM users WHERE id=?",
-                    (int(user.id),),
-                ).fetchone()
-            if row and check_password_hash(str(row["password_hash"]), password):
-                try:
-                    if user.is_admin:
-                        ensure_user_storage_ready(user)
-                    else:
-                        prepare_user_daily_folders(user)
-                except Exception:
-                    pass
-                login_user(user)
-                return redirect(url_for("index"))
-            error = "Forkert brugernavn eller kode."
+            username = str(request.form.get("username") or "").strip()
+            password = str(request.form.get("password") or "")
+            user = fetch_user_by_username(username)
+            if user is None:
+                error = "Forkert brugernavn eller kode."
+            else:
+                with closing(get_conn()) as conn:
+                    row = conn.execute(
+                        "SELECT password_hash FROM users WHERE id=?",
+                        (int(user.id),),
+                    ).fetchone()
+                if row and check_password_hash(str(row["password_hash"]), password):
+                    try:
+                        if user.is_admin:
+                            ensure_user_storage_ready(user)
+                        else:
+                            prepare_user_daily_folders(user)
+                    except Exception:
+                        pass
+                    session.pop(LOGIN_CSRF_SESSION_KEY, None)
+                    login_user(user)
+                    return redirect(url_for("index"))
+                error = "Forkert brugernavn eller kode."
 
-    return render_template("login.html", error=error, created=created)
+    return render_template("login.html", error=error, created=created, csrf_token=csrf_token)
 
 
 @app.route("/opret/<token>", methods=["GET", "POST"])

@@ -10,3 +10,4 @@ pypdf>=6.10.2,<7.0
 cryptography>=46.0.6,<47.0
 pygltflib>=1.16,<2.0
 cloudscraper>=1.2.71,<2.0
+requests>=2.32,<3.0

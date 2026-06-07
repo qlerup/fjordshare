@@ -83,17 +83,18 @@ is_truthy() {
 csv_has() {
   csv="$1"
   needle="$2"
-  old_ifs="$IFS"
-  IFS=','
-  for item in $csv; do
-    clean="$(printf '%s' "$item" | tr -d '[:space:]')"
-    if [ "$clean" = "$needle" ]; then
-      IFS="$old_ifs"
-      return 0
-    fi
-  done
-  IFS="$old_ifs"
-  return 1
+  printf '%s' "$csv" | awk -v needle="$needle" '
+    BEGIN { FS = "," }
+    {
+      for (i = 1; i <= NF; i++) {
+        gsub(/[[:space:]]/, "", $i)
+        if ($i == needle) {
+          found = 1
+        }
+      }
+    }
+    END { exit found ? 0 : 1 }
+  '
 }
 
 as_sudo() {

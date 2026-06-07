@@ -2,7 +2,9 @@
 {% block title %}Login  -  Fjord3D{% endblock %}
 {% block body %}
 <div class="center-screen">
+  <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token - Flask CSRF token is validated in app.py. -->
   <form class="login-card" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <img class="auth-logo" src="{{ url_for('static', filename='logos/logos/fjord3D-logo-horizontal-transparent.png', v=app_build) }}" alt="Fjord3D">
     <h1>Log ind på Fjord3D</h1>
     {% if error %}<div class="status error">{{ error }}</div>{% endif %}
