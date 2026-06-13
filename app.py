@@ -21147,6 +21147,7 @@ def api_admin_users():
                 """,
                 (int(user_id),),
             ).fetchone()
+        _hub_sync_user(username, role)
         return jsonify(
             {
                 "ok": True,
@@ -21159,6 +21160,95 @@ def api_admin_users():
         return jsonify({"ok": False, "error": str(exc)}), 400
     except Exception as exc:
         return jsonify({"ok": False, "error": f"Kunne ikke oprette bruger: {exc}"}), 500
+
+
+# ── FjordHub integration ──────────────────────────────────────────────────────
+
+_FJORDHUB_API_KEY = os.getenv("FJORDHUB_API_KEY", "")
+_FJORDHUB_URL = os.getenv("FJORDHUB_URL", "")
+_FJORDHUB_APP_ID = os.getenv("FJORDHUB_APP_ID", "fjordshare")
+
+
+def _hub_authorized() -> bool:
+    if not _FJORDHUB_API_KEY:
+        return False
+    return request.headers.get("X-Hub-Key") == _FJORDHUB_API_KEY
+
+
+def _hub_sync_user(username: str, role: str) -> None:
+    import json as _json
+    import urllib.request as _urlreq
+    if not _FJORDHUB_URL or not _FJORDHUB_API_KEY:
+        return
+    try:
+        payload = _json.dumps({
+            "app_id": _FJORDHUB_APP_ID,
+            "username": username,
+            "role": role,
+        }).encode()
+        req = _urlreq.Request(
+            f"{_FJORDHUB_URL}/api/hub/user-sync", data=payload, method="POST"
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("X-Hub-Key", _FJORDHUB_API_KEY)
+        _urlreq.urlopen(req, timeout=3)
+    except Exception:
+        pass
+
+
+@app.route("/api/hub/users", methods=["GET", "POST"])
+def hub_users():
+    if not _hub_authorized():
+        return jsonify({"ok": False, "error": "Uautoriseret"}), 401
+    if request.method == "GET":
+        with closing(get_conn()) as conn:
+            rows = conn.execute(
+                "SELECT id, username, first_name, last_initial, role, created_at FROM users ORDER BY id"
+            ).fetchall()
+        return jsonify({"ok": True, "items": [
+            {"id": r["id"], "username": r["username"],
+             "name": f"{r['first_name']} {r['last_initial']}".strip(),
+             "role": r["role"] or "user", "created_at": r["created_at"]}
+            for r in rows
+        ]})
+    data = request.get_json(silent=True) or {}
+    username = str(data.get("username") or "").strip()
+    password = str(data.get("password") or "")
+    role = str(data.get("role") or "user").strip().lower()
+    name = str(data.get("name") or username).strip()
+    first_name = name.split()[0] if name else username
+    if role not in ("admin", "user"):
+        role = "user"
+    if not username or not password:
+        return jsonify({"ok": False, "error": "username og password påkrævet"}), 400
+    if len(password) < 4:
+        return jsonify({"ok": False, "error": "Adgangskode skal være mindst 4 tegn"}), 400
+    try:
+        create_user(username, password, role, first_name=first_name, require_name=False)
+        return jsonify({"ok": True}), 201
+    except sqlite3.IntegrityError:
+        return jsonify({"ok": False, "error": "Brugernavn findes allerede"}), 409
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/api/hub/users/<int:user_id>", methods=["PATCH", "DELETE"])
+def hub_user(user_id: int):
+    if not _hub_authorized():
+        return jsonify({"ok": False, "error": "Uautoriseret"}), 401
+    if request.method == "DELETE":
+        with closing(get_conn()) as conn:
+            conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+            conn.commit()
+        return jsonify({"ok": True})
+    data = request.get_json(silent=True) or {}
+    role = str(data.get("role") or "user").strip().lower()
+    if role not in ("admin", "user"):
+        return jsonify({"ok": False, "error": "Ugyldig rolle"}), 400
+    with closing(get_conn()) as conn:
+        conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+        conn.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/users/<int:user_id>", methods=["PATCH"])
