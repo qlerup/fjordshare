@@ -16110,7 +16110,10 @@ def setup_guard():
     if user_count == 0 and request.endpoint not in {"setup", "api_health", "robots_txt"}:
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Konto skal oprettes først."}), 503
-        return redirect(url_for("setup"))
+        if _FJORDHUB_API_KEY and request.endpoint != "login":
+            return redirect(url_for("login"))
+        elif not _FJORDHUB_API_KEY:
+            return redirect(url_for("setup"))
 
     return None
 
