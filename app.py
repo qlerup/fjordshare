@@ -16105,15 +16105,16 @@ def setup_guard():
     user_count = users_count()
     if user_count > 0:
         _ensure_install_state_for_existing_users()
+    if user_count == 0 and _fjordhub_managed():
+        if request.endpoint not in {"login", "api_health", "robots_txt"}:
+            return redirect(url_for("login"))
+        return None
     if user_count == 0 and _install_state_exists() and request.endpoint not in {"setup", "api_health", "robots_txt"}:
         return _setup_locked_response()
     if user_count == 0 and request.endpoint not in {"setup", "api_health", "robots_txt"}:
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Konto skal oprettes først."}), 503
-        if _FJORDHUB_API_KEY and request.endpoint != "login":
-            return redirect(url_for("login"))
-        elif not _FJORDHUB_API_KEY:
-            return redirect(url_for("setup"))
+        return redirect(url_for("setup"))
 
     return None
 
@@ -16168,6 +16169,8 @@ def api_slice_cancel(file_id: int):
 def setup():
     if users_count() > 0:
         _ensure_install_state_for_existing_users()
+        return redirect(url_for("login"))
+    if _fjordhub_managed():
         return redirect(url_for("login"))
     if _install_state_exists():
         return _setup_locked_response()
@@ -16231,6 +16234,34 @@ def _login_csrf_token_valid(token: str) -> bool:
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if _fjordhub_managed():
+        if current_user.is_authenticated:
+            return redirect(url_for("index"))
+        error = ""
+        created = str(request.args.get("created") or "") == "1"
+        csrf_token = _login_csrf_token()
+        if request.method == "POST":
+            if not _login_csrf_token_valid(str(request.form.get("csrf_token") or "")):
+                error = "Sessionen er udløbet. Prøv igen."
+                csrf_token = _new_login_csrf_token()
+            else:
+                username = str(request.form.get("username") or "").strip()
+                password = str(request.form.get("password") or "")
+                hub_user = _hub_authenticate(username, password)
+                if hub_user:
+                    user = _ensure_managed_local_user(hub_user)
+                    try:
+                        if user.is_admin:
+                            ensure_user_storage_ready(user)
+                        else:
+                            prepare_user_daily_folders(user)
+                    except Exception:
+                        pass
+                    session.pop(LOGIN_CSRF_SESSION_KEY, None)
+                    login_user(user)
+                    return redirect(url_for("index"))
+                error = "Forkert brugernavn/kode eller ingen adgang til FjordShare."
+        return render_template("login.html", error=error, created=created, csrf_token=csrf_token)
     if users_count() == 0:
         if _install_state_exists():
             return redirect(url_for("setup"))
@@ -21100,6 +21131,8 @@ def serialize_admin_user_row(row: sqlite3.Row) -> dict[str, Any]:
 def api_admin_users():
     if not current_user.is_admin:
         return jsonify({"ok": False, "error": "Kun admin"}), 403
+    if _fjordhub_managed():
+        return _api_admin_users_managed()
 
     if request.method == "GET":
         with closing(get_conn()) as conn:
@@ -21172,37 +21205,200 @@ _FJORDHUB_URL = os.getenv("FJORDHUB_URL", "")
 _FJORDHUB_APP_ID = os.getenv("FJORDHUB_APP_ID", "fjordshare")
 
 
+def _fjordhub_managed() -> bool:
+    return bool(_FJORDHUB_URL and _FJORDHUB_API_KEY and _FJORDHUB_APP_ID)
+
+
 def _hub_authorized() -> bool:
     if not _FJORDHUB_API_KEY:
         return False
     return request.headers.get("X-Hub-Key") == _FJORDHUB_API_KEY
 
 
-def _hub_sync_user(username: str, role: str) -> None:
-    import json as _json
-    import urllib.request as _urlreq
-    if not _FJORDHUB_URL or not _FJORDHUB_API_KEY:
-        return
-    try:
-        payload = _json.dumps({
-            "app_id": _FJORDHUB_APP_ID,
-            "username": username,
-            "role": role,
-        }).encode()
-        req = _urlreq.Request(
-            f"{_FJORDHUB_URL}/api/hub/user-sync", data=payload, method="POST"
-        )
+def _hub_api(path: str, payload: Optional[dict] = None, method: str = "POST") -> dict:
+    if not _fjordhub_managed():
+        return {"ok": False, "error": "FjordHub integration er ikke aktiv."}
+    data = dict(payload or {})
+    data.setdefault("app_id", _FJORDHUB_APP_ID)
+    url = f"{_FJORDHUB_URL.rstrip('/')}{path}"
+    body = None
+    if method.upper() == "GET":
+        url = f"{url}?{urllib_parse.urlencode(data)}"
+    else:
+        body = json.dumps(data).encode("utf-8")
+    req = urllib_request.Request(url, data=body, method=method.upper())
+    req.add_header("X-Hub-Key", _FJORDHUB_API_KEY)
+    if body is not None:
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-Hub-Key", _FJORDHUB_API_KEY)
-        _urlreq.urlopen(req, timeout=3)
-    except Exception:
-        pass
+    try:
+        with urllib_request.urlopen(req, timeout=6) as resp:
+            return json.loads(resp.read().decode("utf-8") or "{}")
+    except urllib_error.HTTPError as exc:
+        try:
+            return json.loads(exc.read().decode("utf-8") or "{}")
+        except Exception:
+            return {"ok": False, "error": f"FjordHub svarede HTTP {exc.code}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"Kunne ikke kontakte FjordHub: {exc}"}
+
+
+def _hub_authenticate(username: str, password: str) -> Optional[dict]:
+    result = _hub_api(
+        "/api/hub/apps/authenticate",
+        {"username": username, "password": password},
+    )
+    user = result.get("user")
+    return user if result.get("ok") and isinstance(user, dict) else None
+
+
+def _hub_list_users() -> list[dict]:
+    result = _hub_api("/api/hub/apps/users", {}, method="GET")
+    return result.get("items", []) if result.get("ok") and isinstance(result.get("items"), list) else []
+
+
+def _hub_create_user(payload: dict) -> dict:
+    return _hub_api("/api/hub/apps/users", payload, method="POST")
+
+
+def _hub_update_user_role(user_id: int, role: str) -> dict:
+    return _hub_api(f"/api/hub/apps/users/{int(user_id)}", {"role": role}, method="PATCH")
+
+
+def _hub_delete_user_access(user_id: int) -> dict:
+    return _hub_api(f"/api/hub/apps/users/{int(user_id)}", {}, method="DELETE")
+
+
+def _managed_home_folder(conn, username: str, first_name: str = "", last_initial: str = "", user_id: Optional[int] = None) -> str:
+    base_segment = user_profile_folder_segment(username, first_name, last_initial, user_id=user_id)
+    home_folder = normalize_folder_path(f"users/{base_segment}")
+    suffix = 1
+    while _home_folder_is_in_use(conn, home_folder):
+        row = conn.execute("SELECT id FROM users WHERE home_folder=?", (home_folder,)).fetchone()
+        if row is not None and user_id is not None and int(row["id"]) == int(user_id):
+            break
+        suffix += 1
+        home_folder = normalize_folder_path(f"users/{base_segment}-{suffix}")
+    return home_folder
+
+
+def _ensure_managed_local_user(
+    hub_user: dict,
+    first_name: str = "",
+    last_name: str = "",
+    language: str = DEFAULT_USER_LANGUAGE,
+) -> User:
+    user_id = int(hub_user["id"])
+    username = normalize_username(str(hub_user.get("username") or ""))
+    role = "admin" if str(hub_user.get("role") or "user").strip().lower() == "admin" else "user"
+    clean_first_name = normalize_person_name(first_name or username, "Navn", required=False, forbid_email=False)
+    clean_last_initial = last_name_to_initial(last_name, required=False, forbid_email=False)
+    lang = normalize_user_language(language)
+    with closing(get_conn()) as conn:
+        row = conn.execute("SELECT id, home_folder FROM users WHERE id=?", (user_id,)).fetchone()
+        if row is None:
+            home_folder = _managed_home_folder(conn, username, clean_first_name, clean_last_initial, user_id)
+            conn.execute(
+                """
+                INSERT INTO users(id, username, first_name, last_initial, language, password_hash, role, home_folder, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    user_id,
+                    username,
+                    clean_first_name,
+                    clean_last_initial,
+                    lang,
+                    "fjordhub-managed",
+                    role,
+                    home_folder,
+                    now_iso(),
+                    now_iso(),
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE users
+                SET username=?, role=?, updated_at=?
+                WHERE id=?
+                """,
+                (username, role, now_iso(), user_id),
+            )
+        conn.commit()
+    user = get_user_by_id(user_id)
+    if user is None:
+        raise RuntimeError("Kunne ikke oprette lokal FjordHub-profil.")
+    ensure_user_home_folder(user.id, user.username, user.home_folder)
+    return user
+
+
+def _serialize_managed_user(hub_user: dict) -> dict:
+    user = _ensure_managed_local_user(hub_user)
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            """
+            SELECT id, username, first_name, last_initial, language, role, home_folder, created_at,
+                   app_onboarding_seen_v1, app_onboarding_enabled
+            FROM users
+            WHERE id=?
+            """,
+            (int(user.id),),
+        ).fetchone()
+    return serialize_admin_user_row(row) if row is not None else {
+        "id": int(user.id),
+        "username": user.username,
+        "role": user.role,
+        "home_folder": user.home_folder,
+    }
+
+
+def _api_admin_users_managed():
+    if request.method == "GET":
+        return jsonify({
+            "ok": True,
+            "items": [
+                _serialize_managed_user(item)
+                for item in _hub_list_users()
+                if isinstance(item, dict)
+            ],
+        })
+
+    body = request.get_json(silent=True) or {}
+    first_name = str(body.get("first_name") or "").strip()
+    last_name = str(body.get("last_name") or "").strip()
+    username = str(body.get("username") or "").strip()
+    password = str(body.get("password") or "")
+    password2 = str(body.get("password2") or "")
+    role = str(body.get("role") or "user").strip().lower()
+    language = normalize_user_language(body.get("language"))
+    if password != password2:
+        return jsonify({"ok": False, "error": "Adgangskoderne matcher ikke"}), 400
+    if role not in {"admin", "user"}:
+        role = "user"
+    result = _hub_create_user({"username": username, "password": password, "role": role})
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error") or "Kunne ikke oprette bruger i FjordHub"}), 400
+    hub_user = result.get("user") or result.get("item") or {}
+    if isinstance(hub_user, dict):
+        _ensure_managed_local_user(hub_user, first_name=first_name, last_name=last_name, language=language)
+        item = _serialize_managed_user(hub_user)
+    else:
+        item = None
+    return jsonify({"ok": True, "item": item})
+
+
+def _hub_sync_user(username: str, role: str) -> None:
+    if not _fjordhub_managed():
+        return
+    _hub_create_user({"username": username, "role": role})
 
 
 @app.route("/api/hub/users", methods=["GET", "POST"])
 def hub_users():
     if not _hub_authorized():
         return jsonify({"ok": False, "error": "Uautoriseret"}), 401
+    if _fjordhub_managed():
+        return jsonify({"ok": False, "error": "Lokal bruger-provisionering er slået fra i FjordHub-managed mode."}), 410
     if request.method == "GET":
         with closing(get_conn()) as conn:
             rows = conn.execute(
@@ -21239,6 +21435,8 @@ def hub_users():
 def hub_user(user_id: int):
     if not _hub_authorized():
         return jsonify({"ok": False, "error": "Uautoriseret"}), 401
+    if _fjordhub_managed():
+        return jsonify({"ok": False, "error": "Lokal bruger-provisionering er slået fra i FjordHub-managed mode."}), 410
     if request.method == "DELETE":
         with closing(get_conn()) as conn:
             conn.execute("DELETE FROM users WHERE id=?", (user_id,))
@@ -21261,6 +21459,47 @@ def api_admin_users_update(user_id: int):
         return jsonify({"ok": False, "error": "Kun admin"}), 403
 
     body = request.get_json(silent=True) or {}
+    if _fjordhub_managed():
+        role = "admin" if str(body.get("role") or "user").strip().lower() == "admin" else "user"
+        if int(user_id) == int(current_user.id) and role != "admin":
+            return jsonify({"ok": False, "error": "Du kan ikke fjerne admin-rollen fra dig selv"}), 400
+        result = _hub_update_user_role(user_id, role)
+        if not result.get("ok"):
+            return jsonify({"ok": False, "error": result.get("error") or "Kunne ikke opdatere FjordHub-adgang"}), 400
+        try:
+            first_name = normalize_person_name(str(body.get("first_name") or ""), "Navn", required=True, forbid_email=True)
+            last_initial = last_name_to_initial(str(body.get("last_name") or body.get("last_initial") or ""), required=True, forbid_email=True)
+            language = normalize_user_language(body.get("language"))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        with closing(get_conn()) as conn:
+            row = conn.execute("SELECT id, username FROM users WHERE id=?", (int(user_id),)).fetchone()
+        if row is None:
+            hub_user = result.get("user") or result.get("item") or {"id": user_id, "username": body.get("username"), "role": role}
+            _ensure_managed_local_user(hub_user if isinstance(hub_user, dict) else {}, first_name=first_name, last_name=last_initial, language=language)
+        else:
+            existing_username = str(row["username"] or "").strip()
+            requested_username = normalize_username(str(body.get("username") or existing_username))
+            if requested_username.lower() != existing_username.lower():
+                return jsonify({"ok": False, "error": "Brugernavn styres i FjordHub"}), 400
+            with closing(get_conn()) as conn:
+                conn.execute(
+                    "UPDATE users SET first_name=?, last_initial=?, language=?, role=?, updated_at=? WHERE id=?",
+                    (first_name, last_initial, language, role, now_iso(), int(user_id)),
+                )
+                conn.commit()
+        with closing(get_conn()) as conn:
+            updated = conn.execute(
+                """
+                SELECT id, username, first_name, last_initial, language, role, home_folder, created_at,
+                       app_onboarding_seen_v1, app_onboarding_enabled
+                FROM users
+                WHERE id=?
+                """,
+                (int(user_id),),
+            ).fetchone()
+        return jsonify({"ok": True, "item": serialize_admin_user_row(updated) if updated is not None else None})
+
     try:
         first_name = normalize_person_name(str(body.get("first_name") or ""), "Navn", required=True, forbid_email=True)
         last_initial = last_name_to_initial(str(body.get("last_name") or body.get("last_initial") or ""), required=True, forbid_email=True)
@@ -21428,6 +21667,13 @@ def api_admin_users_force_guide(user_id: int):
 def api_admin_users_delete(user_id: int):
     if not current_user.is_admin:
         return jsonify({"ok": False, "error": "Kun admin"}), 403
+    if _fjordhub_managed():
+        if int(user_id) == int(current_user.id):
+            return jsonify({"ok": False, "error": "Du kan ikke slette dig selv"}), 400
+        result = _hub_delete_user_access(user_id)
+        if not result.get("ok"):
+            return jsonify({"ok": False, "error": result.get("error") or "Kunne ikke fjerne adgang i FjordHub"}), 400
+        return jsonify({"ok": True})
     if int(user_id) == int(current_user.id):
         return jsonify({"ok": False, "error": "Du kan ikke slette dig selv"}), 400
 
