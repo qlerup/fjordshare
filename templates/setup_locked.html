@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Recovery kraeves - {{ app_name }}{% endblock %}
+{% block body %}
+<div class="center-screen">
+  <div class="login-card">
+    <img class="auth-logo" src="{{ url_for('static', filename='logos/logos/fjord3D-logo-horizontal-transparent.png', v=app_build) }}" alt="Fjord3D">
+    <h1>Recovery kraeves</h1>
+    <p class="hint">{{ app_name }} er allerede initialiseret, men databasen mangler eller er tom.</p>
+    <div class="status error">
+      Af sikkerhedsgrunde er foerste opsaetning lukket. Gendan databasen fra backup eller kontroller data-mountet.
+    </div>
+    <p class="hint">Database: {{ db_path }}</p>
+  </div>
+</div>
+{% endblock %}

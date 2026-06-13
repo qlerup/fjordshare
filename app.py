@@ -104,6 +104,8 @@ FILE_ATTACHMENTS_DIR = DATA_DIR / "file_attachments"
 PRINT_READY_PROJECT_UPLOADS_DIR = DATA_DIR / "print_ready_project_uploads"
 PRINT_READY_PROJECT_FILES_FOLDER_NAME = "Project files"
 DB_PATH = DATA_DIR / "fjordshare.db"
+INSTALL_STATE_PATH = DATA_DIR / "fjordshare.install.json"
+INSTALL_STATE_LOCK = threading.Lock()
 SLICER_PROFILE_DIR = BAMBU_DIR / "profiles"
 BAMBU_SLICED_DIR = BAMBU_DIR / "sliced"
 SLICER_PROFILE_PRINTER_DIR = SLICER_PROFILE_DIR / "printer_profiles"
@@ -840,6 +842,54 @@ def _ensure_storage_dirs() -> None:
     _normalize_existing_uploaded_profile_json_files()
 
 
+def _install_state_exists() -> bool:
+    return INSTALL_STATE_PATH.exists()
+
+
+def _mark_install_initialized(reason: str = "unknown") -> None:
+    if _install_state_exists():
+        return
+    with INSTALL_STATE_LOCK:
+        if _install_state_exists():
+            return
+        payload = {
+            "app": "fjordshare",
+            "initialized": True,
+            "initialized_at": now_iso(),
+            "reason": str(reason or "unknown"),
+            "db_path": str(DB_PATH),
+        }
+        INSTALL_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = INSTALL_STATE_PATH.with_name(f".{INSTALL_STATE_PATH.name}.{os.getpid()}.tmp")
+        tmp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp_path, INSTALL_STATE_PATH)
+
+
+def _ensure_install_state_for_existing_users() -> None:
+    try:
+        if users_count() > 0:
+            _mark_install_initialized("existing-users")
+    except Exception:
+        pass
+
+
+def _setup_locked_response():
+    message = "FjordShare er allerede initialiseret, men databasen mangler eller er tom."
+    if request.path.startswith("/api/"):
+        return jsonify(
+            {
+                "ok": False,
+                "error": message,
+                "recovery_required": True,
+            }
+        ), 503
+    return render_template(
+        "setup_locked.html",
+        app_name="FjordShare",
+        db_path=str(DB_PATH),
+    ), 503
+
+
 def _run_startup_preflight() -> None:
     attempts = STARTUP_RETRY_ATTEMPTS
     delay_sec = STARTUP_RETRY_DELAY_SEC
@@ -847,6 +897,7 @@ def _run_startup_preflight() -> None:
         try:
             _ensure_storage_dirs()
             init_db()
+            _ensure_install_state_for_existing_users()
             migrate_thumbnail_render_style_if_needed()
             if attempt > 1:
                 print(
@@ -16051,7 +16102,12 @@ def setup_guard():
     if request.endpoint == "static":
         return None
 
-    if users_count() == 0 and request.endpoint not in {"setup", "api_health", "robots_txt"}:
+    user_count = users_count()
+    if user_count > 0:
+        _ensure_install_state_for_existing_users()
+    if user_count == 0 and _install_state_exists() and request.endpoint not in {"setup", "api_health", "robots_txt"}:
+        return _setup_locked_response()
+    if user_count == 0 and request.endpoint not in {"setup", "api_health", "robots_txt"}:
         if request.path.startswith("/api/"):
             return jsonify({"ok": False, "error": "Konto skal oprettes først."}), 503
         return redirect(url_for("setup"))
@@ -16108,7 +16164,10 @@ def api_slice_cancel(file_id: int):
 @app.route("/setup", methods=["GET", "POST"])
 def setup():
     if users_count() > 0:
+        _ensure_install_state_for_existing_users()
         return redirect(url_for("login"))
+    if _install_state_exists():
+        return _setup_locked_response()
 
     error = ""
     if request.method == "POST":
@@ -16133,6 +16192,7 @@ def setup():
                     language=language,
                     require_name=True,
                 )
+                _mark_install_initialized("first-admin-created")
                 return redirect(url_for("login", created="1"))
             except sqlite3.IntegrityError:
                 error = "Brugernavnet findes allerede."
@@ -16169,7 +16229,10 @@ def _login_csrf_token_valid(token: str) -> bool:
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if users_count() == 0:
+        if _install_state_exists():
+            return redirect(url_for("setup"))
         return redirect(url_for("setup"))
+    _ensure_install_state_for_existing_users()
 
     if current_user.is_authenticated:
         return redirect(url_for("index"))
