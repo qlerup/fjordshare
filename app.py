@@ -16106,7 +16106,7 @@ def setup_guard():
     if user_count > 0:
         _ensure_install_state_for_existing_users()
     if user_count == 0 and _fjordhub_managed():
-        if request.endpoint not in {"login", "api_health", "robots_txt"}:
+        if request.endpoint not in {"login", "hub_login", "api_health", "robots_txt"}:
             return redirect(url_for("login"))
         return None
     if user_count == 0 and _install_state_exists() and request.endpoint not in {"setup", "api_health", "robots_txt"}:
@@ -16441,6 +16441,26 @@ def profile_signup(token: str):
 def logout():
     logout_user()
     return redirect(url_for("login"))
+
+
+@app.route("/hub-login")
+def hub_login():
+    if not _fjordhub_managed():
+        return redirect(url_for("login"))
+    token = request.args.get("token", "").strip()
+    if not token:
+        return redirect(url_for("login"))
+    result = _hub_api("/api/hub/sso-verify", {"token": token}, method="GET")
+    if not result.get("ok"):
+        return redirect(url_for("login"))
+    try:
+        user = _ensure_managed_local_user(result)
+        ensure_user_storage_ready(user)
+    except Exception:
+        return redirect(url_for("login"))
+    session.pop(LOGIN_CSRF_SESSION_KEY, None)
+    login_user(user)
+    return redirect(url_for("index"))
 
 
 @app.route("/")
