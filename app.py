@@ -16264,8 +16264,7 @@ def login():
                         return redirect(url_for("index"))
 
                 hub_user = _hub_authenticate(username, password)
-                hub_role = str((hub_user or {}).get("role") or "user").strip().lower() if hub_user else ""
-                if hub_user and hub_role == "admin":
+                if hub_user:
                     user = _ensure_managed_local_user(hub_user)
                     try:
                         ensure_user_storage_ready(user)
@@ -16452,11 +16451,13 @@ def hub_login():
         return redirect(url_for("login"))
     result = _hub_api("/api/hub/sso-verify", {"token": token}, method="GET")
     if not result.get("ok"):
+        app.logger.warning("FjordHub SSO verify failed: %s", result.get("error") or result)
         return redirect(url_for("login"))
     try:
         user = _ensure_managed_local_user(result)
         ensure_user_storage_ready(user)
     except Exception:
+        app.logger.exception("FjordHub SSO login failed")
         return redirect(url_for("login"))
     session.pop(LOGIN_CSRF_SESSION_KEY, None)
     login_user(user)
@@ -21332,8 +21333,6 @@ def _ensure_managed_local_user(
     user_id = int(hub_user["id"])
     username = normalize_username(str(hub_user.get("username") or ""))
     role = "admin" if str(hub_user.get("role") or "user").strip().lower() == "admin" else "user"
-    if role != "admin":
-        raise RuntimeError("FjordHub-login i FjordShare er kun for admin-brugere.")
     clean_first_name = normalize_person_name(first_name or username, "Navn", required=False, forbid_email=False)
     clean_last_initial = last_name_to_initial(last_name, required=False, forbid_email=False)
     lang = normalize_user_language(language)
