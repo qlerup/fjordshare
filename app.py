@@ -15964,7 +15964,7 @@ def add_security_headers(response: Any) -> Any:
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
     response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
-    if parse_bool(os.getenv("HSTS_ENABLED", "1")):
+    if parse_bool(os.getenv("HSTS_ENABLED", "0")):
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     _apply_no_store_cache_headers(response)
     return response
@@ -21293,7 +21293,9 @@ def _hub_authenticate(username: str, password: str) -> Optional[dict]:
 
 
 def _hub_user_is_admin(hub_user: dict) -> bool:
-    return str((hub_user or {}).get("role") or "user").strip().lower() == "admin"
+    app_role = str((hub_user or {}).get("role") or "user").strip().lower()
+    hub_role = str((hub_user or {}).get("hub_role") or app_role).strip().lower()
+    return app_role == "admin" or hub_role == "admin"
 
 
 def _hub_list_users() -> list[dict]:
