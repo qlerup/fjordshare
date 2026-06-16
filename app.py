@@ -21371,16 +21371,19 @@ def _ensure_managed_local_user(
     hub_user: dict,
     first_name: str = "",
     last_name: str = "",
-    language: str = DEFAULT_USER_LANGUAGE,
+    language: str = "",
 ) -> User:
     if not _hub_user_is_admin(hub_user):
         raise ValueError("Kun admin-login håndteres igennem FjordHub.")
     hub_user_id = int(hub_user["id"])
     username = normalize_username(str(hub_user.get("username") or ""))
     role = "admin"
-    clean_first_name = normalize_person_name(first_name or username, "Navn", required=False, forbid_email=False)
-    clean_last_initial = last_name_to_initial(last_name, required=False, forbid_email=False)
-    lang = normalize_user_language(language)
+    raw_first_name = first_name or str(hub_user.get("first_name") or "").strip()
+    raw_last_name = last_name or str(hub_user.get("last_name") or hub_user.get("last_initial") or "").strip()
+    raw_language = language or str(hub_user.get("language") or DEFAULT_USER_LANGUAGE).strip()
+    clean_first_name = normalize_person_name(raw_first_name or username, "Navn", required=False, forbid_email=False)
+    clean_last_initial = last_name_to_initial(raw_last_name, required=False, forbid_email=False)
+    lang = normalize_user_language(raw_language)
     with closing(get_conn()) as conn:
         row = conn.execute(
             "SELECT id, username, home_folder, password_hash FROM users WHERE lower(username)=lower(?) LIMIT 1",
@@ -21442,10 +21445,10 @@ def _ensure_managed_local_user(
             conn.execute(
                 """
                 UPDATE users
-                SET username=?, password_hash=?, role=?, updated_at=?
+                SET username=?, first_name=?, last_initial=?, language=?, password_hash=?, role=?, updated_at=?
                 WHERE id=?
                 """,
-                (username, "fjordhub-managed", role, now_iso(), user_id),
+                (username, clean_first_name, clean_last_initial, lang, "fjordhub-managed", role, now_iso(), user_id),
             )
         conn.commit()
     with closing(get_conn()) as conn:
