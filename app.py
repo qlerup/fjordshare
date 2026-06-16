@@ -16265,6 +16265,9 @@ def login():
 
                 hub_user = _hub_authenticate(username, password)
                 if hub_user:
+                    if not _hub_user_is_admin(hub_user):
+                        error = "Kun admin-login håndteres igennem FjordHub."
+                        return render_template("login.html", error=error, created=created, csrf_token=csrf_token)
                     user = _ensure_managed_local_user(hub_user)
                     try:
                         ensure_user_storage_ready(user)
@@ -16452,6 +16455,9 @@ def hub_login():
     result = _hub_api("/api/hub/sso-verify", {"token": token}, method="GET")
     if not result.get("ok"):
         app.logger.warning("FjordHub SSO verify failed: %s", result.get("error") or result)
+        return redirect(url_for("login"))
+    if not _hub_user_is_admin(result):
+        app.logger.warning("FjordHub SSO rejected non-admin user for FjordShare: %s", result.get("username") or "")
         return redirect(url_for("login"))
     try:
         user = _ensure_managed_local_user(result)
@@ -21286,6 +21292,10 @@ def _hub_authenticate(username: str, password: str) -> Optional[dict]:
     return user if result.get("ok") and isinstance(user, dict) else None
 
 
+def _hub_user_is_admin(hub_user: dict) -> bool:
+    return str((hub_user or {}).get("role") or "user").strip().lower() == "admin"
+
+
 def _hub_list_users() -> list[dict]:
     result = _hub_api("/api/hub/apps/users", {}, method="GET")
     return result.get("items", []) if result.get("ok") and isinstance(result.get("items"), list) else []
@@ -21311,6 +21321,25 @@ def _hub_delete_user_access(user_id: int) -> dict:
     return _hub_api(f"/api/hub/apps/users/{int(user_id)}", {}, method="DELETE")
 
 
+def _hub_user_id_for_local_user(user_id: int) -> int:
+    with closing(get_conn()) as conn:
+        row = conn.execute(
+            "SELECT username FROM users WHERE id=?",
+            (int(user_id),),
+        ).fetchone()
+    username = str(row["username"] or "").strip() if row is not None else ""
+    if username:
+        for item in _hub_list_users():
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("username") or "").strip().lower() == username.lower():
+                try:
+                    return int(item.get("id") or user_id)
+                except Exception:
+                    break
+    return int(user_id)
+
+
 def _managed_home_folder(conn, username: str, first_name: str = "", last_initial: str = "", user_id: Optional[int] = None) -> str:
     base_segment = user_profile_folder_segment(username, first_name, last_initial, user_id=user_id)
     home_folder = normalize_folder_path(f"users/{base_segment}")
@@ -21330,45 +21359,87 @@ def _ensure_managed_local_user(
     last_name: str = "",
     language: str = DEFAULT_USER_LANGUAGE,
 ) -> User:
-    user_id = int(hub_user["id"])
+    if not _hub_user_is_admin(hub_user):
+        raise ValueError("Kun admin-login håndteres igennem FjordHub.")
+    hub_user_id = int(hub_user["id"])
     username = normalize_username(str(hub_user.get("username") or ""))
-    role = "admin" if str(hub_user.get("role") or "user").strip().lower() == "admin" else "user"
+    role = "admin"
     clean_first_name = normalize_person_name(first_name or username, "Navn", required=False, forbid_email=False)
     clean_last_initial = last_name_to_initial(last_name, required=False, forbid_email=False)
     lang = normalize_user_language(language)
     with closing(get_conn()) as conn:
-        row = conn.execute("SELECT id, home_folder FROM users WHERE id=?", (user_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, username, home_folder, password_hash FROM users WHERE lower(username)=lower(?) LIMIT 1",
+            (username,),
+        ).fetchone()
         if row is None:
-            home_folder = _managed_home_folder(conn, username, clean_first_name, clean_last_initial, user_id)
-            conn.execute(
-                """
-                INSERT INTO users(id, username, first_name, last_initial, language, password_hash, role, home_folder, created_at, updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    user_id,
-                    username,
-                    clean_first_name,
-                    clean_last_initial,
-                    lang,
-                    "fjordhub-managed",
-                    role,
-                    home_folder,
-                    now_iso(),
-                    now_iso(),
-                ),
-            )
+            id_row = conn.execute(
+                "SELECT id, username, home_folder, password_hash FROM users WHERE id=?",
+                (hub_user_id,),
+            ).fetchone()
+            if id_row is not None:
+                id_username = str(id_row["username"] or "").strip()
+                id_is_managed = str(id_row["password_hash"] or "") == "fjordhub-managed"
+                if id_is_managed or id_username.lower() == username.lower():
+                    row = id_row
+        if row is None:
+            id_available = conn.execute("SELECT 1 FROM users WHERE id=? LIMIT 1", (hub_user_id,)).fetchone() is None
+            insert_user_id = hub_user_id if id_available else None
+            home_folder = _managed_home_folder(conn, username, clean_first_name, clean_last_initial, insert_user_id)
+            if insert_user_id is not None:
+                conn.execute(
+                    """
+                    INSERT INTO users(id, username, first_name, last_initial, language, password_hash, role, home_folder, created_at, updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        insert_user_id,
+                        username,
+                        clean_first_name,
+                        clean_last_initial,
+                        lang,
+                        "fjordhub-managed",
+                        role,
+                        home_folder,
+                        now_iso(),
+                        now_iso(),
+                    ),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO users(username, first_name, last_initial, language, password_hash, role, home_folder, created_at, updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        username,
+                        clean_first_name,
+                        clean_last_initial,
+                        lang,
+                        "fjordhub-managed",
+                        role,
+                        home_folder,
+                        now_iso(),
+                        now_iso(),
+                    ),
+                )
         else:
+            user_id = int(row["id"])
             conn.execute(
                 """
                 UPDATE users
-                SET username=?, role=?, updated_at=?
+                SET username=?, password_hash=?, role=?, updated_at=?
                 WHERE id=?
                 """,
-                (username, role, now_iso(), user_id),
+                (username, "fjordhub-managed", role, now_iso(), user_id),
             )
         conn.commit()
-    user = get_user_by_id(user_id)
+    with closing(get_conn()) as conn:
+        synced = conn.execute(
+            "SELECT id FROM users WHERE lower(username)=lower(?) LIMIT 1",
+            (username,),
+        ).fetchone()
+    user = get_user_by_id(int(synced["id"])) if synced is not None else None
     if user is None:
         raise RuntimeError("Kunne ikke oprette lokal FjordHub-profil.")
     ensure_user_home_folder(user.id, user.username, user.home_folder)
@@ -21757,7 +21828,7 @@ def api_admin_users_delete(user_id: int):
         if row is not None and str(row["password_hash"] or "") == "fjordhub-managed":
             if int(user_id) == int(current_user.id):
                 return jsonify({"ok": False, "error": "Du kan ikke slette dig selv"}), 400
-            result = _hub_delete_user_access(user_id)
+            result = _hub_delete_user_access(_hub_user_id_for_local_user(user_id))
             if not result.get("ok"):
                 return jsonify({"ok": False, "error": result.get("error") or "Kunne ikke fjerne adgang i FjordHub"}), 400
             return jsonify({"ok": True})
