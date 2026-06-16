@@ -16051,7 +16051,17 @@ STATIC_CACHE_BUSTER_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 def _static_asset_query_is_valid() -> bool:
     if request.endpoint != "static" or not request.args:
         return True
-    if set(request.args.keys()) != {"v"}:
+    query_keys = set(request.args.keys())
+    static_filename = str((request.view_args or {}).get("filename") or "")
+    if static_filename.startswith("guide-gifs/") and static_filename.lower().endswith(".gif"):
+        if not query_keys.issubset({"v", "_guide_play"}):
+            return False
+        for key in query_keys:
+            values = request.args.getlist(key)
+            if len(values) != 1 or not STATIC_CACHE_BUSTER_RE.fullmatch(str(values[0] or "")):
+                return False
+        return True
+    if query_keys != {"v"}:
         return False
     values = request.args.getlist("v")
     return len(values) == 1 and bool(STATIC_CACHE_BUSTER_RE.fullmatch(str(values[0] or "")))
