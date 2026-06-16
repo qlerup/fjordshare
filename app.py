@@ -21545,7 +21545,14 @@ def _api_admin_users_managed():
         except Exception as exc:
             return jsonify({"ok": False, "error": f"Kunne ikke oprette bruger: {exc}"}), 500
 
-    result = _hub_create_user({"username": username, "password": password, "role": role})
+    result = _hub_create_user({
+        "username": username,
+        "password": password,
+        "role": role,
+        "first_name": first_name,
+        "last_name": last_name,
+        "language": language,
+    })
     if not result.get("ok"):
         return jsonify({"ok": False, "error": result.get("error") or "Kunne ikke oprette bruger i FjordHub"}), 400
     hub_user = result.get("user") or result.get("item") or {}
