@@ -16277,9 +16277,6 @@ def login():
 
                 hub_user = _hub_authenticate(username, password)
                 if hub_user:
-                    if not _hub_user_is_admin(hub_user):
-                        error = "Kun admin-login håndteres igennem FjordHub."
-                        return render_template("login.html", error=error, created=created, csrf_token=csrf_token)
                     user = _ensure_managed_local_user(hub_user)
                     try:
                         ensure_user_storage_ready(user)
@@ -16467,9 +16464,6 @@ def hub_login():
     result = _hub_api("/api/hub/sso-verify", {"token": token}, method="GET")
     if not result.get("ok"):
         app.logger.warning("FjordHub SSO verify failed: %s", result.get("error") or result)
-        return redirect(url_for("login"))
-    if not _hub_user_is_admin(result):
-        app.logger.warning("FjordHub SSO rejected non-admin user for FjordShare: %s", result.get("username") or "")
         return redirect(url_for("login"))
     try:
         user = _ensure_managed_local_user(result)
@@ -21373,11 +21367,11 @@ def _ensure_managed_local_user(
     last_name: str = "",
     language: str = "",
 ) -> User:
-    if not _hub_user_is_admin(hub_user):
-        raise ValueError("Kun admin-login håndteres igennem FjordHub.")
     hub_user_id = int(hub_user["id"])
     username = normalize_username(str(hub_user.get("username") or ""))
-    role = "admin"
+    app_role = str(hub_user.get("role") or "user").strip().lower()
+    hub_role = str(hub_user.get("hub_role") or app_role).strip().lower()
+    role = "admin" if app_role == "admin" or hub_role == "admin" else "user"
     raw_first_name = first_name or str(hub_user.get("first_name") or "").strip()
     raw_last_name = last_name or str(hub_user.get("last_name") or hub_user.get("last_initial") or "").strip()
     raw_language = language or str(hub_user.get("language") or DEFAULT_USER_LANGUAGE).strip()
@@ -21485,7 +21479,7 @@ def _serialize_managed_user(hub_user: dict) -> dict:
 
 def _api_admin_users_managed():
     if request.method == "GET":
-        for item in _hub_list_admin_users():
+        for item in _hub_list_users():
             try:
                 _ensure_managed_local_user(item)
             except Exception:
@@ -21516,35 +21510,6 @@ def _api_admin_users_managed():
         return jsonify({"ok": False, "error": "Adgangskoderne matcher ikke"}), 400
     if role not in {"admin", "user"}:
         role = "user"
-    if role != "admin":
-        try:
-            user_id = create_user(
-                username,
-                password,
-                role,
-                first_name=first_name,
-                last_name=last_name,
-                language=language,
-                require_name=True,
-            )
-            with closing(get_conn()) as conn:
-                user_row = conn.execute(
-                    """
-                    SELECT id, username, first_name, last_initial, language, role, home_folder, created_at,
-                           app_onboarding_seen_v1, app_onboarding_enabled
-                    FROM users
-                    WHERE id=?
-                    """,
-                    (int(user_id),),
-                ).fetchone()
-            return jsonify({"ok": True, "item": serialize_admin_user_row(user_row) if user_row is not None else None})
-        except sqlite3.IntegrityError:
-            return jsonify({"ok": False, "error": "Brugernavn findes allerede"}), 409
-        except ValueError as exc:
-            return jsonify({"ok": False, "error": str(exc)}), 400
-        except Exception as exc:
-            return jsonify({"ok": False, "error": f"Kunne ikke oprette bruger: {exc}"}), 500
-
     result = _hub_create_user({
         "username": username,
         "password": password,
@@ -21564,10 +21529,29 @@ def _api_admin_users_managed():
     return jsonify({"ok": True, "item": item})
 
 
-def _hub_sync_user(username: str, role: str) -> None:
-    if not _fjordhub_managed() or str(role or "").strip().lower() != "admin":
+def _hub_sync_user(
+    username: str,
+    role: str,
+    password: str = "",
+    first_name: str = "",
+    last_name: str = "",
+    language: str = "",
+) -> None:
+    if not _fjordhub_managed():
         return
-    _hub_create_user({"username": username, "role": role})
+    payload: dict[str, str] = {
+        "username": username,
+        "role": "admin" if str(role or "").strip().lower() == "admin" else "user",
+    }
+    if password:
+        payload["password"] = password
+    if first_name:
+        payload["first_name"] = first_name
+    if last_name:
+        payload["last_name"] = last_name
+    if language:
+        payload["language"] = language
+    _hub_create_user(payload)
 
 
 @app.route("/api/hub/users", methods=["GET", "POST"])
@@ -21644,8 +21628,8 @@ def api_admin_users_update(user_id: int):
             ).fetchone()
         if row is not None and str(row["password_hash"] or "") == "fjordhub-managed":
             role = "admin" if str(body.get("role") or "admin").strip().lower() == "admin" else "user"
-            if role != "admin":
-                return jsonify({"ok": False, "error": "Admin-rollen styres i FjordHub"}), 400
+            if int(user_id) == int(current_user.id) and role != "admin":
+                return jsonify({"ok": False, "error": "Du kan ikke fjerne admin-rollen fra dig selv"}), 400
             try:
                 first_name = normalize_person_name(str(body.get("first_name") or ""), "Navn", required=True, forbid_email=True)
                 last_initial = last_name_to_initial(str(body.get("last_name") or body.get("last_initial") or ""), required=True, forbid_email=True)
@@ -21656,6 +21640,9 @@ def api_admin_users_update(user_id: int):
             requested_username = normalize_username(str(body.get("username") or existing_username))
             if requested_username.lower() != existing_username.lower():
                 return jsonify({"ok": False, "error": "Brugernavn styres i FjordHub"}), 400
+            hub_result = _hub_update_user_role(_hub_user_id_for_local_user(user_id), role)
+            if not hub_result.get("ok"):
+                return jsonify({"ok": False, "error": hub_result.get("error") or "Kunne ikke opdatere rolle i FjordHub"}), 400
             with closing(get_conn()) as conn:
                 conn.execute(
                     "UPDATE users SET first_name=?, last_initial=?, language=?, role=?, updated_at=? WHERE id=?",
@@ -21673,8 +21660,8 @@ def api_admin_users_update(user_id: int):
                     (int(user_id),),
                 ).fetchone()
             return jsonify({"ok": True, "item": serialize_admin_user_row(updated) if updated is not None else None})
-        if str(body.get("role") or "user").strip().lower() == "admin":
-            return jsonify({"ok": False, "error": "Admin-brugere oprettes og styres i FjordHub"}), 400
+        if str(body.get("role") or "user").strip().lower() in {"admin", "user"}:
+            return jsonify({"ok": False, "error": "Brugere i managed mode oprettes og styres i FjordHub"}), 400
 
     try:
         first_name = normalize_person_name(str(body.get("first_name") or ""), "Navn", required=True, forbid_email=True)
