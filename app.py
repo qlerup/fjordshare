@@ -16118,7 +16118,7 @@ def setup_guard():
     if user_count > 0:
         _ensure_install_state_for_existing_users()
     if user_count == 0 and _fjordhub_managed():
-        if request.endpoint not in {"login", "hub_login", "api_health", "robots_txt"}:
+        if request.endpoint not in {"login", "login_change_password", "hub_login", "api_health", "robots_txt"}:
             return redirect(url_for("login"))
         return None
     if user_count == 0 and _install_state_exists() and request.endpoint not in {"setup", "api_health", "robots_txt"}:
@@ -16277,6 +16277,11 @@ def login():
 
                 hub_user = _hub_authenticate(username, password)
                 if hub_user:
+                    if hub_user.get("must_change_password"):
+                        # Første login efter oprettelse: brugeren skal selv vælge en ny adgangskode
+                        return render_template(
+                            "login.html", force_password_change=True, fpc_username=username,
+                            fpc_current=password, csrf_token=csrf_token)
                     user = _ensure_managed_local_user(hub_user)
                     try:
                         ensure_user_storage_ready(user)
@@ -16330,6 +16335,48 @@ def login():
                 error = "Forkert brugernavn eller kode."
 
     return render_template("login.html", error=error, created=created, csrf_token=csrf_token)
+
+
+@app.route("/login/change-password", methods=["POST"])
+def login_change_password():
+    """Tvungent kodeskift ved første login for FjordHub-styrede brugere."""
+    if not _fjordhub_managed():
+        return redirect(url_for("login"))
+    if current_user.is_authenticated:
+        return redirect(url_for("index"))
+    csrf_token = _login_csrf_token()
+    if not _login_csrf_token_valid(str(request.form.get("csrf_token") or "")):
+        return render_template(
+            "login.html", error="Sessionen er udløbet. Prøv igen.", created=False,
+            csrf_token=_new_login_csrf_token())
+    username = str(request.form.get("username") or "").strip()
+    current_password = str(request.form.get("current_password") or "")
+    new_password = str(request.form.get("new_password") or "")
+    new_password2 = str(request.form.get("new_password2") or "")
+    if not username or not current_password:
+        return redirect(url_for("login"))
+
+    def _fpc_response(error_text: str):
+        return render_template(
+            "login.html", force_password_change=True, fpc_username=username,
+            fpc_current=current_password, error=error_text, csrf_token=csrf_token)
+
+    if new_password != new_password2:
+        return _fpc_response("De nye adgangskoder matcher ikke.")
+    if len(new_password) < 6:
+        return _fpc_response("Adgangskoden skal være mindst 6 tegn.")
+    result = _hub_change_password(username, current_password, new_password)
+    hub_user = result.get("user") if result.get("ok") and isinstance(result.get("user"), dict) else None
+    if not hub_user:
+        return _fpc_response(str(result.get("error") or "Kunne ikke skifte adgangskoden."))
+    user = _ensure_managed_local_user(hub_user)
+    try:
+        ensure_user_storage_ready(user)
+    except Exception:
+        pass
+    session.pop(LOGIN_CSRF_SESSION_KEY, None)
+    login_user(user)
+    return redirect(url_for("index"))
 
 
 @app.route("/opret/<token>", methods=["GET", "POST"])
@@ -21296,6 +21343,13 @@ def _hub_authenticate(username: str, password: str) -> Optional[dict]:
     )
     user = result.get("user")
     return user if result.get("ok") and isinstance(user, dict) else None
+
+
+def _hub_change_password(username: str, current_password: str, new_password: str) -> dict:
+    return _hub_api(
+        "/api/hub/apps/change-password",
+        {"username": username, "current_password": current_password, "new_password": new_password},
+    )
 
 
 def _hub_user_is_admin(hub_user: dict) -> bool:

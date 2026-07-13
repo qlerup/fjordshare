@@ -2,6 +2,37 @@
 {% block title %}Login  -  Fjord3D{% endblock %}
 {% block body %}
 <div class="center-screen">
+  {% if force_password_change %}
+  <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token - Flask CSRF token is validated in app.py. -->
+  <form class="login-card" method="post" action="{{ url_for('login_change_password') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <img class="auth-logo" src="{{ url_for('static', filename='logos/logos/fjord3D-logo-horizontal-transparent.png', v=app_build) }}" alt="Fjord3D">
+    <h1>Vælg ny adgangskode</h1>
+    <div class="status ok">Første login: Vælg din egen adgangskode for at fortsætte.</div>
+    {% if error %}<div class="status error">{{ error }}</div>{% endif %}
+    <input type="hidden" name="username" value="{{ fpc_username }}">
+    <input type="hidden" name="current_password" value="{{ fpc_current }}">
+
+    <label for="newPassword">Ny adgangskode</label>
+    <input id="newPassword" name="new_password" type="password" autocomplete="new-password" minlength="6" required autofocus>
+
+    <label for="newPassword2">Gentag ny adgangskode</label>
+    <input id="newPassword2" name="new_password2" type="password" autocomplete="new-password" minlength="6" required>
+
+    <button class="btn primary" type="submit">Gem og log ind</button>
+  </form>
+  <script>
+    (function(){
+      const np=document.getElementById('newPassword');
+      const np2=document.getElementById('newPassword2');
+      if(np && np2){
+        const sync=()=>{ np2.setCustomValidity(np.value===np2.value?'':'De nye adgangskoder matcher ikke.'); };
+        np.addEventListener('input',sync);
+        np2.addEventListener('input',sync);
+      }
+    })();
+  </script>
+  {% else %}
   <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token - Flask CSRF token is validated in app.py. -->
   <form class="login-card" method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -18,6 +49,7 @@
 
     <button class="btn primary" type="submit">Log ind</button>
   </form>
+  {% endif %}
 </div>
 {% endblock %}
 
