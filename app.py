@@ -18672,6 +18672,16 @@ def api_admin_print_ready_merge(project_id: int):
         if source_status not in mergeable_statuses or target_status not in mergeable_statuses:
             return jsonify({"ok": False, "error": "Færdige eller annullerede projekter kan ikke flettes"}), 400
 
+        target_title = str(target["title"] or f"Projekt #{target_project_id}").strip()
+        source_title = str(source["title"] or f"Projekt #{source_project_id}").strip()
+        title_parts = [part.strip() for part in target_title.split(" & ") if part.strip()]
+        existing_title_parts = {part.casefold() for part in title_parts}
+        for part in (part.strip() for part in source_title.split(" & ")):
+            if part and part.casefold() not in existing_title_parts:
+                title_parts.append(part)
+                existing_title_parts.add(part.casefold())
+        merged_title = " & ".join(title_parts) or target_title or source_title
+
         source_files = conn.execute(
             "SELECT id FROM print_ready_project_files WHERE project_id=? ORDER BY sort_order, id",
             (source_project_id,),
@@ -18697,8 +18707,8 @@ def api_admin_print_ready_merge(project_id: int):
             (target_project_id, source_project_id),
         )
         conn.execute(
-            "UPDATE print_ready_projects SET status='ready' WHERE id=?",
-            (target_project_id,),
+            "UPDATE print_ready_projects SET status='ready', title=? WHERE id=?",
+            (merged_title, target_project_id),
         )
         conn.execute("DELETE FROM print_ready_projects WHERE id=?", (source_project_id,))
         conn.commit()
@@ -18709,7 +18719,7 @@ def api_admin_print_ready_merge(project_id: int):
         message=f"Projekter flettet: {source_project_id} -> {target_project_id} ({len(source_files)} filer flyttet)",
         level="info",
         folder_path=str(target["owner_home_folder"] or ""),
-        target=str(target["title"] or f"Projekt #{target_project_id}"),
+        target=merged_title,
         actor=str(current_user.username or ""),
     )
 
