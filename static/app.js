@@ -13399,6 +13399,13 @@
       ? "project-completed"
       : (isCancelledProject ? "project-cancelled" : "project-ready");
     const projectId = Number(project.id || 0);
+    const mergeCandidates = !finishedMode && isAdmin
+      ? (Array.isArray(state.printReadyProjects) ? state.printReadyProjects : []).filter((candidate) => (
+          Number(candidate && candidate.id ? candidate.id : 0) !== projectId
+          && Number(candidate && candidate.owner_user_id ? candidate.owner_user_id : 0) === Number(project.owner_user_id || 0)
+          && ["draft", "ready"].includes(String((candidate && candidate.status) || "ready").trim().toLowerCase())
+        ))
+      : [];
     const expanded = !!(state.printReadyExpandedProjectIds && state.printReadyExpandedProjectIds.has(projectId));
     const fileCount = metrics.fileCount;
     const totalToPrintCount = metrics.quantity > 0 ? metrics.quantity : fileCount;
@@ -13519,6 +13526,7 @@
                       ? ""
                       : `<button class="btn small primary" type="button" data-print-ready-action="complete-project" data-id="${projectId}" ${isAllPrintedProject ? "" : "disabled title=\"Aktiveres når alle antal er printet\""}>Projekt færdig</button>`
                   }
+                  ${mergeCandidates.length ? `<button class="btn small" type="button" data-print-ready-action="merge-project" data-id="${projectId}">Flet</button>` : ""}
                   <button class="btn danger" type="button" data-print-ready-action="${isCancelledProject ? "delete-project" : "cancel"}" data-id="${projectId}">${isCancelledProject ? "Slet" : "Annuller"}</button>
                 `
                     : ""
@@ -13764,6 +13772,49 @@
     ).concat(
       Array.isArray(state.finishedProjects) ? state.finishedProjects : []
     ).find((item) => Number(item && item.id ? item.id : 0) === id) || null;
+
+    if (action === "merge-project") {
+      const candidates = (Array.isArray(state.printReadyProjects) ? state.printReadyProjects : []).filter((candidate) => (
+        Number(candidate && candidate.id ? candidate.id : 0) !== id
+        && Number(candidate && candidate.owner_user_id ? candidate.owner_user_id : 0) === Number(project && project.owner_user_id ? project.owner_user_id : 0)
+        && ["draft", "ready"].includes(String((candidate && candidate.status) || "ready").trim().toLowerCase())
+      ));
+      if (!candidates.length) {
+        showStatus(statusEl, "Der er ingen andre aktive projekter fra samme bruger.", "info");
+        return;
+      }
+      const choices = candidates.map((candidate, index) => {
+        const title = String(candidate.title || `Projekt #${candidate.id}`);
+        const created = String(candidate.created_at_display || formatDate(candidate.created_at) || "");
+        return `${index + 1}: ${title}${created ? ` (${created})` : ""}`;
+      });
+      const selected = window.prompt(
+        `Vælg hvilket projekt \"${String((project && project.title) || `#${id}`)}\" skal flettes ind i:\n\n${choices.join("\n")}\n\nSkriv nummeret:`,
+        "1",
+      );
+      if (selected === null) return;
+      const selectedIndex = Number.parseInt(String(selected).trim(), 10) - 1;
+      const targetProject = candidates[selectedIndex];
+      if (!targetProject) {
+        showStatus(statusEl, "Ugyldigt projektnummer.", "error");
+        return;
+      }
+      const sourceTitle = String((project && project.title) || `Projekt #${id}`);
+      const targetTitle = String(targetProject.title || `Projekt #${targetProject.id}`);
+      const ok = window.confirm(
+        `Flet \"${sourceTitle}\" ind i \"${targetTitle}\"?\n\nAlle filer, printstatusser og projektfiler samles i målprojektet. Det oprindelige projekt fjernes bagefter.`,
+      );
+      if (!ok) return;
+      const data = await api(`/api/admin/print-ready/${id}/merge`, {
+        method: "POST",
+        body: { target_project_id: Number(targetProject.id || 0) },
+      });
+      const moved = Number(data && data.moved_file_count ? data.moved_file_count : 0);
+      showStatus(statusEl, `Projekterne er flettet. ${moved} fil(er) blev flyttet.`, "ok");
+      await loadPrintReadyProjects();
+      await loadFiles();
+      return;
+    }
 
     if (action === "complete-file") {
       const fileId = Number(btn.dataset.fileId || 0);

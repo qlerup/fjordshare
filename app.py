@@ -18637,6 +18637,93 @@ def api_admin_print_ready_cancel(project_id: int):
     return jsonify({"ok": True, "reset_printed_count": len(file_ids)})
 
 
+@app.route("/api/admin/print-ready/<int:project_id>/merge", methods=["POST"])
+@login_required
+def api_admin_print_ready_merge(project_id: int):
+    if not current_user.is_admin:
+        return jsonify({"ok": False, "error": "Kun admin"}), 403
+
+    body = request.get_json(silent=True) or {}
+    try:
+        target_project_id = int(body.get("target_project_id") or 0)
+    except Exception:
+        target_project_id = 0
+    source_project_id = int(project_id)
+    if target_project_id <= 0 or target_project_id == source_project_id:
+        return jsonify({"ok": False, "error": "Vælg et andet projekt at flette ind i"}), 400
+
+    mergeable_statuses = {"draft", "ready"}
+    with closing(get_conn()) as conn:
+        source = conn.execute(
+            "SELECT * FROM print_ready_projects WHERE id=?",
+            (source_project_id,),
+        ).fetchone()
+        target = conn.execute(
+            "SELECT * FROM print_ready_projects WHERE id=?",
+            (target_project_id,),
+        ).fetchone()
+        if source is None or target is None:
+            return jsonify({"ok": False, "error": "Et af projekterne findes ikke længere"}), 404
+        if int(source["owner_user_id"] or 0) != int(target["owner_user_id"] or 0):
+            return jsonify({"ok": False, "error": "Kun projekter fra samme bruger kan flettes"}), 400
+
+        source_status = str(source["status"] or "ready").strip().lower()
+        target_status = str(target["status"] or "ready").strip().lower()
+        if source_status not in mergeable_statuses or target_status not in mergeable_statuses:
+            return jsonify({"ok": False, "error": "Færdige eller annullerede projekter kan ikke flettes"}), 400
+
+        source_files = conn.execute(
+            "SELECT id FROM print_ready_project_files WHERE project_id=? ORDER BY sort_order, id",
+            (source_project_id,),
+        ).fetchall()
+        max_sort_row = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), 0) AS value FROM print_ready_project_files WHERE project_id=?",
+            (target_project_id,),
+        ).fetchone()
+        next_sort = int((max_sort_row["value"] if max_sort_row is not None else 0) or 0)
+        for source_file in source_files:
+            next_sort += 1
+            conn.execute(
+                "UPDATE print_ready_project_files SET project_id=?, sort_order=? WHERE id=?",
+                (target_project_id, next_sort, int(source_file["id"])),
+            )
+
+        conn.execute(
+            "UPDATE print_ready_project_assets SET project_id=? WHERE project_id=?",
+            (target_project_id, source_project_id),
+        )
+        conn.execute(
+            "UPDATE share_links SET project_id=? WHERE project_id=?",
+            (target_project_id, source_project_id),
+        )
+        conn.execute(
+            "UPDATE print_ready_projects SET status='ready' WHERE id=?",
+            (target_project_id,),
+        )
+        conn.execute("DELETE FROM print_ready_projects WHERE id=?", (source_project_id,))
+        conn.commit()
+
+    log_activity(
+        kind="print-ready",
+        action="merge",
+        message=f"Projekter flettet: {source_project_id} -> {target_project_id} ({len(source_files)} filer flyttet)",
+        level="info",
+        folder_path=str(target["owner_home_folder"] or ""),
+        target=str(target["title"] or f"Projekt #{target_project_id}"),
+        actor=str(current_user.username or ""),
+    )
+
+    payload, err = get_print_ready_project_payload(target_project_id)
+    if err is not None:
+        return jsonify({"ok": True, "target_project_id": target_project_id, "moved_file_count": len(source_files)})
+    return jsonify({
+        "ok": True,
+        "target_project_id": target_project_id,
+        "moved_file_count": len(source_files),
+        "project": payload,
+    })
+
+
 @app.route("/api/admin/print-ready/<int:project_id>/delete", methods=["POST"])
 @login_required
 def api_admin_print_ready_delete(project_id: int):
